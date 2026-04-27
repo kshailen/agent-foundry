@@ -2,7 +2,7 @@
 
 **Open-source platform to learn about AI Agents through structured roadmaps and curated content.**
 
-**Live:** 
+**Live:**  [https://agent-foundry-pi.vercel.app](https://agent-foundry-pi.vercel.app/)
 
 ---
 
