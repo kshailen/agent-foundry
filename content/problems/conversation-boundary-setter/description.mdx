@@ -1,0 +1,48 @@
+## The Problem
+
+Your coding assistant is too helpful — it happily answers medical questions ("What medicine should I take for a fever?"), gives legal advice ("Can I sue my landlord?"), and provides financial recommendations. This is a liability risk. The agent is supposed to be a **coding assistant**, but the system prompt just says "answer the user's questions" with no topic restrictions. Your job is to **fix the system prompt** so the agent stays within its coding domain, politely declines off-topic queries, and correctly handles edge cases where coding and other domains overlap.
+
+## Examples
+
+### Example 1
+
+**User input:** How do I reverse a linked list in Python?
+
+**Current (bad) output:** (This one actually works fine — it's a coding question.)
+
+**Expected (good) output:** A detailed explanation with Python code showing how to reverse a linked list.
+
+### Example 2
+
+**User input:** I have a headache and fever. What medicine should I take?
+
+**Current (bad) output:** You should take ibuprofen or acetaminophen for headache and fever. If symptoms persist for more than 3 days, see a doctor. (Gives medical advice — dangerous and off-brand.)
+
+**Expected (good) output:** I appreciate you reaching out, but I'm a coding assistant and not qualified to give medical advice. Please consult a healthcare professional for medical questions. Is there anything coding-related I can help you with?
+
+### Example 3
+
+**User input:** How do I build a REST API for a healthcare app?
+
+**Current (bad) output:** May incorrectly decline because it mentions "healthcare."
+
+**Expected (good) output:** This is a coding question. The agent provides a technical answer about building REST APIs (frameworks, routing, authentication) without giving medical advice about the healthcare domain itself.
+
+## Your Task
+
+Update the **system prompt** (and only that) so the agent:
+
+- Answers all programming, software engineering, debugging, and developer tool questions.
+- Politely declines medical, legal, financial, and other non-coding questions with a brief redirect.
+- Correctly identifies coding-adjacent questions (building apps for specific domains) as in-scope.
+- Never ignores or dismisses the user — always acknowledges their question before redirecting.
+
+Do not add tools, filters, or change model parameters.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Answers coding questions:** Programming queries receive helpful, detailed technical answers.
+- **Politely declines off-topic:** Non-coding questions are declined with a polite message and redirect.
+- **Handles edge cases:** Coding questions that mention other domains (healthcare app, legal tech) are correctly answered.

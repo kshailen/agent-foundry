@@ -1,0 +1,166 @@
+## Approach
+
+The shopping assistant fails for non-English users in two ways: it passes non-English words directly to English-only tools (so `search_products("auriculares")` finds nothing), and it responds in English regardless of the user's language. The tools are English-only by design — they match against English product keywords. The model needs to act as a translator at the tool boundary: detect the user's language, translate tool arguments to English for the lookup, and translate the response back to the user's language.
+
+The fix is entirely in the system prompt. We instruct the agent to (1) detect the language of the incoming message, (2) always translate tool call arguments to English, and (3) compose the final response in the user's detected language. Including a concrete example of this translate-call-translate pattern in the prompt anchors the behavior.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+@tool
+def search_products(query: str) -> str:
+    """Search for products in the catalog. Query must be in English."""
+    products = {
+        "laptop": "MacBook Pro 14\" - $1,999",
+        "headphones": "Sony WH-1000XM5 - $349",
+        "keyboard": "Keychron K2 - $89",
+    }
+    for key, val in products.items():
+        if key in query.lower():
+            return val
+    return f"No products found for: {query}"
+
+tools = [search_products]
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", (
+        "You are a multilingual shopping assistant. Help users find products.\n\n"
+        "LANGUAGE RULES:\n"
+        "1. Detect the language of each user message.\n"
+        "2. When calling tools, ALWAYS translate the query to English. Tools only understand English.\n"
+        "3. After receiving tool results, respond to the user in THEIR language (the language they wrote in).\n"
+        "4. If the user switches languages mid-conversation, switch your response language to match.\n\n"
+        "EXAMPLE:\n"
+        "User says (Spanish): 'Busco unos auriculares buenos'\n"
+        "Step 1: Detect language = Spanish\n"
+        "Step 2: Translate to English = 'headphones'\n"
+        "Step 3: Call search_products('headphones')\n"
+        "Step 4: Respond in Spanish with the results"
+    )),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}"),
+])
+
+agent = create_tool_calling_agent(llm, tools, prompt)
+executor = AgentExecutor(agent=agent, tools=tools)
+
+result1 = executor.invoke({"input": "Busco unos auriculares buenos"})
+print("Spanish query:", result1["output"])
+
+result2 = executor.invoke({"input": "Je cherche un clavier mécanique"})
+print("French query:", result2["output"])
+
+result3 = executor.invoke({"input": "I need a good laptop"})
+print("English query:", result3["output"])
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from agents.tool import function_tool
+
+@function_tool
+def search_products(query: str) -> str:
+    """Search for products in the catalog. Query must be in English."""
+    products = {
+        "laptop": "MacBook Pro 14\" - $1,999",
+        "headphones": "Sony WH-1000XM5 - $349",
+        "keyboard": "Keychron K2 - $89",
+    }
+    for key, val in products.items():
+        if key in query.lower():
+            return val
+    return f"No products found for: {query}"
+
+agent = Agent(
+    name="Shopping Assistant",
+    instructions=(
+        "You are a multilingual shopping assistant. Help users find products.\n\n"
+        "LANGUAGE RULES:\n"
+        "1. Detect the language of each user message.\n"
+        "2. When calling tools, ALWAYS translate the query to English. Tools only understand English.\n"
+        "3. After receiving tool results, respond to the user in THEIR language (the language they wrote in).\n"
+        "4. If the user switches languages mid-conversation, switch your response language to match.\n\n"
+        "EXAMPLE:\n"
+        "User says (Spanish): 'Busco unos auriculares buenos'\n"
+        "Step 1: Detect language = Spanish\n"
+        "Step 2: Translate to English = 'headphones'\n"
+        "Step 3: Call search_products('headphones')\n"
+        "Step 4: Respond in Spanish with the results"
+    ),
+    tools=[search_products],
+)
+
+result1 = Runner.run_sync(agent, "Busco unos auriculares buenos")
+print("Spanish query:", result1.final_output)
+
+result2 = Runner.run_sync(agent, "Je cherche un clavier mécanique")
+print("French query:", result2.final_output)
+
+result3 = Runner.run_sync(agent, "I need a good laptop")
+print("English query:", result3.final_output)
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from crewai.tools import tool
+
+@tool
+def search_products(query: str) -> str:
+    """Search for products in the catalog. Query must be in English."""
+    products = {
+        "laptop": "MacBook Pro 14\" - $1,999",
+        "headphones": "Sony WH-1000XM5 - $349",
+        "keyboard": "Keychron K2 - $89",
+    }
+    for key, val in products.items():
+        if key in query.lower():
+            return val
+    return f"No products found for: {query}"
+
+shopping_agent = Agent(
+    role="Multilingual Shopping Assistant",
+    goal="Help users find products by searching in English and responding in the user's language",
+    backstory=(
+        "You are a multilingual shopping assistant. You detect the language of each user message. "
+        "When calling tools, you ALWAYS translate the query to English because tools only understand English. "
+        "After receiving tool results, you respond in the user's language. "
+        "Example: If a Spanish user asks 'Busco auriculares', you call search_products('headphones') "
+        "and respond in Spanish with the results."
+    ),
+    tools=[search_products],
+    verbose=True,
+)
+
+task = Task(
+    description="Respond to: Busco unos auriculares buenos",
+    expected_output="Product recommendation in Spanish",
+    agent=shopping_agent,
+)
+
+crew = Crew(agents=[shopping_agent], tasks=[task], verbose=True)
+result = crew.kickoff()
+print(result)
+```
+
+## Why This Works
+
+The agent acts as a language bridge between the user and the English-only tools. By explicitly instructing the model to detect the user's language, translate arguments to English before calling tools, and translate results back to the user's language, we leverage the LLM's native multilingual ability to solve a tool compatibility problem. The concrete example in the prompt is critical because it demonstrates the full translate-call-respond pipeline in action. Without it, the model might translate the response but forget to translate the tool arguments, or vice versa.
+
+## Key Takeaways
+
+- When tools only accept one language, instruct the agent to translate tool arguments to that language while responding in the user's language.
+- A step-by-step example of the detect-translate-call-respond pattern anchors the behavior more reliably than abstract rules alone.
+- Language detection and adaptation should be treated as a core system prompt concern, not an afterthought.

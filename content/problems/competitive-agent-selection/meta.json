@@ -1,0 +1,57 @@
+{
+  "number": 84,
+  "title": "Competitive Agent Selection",
+  "difficulty": "hard",
+  "categories": [
+    "multi-agent",
+    "evaluation"
+  ],
+  "frameworks": [
+    "crewai",
+    "langgraph",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "At least three agents must independently solve the same problem",
+    "A separate judge agent must evaluate all solutions and pick the best",
+    "The judge must not be one of the competing agents",
+    "The judge must provide a rationale for its selection"
+  ],
+  "hints": [
+    "Run all three solver agents in parallel (or sequentially) on the same input",
+    "Collect all outputs, then pass them to the judge agent with clear labels",
+    "Give the judge explicit evaluation criteria (correctness, clarity, completeness) to score against"
+  ],
+  "starterCode": {
+    "crewai": "from crewai import Agent, Task, Crew, Process\nfrom crewai import LLM\n\nllm = LLM(model=\"gpt-4o-mini\")\n\n# BUG: Only one agent solves the problem \u2014 no competition or comparison\n# TODO: Add two more solver agents and a judge to pick the best solution\nsolver = Agent(\n    role=\"Problem Solver\",\n    goal=\"Solve coding challenges with clean, efficient solutions\",\n    backstory=\"You are an experienced software engineer.\",\n    llm=llm,\n)\n\nsolve_task = Task(\n    description=\"Write a function to find the longest palindromic substring in a given string. Problem: {problem}\",\n    expected_output=\"A working Python function with explanation\",\n    agent=solver,\n)\n\ncrew = Crew(\n    agents=[solver],\n    tasks=[solve_task],\n    process=Process.sequential,\n)\n\nresult = crew.kickoff(inputs={\"problem\": \"Find the longest palindromic substring in a given string\"})\nprint(result)",
+    "langgraph": "from langchain_openai import ChatOpenAI\nfrom langgraph.graph import StateGraph, START, END\nfrom typing import TypedDict\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\nclass State(TypedDict):\n    problem: str\n    solution: str\n\n# BUG: Only one solver node \u2014 no competition or judging\n# TODO: Add multiple solver nodes and a judge node\ndef solve(state: State) -> dict:\n    prompt = f\"Write a Python function to solve: {state['problem']}. Provide clean, efficient code with explanation.\"\n    response = llm.invoke(prompt)\n    return {\"solution\": response.content}\n\ngraph = StateGraph(State)\ngraph.add_node(\"solve\", solve)\ngraph.add_edge(START, \"solve\")\ngraph.add_edge(\"solve\", END)\n\napp = graph.compile()\nresult = app.invoke({\"problem\": \"Find the longest palindromic substring in a given string\", \"solution\": \"\"})\nprint(result[\"solution\"])",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\n# BUG: Only one agent solves the problem \u2014 no competition or comparison\n# TODO: Add two more solver agents and a judge to pick the best solution\nsolver = Agent(\n    name=\"Problem Solver\",\n    instructions=\"You are an experienced software engineer. Solve coding challenges with clean, efficient solutions.\",\n)\n\nresult = Runner.run_sync(\n    solver,\n    \"Write a function to find the longest palindromic substring in a given string.\",\n)\nprint(result.final_output)"
+  },
+  "colabUrls": {
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/competitive-agent-selection-crewai.ipynb",
+    "langgraph": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/competitive-agent-selection-langgraph.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/competitive-agent-selection-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "multiple-solvers",
+      "label": "Multiple solver agents",
+      "description": "At least three agents independently solve the same problem"
+    },
+    {
+      "id": "judge-exists",
+      "label": "Judge agent evaluates solutions",
+      "description": "A separate judge agent reviews all solutions and selects the best one"
+    },
+    {
+      "id": "rationale-provided",
+      "label": "Judge provides rationale",
+      "description": "The judge explains why the selected solution is the best"
+    },
+    {
+      "id": "best-selected",
+      "label": "Best solution is selected",
+      "description": "The final output is the solution the judge deemed best, not an arbitrary pick"
+    }
+  ]
+}

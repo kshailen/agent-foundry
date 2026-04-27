@@ -1,0 +1,197 @@
+# Subgraphs
+
+Subgraphs let you compose LangGraph applications hierarchically. A compiled graph can be used as a node inside a parent graph, enabling modular design, team ownership boundaries, and multi-level nesting. LangGraph supports two patterns for integrating subgraphs depending on whether the parent and child share the same state schema.
+
+## Pattern 1: Call a Subgraph Inside a Node
+
+When the subgraph has a **different schema** from the parent, you call it inside a regular node function and manually transform state between the two:
+
+```python
+from typing import TypedDict, Annotated
+from langgraph.graph import StateGraph, START, END, add_messages
+
+class ChildState(TypedDict):
+    query: str
+    result: str
+
+def child_research(state: ChildState) -> dict:
+    return {"result": f"Research on: {state['query']}"}
+
+child_graph = StateGraph(ChildState)
+child_graph.add_node("research", child_research)
+child_graph.add_edge(START, "research")
+child_graph.add_edge("research", END)
+child_app = child_graph.compile()
+
+class ParentState(TypedDict):
+    question: str
+    answer: str
+    messages: Annotated[list, add_messages]
+
+def call_child(state: ParentState) -> dict:
+    # Transform parent state → child input
+    child_result = child_app.invoke({"query": state["question"]})
+    # Transform child output → parent state
+    return {"answer": child_result["result"]}
+
+parent_graph = StateGraph(ParentState)
+parent_graph.add_node("call_child", call_child)
+parent_graph.add_edge(START, "call_child")
+parent_graph.add_edge("call_child", END)
+parent_app = parent_graph.compile()
+
+result = parent_app.invoke({"question": "What is LangGraph?"})
+print(result["answer"])
+```
+
+The parent node handles the schema mismatch explicitly — extracting what the child needs and mapping the child output back to parent state fields.
+
+## Pattern 2: Add a Compiled Graph as a Direct Node
+
+When the subgraph **shares the same state schema** (or at least overlapping keys) with the parent, you can add the compiled graph directly as a node:
+
+```python
+from typing import TypedDict
+from langgraph.graph import StateGraph, START, END
+
+class SharedState(TypedDict):
+    question: str
+    analysis: str
+    answer: str
+
+def analyze(state: SharedState) -> dict:
+    return {"analysis": f"Analysis of: {state['question']}"}
+
+def summarize(state: SharedState) -> dict:
+    return {"answer": f"Summary based on: {state['analysis']}"}
+
+# Build subgraph
+sub_graph = StateGraph(SharedState)
+sub_graph.add_node("analyze", analyze)
+sub_graph.add_node("summarize", summarize)
+sub_graph.add_edge(START, "analyze")
+sub_graph.add_edge("analyze", "summarize")
+sub_graph.add_edge("summarize", END)
+sub_app = sub_graph.compile()
+
+# Add compiled subgraph directly as a node
+parent_graph = StateGraph(SharedState)
+parent_graph.add_node("sub", sub_app)
+parent_graph.add_edge(START, "sub")
+parent_graph.add_edge("sub", END)
+parent_app = parent_graph.compile()
+
+result = parent_app.invoke({"question": "Explain subgraphs"})
+print(result["answer"])
+```
+
+LangGraph automatically passes overlapping state keys between parent and child. No manual transformation needed.
+
+## Multi-Level Nesting
+
+Subgraphs can contain their own subgraphs, creating multi-level hierarchies:
+
+```python
+from typing import TypedDict
+from langgraph.graph import StateGraph, START, END
+
+class State(TypedDict):
+    data: str
+    result: str
+
+def level2_process(state: State) -> dict:
+    return {"result": f"L2 processed: {state['data']}"}
+
+# Level 2 subgraph
+l2_graph = StateGraph(State)
+l2_graph.add_node("process", level2_process)
+l2_graph.add_edge(START, "process")
+l2_graph.add_edge("process", END)
+l2_app = l2_graph.compile()
+
+def level1_transform(state: State) -> dict:
+    return {"data": f"L1 transformed: {state['data']}"}
+
+# Level 1 subgraph contains Level 2
+l1_graph = StateGraph(State)
+l1_graph.add_node("transform", level1_transform)
+l1_graph.add_node("nested", l2_app)
+l1_graph.add_edge(START, "transform")
+l1_graph.add_edge("transform", "nested")
+l1_graph.add_edge("nested", END)
+l1_app = l1_graph.compile()
+
+# Root graph contains Level 1
+root_graph = StateGraph(State)
+root_graph.add_node("pipeline", l1_app)
+root_graph.add_edge(START, "pipeline")
+root_graph.add_edge("pipeline", END)
+root_app = root_graph.compile()
+
+result = root_app.invoke({"data": "hello"})
+print(result["result"])
+```
+
+## Subgraph State Isolation
+
+Each subgraph execution is isolated. The subgraph only sees the state keys that overlap with its own schema, and it can only write back keys that the parent recognizes:
+
+```python
+from typing import TypedDict
+from langgraph.graph import StateGraph, START, END
+
+class ParentState(TypedDict):
+    question: str
+    answer: str
+
+class SubState(TypedDict):
+    question: str
+    answer: str
+    internal_notes: str  # only exists inside subgraph
+
+def sub_node(state: SubState) -> dict:
+    return {
+        "internal_notes": "these stay inside the subgraph",
+        "answer": f"Answered: {state['question']}",
+    }
+
+sub_graph = StateGraph(SubState)
+sub_graph.add_node("work", sub_node)
+sub_graph.add_edge(START, "work")
+sub_graph.add_edge("work", END)
+sub_app = sub_graph.compile()
+
+def call_sub(state: ParentState) -> dict:
+    result = sub_app.invoke({"question": state["question"]})
+    # internal_notes is NOT in ParentState, so it stays isolated
+    return {"answer": result["answer"]}
+
+parent_graph = StateGraph(ParentState)
+parent_graph.add_node("sub", call_sub)
+parent_graph.add_edge(START, "sub")
+parent_graph.add_edge("sub", END)
+parent_app = parent_graph.compile()
+
+result = parent_app.invoke({"question": "isolation test"})
+print(result)
+print("internal_notes" in result)  # False
+```
+
+## When to Use Each Pattern
+
+| Scenario | Pattern | Why |
+|----------|---------|-----|
+| Parent and child share the same schema | Add compiled graph as node | Zero boilerplate, automatic state passing |
+| Parent and child have different schemas | Call inside a node function | Manual control over state transformation |
+| Third-party or reusable subgraph | Call inside a node function | Decouple schemas, transform at boundary |
+| Same team, tightly coupled components | Add compiled graph as node | Simpler code, shared state contract |
+| Multi-level pipelines | Either pattern, nested | Compose arbitrarily deep hierarchies |
+
+## Key Takeaways
+
+- A compiled LangGraph graph can be used as a node in a parent graph, enabling modular composition
+- **Pattern 1** (call inside a node) gives you manual control when schemas differ — you transform state at the boundary
+- **Pattern 2** (add as direct node) is simpler when parent and child share the same state schema
+- Subgraphs can nest to arbitrary depth for multi-level hierarchies
+- Subgraph state is isolated — internal fields do not leak to the parent unless explicitly mapped
+- Choose the pattern based on whether schemas are shared or distinct

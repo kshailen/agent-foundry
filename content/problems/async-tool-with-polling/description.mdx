@@ -1,0 +1,37 @@
+## The Problem
+
+Your report generator agent has a `generate_report` tool that starts a long-running job (e.g., compiling market research data). Currently, the tool **blocks for the entire duration** of the job — if the report takes 30 seconds to generate, the agent hangs for 30 seconds with no feedback. In production, some jobs take minutes, causing timeouts. Your job is to **split this into an async workflow**: the agent starts the job (gets a job ID), then polls for status at intervals until the job completes, and finally retrieves the result.
+
+## Examples
+
+### Example 1
+
+**User input:** Generate a detailed report on the electric vehicle market
+
+**Current (bad) output:** The tool blocks for 3+ seconds (or much longer in production). The agent appears frozen with no status updates. If the job takes too long, the request times out and the user gets nothing.
+
+**Expected (good) output:** The agent calls `start_job("electric vehicle market")` → gets `JOB-1234`. It then calls `check_status("JOB-1234")` periodically. After a few checks, the status changes to "completed". The agent calls `get_result("JOB-1234")` and presents the full report.
+
+### Example 2
+
+**User input:** Generate a report on quantum computing research trends
+
+**Current (bad) output:** The tool hangs until the job finishes or the request times out.
+
+**Expected (good) output:** The agent starts the job, polls status (providing updates like *"Report is still being generated..."*), and presents the final result once ready. If polling exceeds a timeout, it informs the user: *"The report is taking longer than expected. Here's the job ID — you can check back later."*
+
+## Your Task
+
+- Split `generate_report` into three separate tools: `start_job` (returns job ID), `check_status` (returns current status), and `get_result` (returns the final output).
+- The agent must call `start_job` first, then poll `check_status` until the job completes.
+- Add a timeout or maximum retry count to prevent infinite polling.
+- Once complete, the agent fetches and presents the result using `get_result`.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Job starts without blocking:** The start tool returns a job ID immediately.
+- **Polling is implemented:** The agent checks job status at intervals until completion.
+- **Timeout prevents infinite loops:** A maximum retry count or timeout stops infinite polling.
+- **Final result is retrieved:** Once the job completes, the agent fetches and presents the result.

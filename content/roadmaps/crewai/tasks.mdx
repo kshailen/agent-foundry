@@ -1,0 +1,128 @@
+# Tasks & Expected Outputs
+
+In CrewAI, a **Task** is a unit of work you assign to an agent. It tells the agent *what* to do (`description`), *how the result should look* (`expected_output`), and optionally *who* executes it (`agent`), *which tools* to use, how outputs are **structured or saved**, and how tasks **depend on each other** via `context`. Tasks are composed into a `Crew` and run in order (or with async options) when you call `kickoff()`.
+
+## Task constructor: key parameters
+
+| Parameter | Required | Purpose |
+|-----------|----------|---------|
+| `description` | Yes | Clear instructions for what the agent must accomplish |
+| `expected_output` | Yes | Specification of the deliverable: format, sections, constraints |
+| `agent` | No | The `Agent` responsible for this task (can be set on the crew or inferred) |
+| `tools` | No | Tool instances available for this task (overrides or extends agent tools depending on setup) |
+| `output_file` | No | Path to write the task’s final output to disk |
+| `output_json` | No | JSON schema or description to steer JSON-shaped output |
+| `output_pydantic` | No | A Pydantic model class for structured, validated output |
+| `context` | No | List of other `Task` objects whose outputs are provided as input context |
+| `callback` | No | Callable invoked when the task completes |
+| `human_input` | No | When true, pauses for human review/input before finalizing |
+| `async_execution` | No | Run this task asynchronously relative to others when the crew supports it |
+| `markdown` | No | When true, asks the model to return well-formatted Markdown |
+
+## Basic task creation
+
+```python
+from crewai import Agent, Task, Crew
+
+researcher = Agent(
+    role="Research Analyst",
+    goal="Summarize topics clearly and accurately",
+    backstory="You are a careful researcher who cites facts and avoids speculation.",
+    verbose=True,
+)
+
+summarize_task = Task(
+    description="Summarize the benefits of multi-agent systems for product teams in 3–5 bullet points.",
+    expected_output="A short bullet list; each bullet one sentence; no introduction paragraph.",
+    agent=researcher,
+)
+
+crew = Crew(agents=[researcher], tasks=[summarize_task], verbose=True)
+result = crew.kickoff()
+print(result)
+```
+
+## Saving output with `output_file`
+
+Use `output_file` when you want the task result persisted automatically (reports, drafts, logs).
+
+```python
+from crewai import Agent, Task, Crew
+
+writer = Agent(
+    role="Technical Writer",
+    goal="Produce clean written deliverables",
+    backstory="You write concise technical prose suitable for internal docs.",
+    verbose=True,
+)
+
+doc_task = Task(
+    description="Write a one-paragraph overview of CrewAI tasks and expected outputs.",
+    expected_output="A single paragraph, 4–6 sentences, suitable for a README.",
+    agent=writer,
+    output_file="outputs/crewai_tasks_overview.md",
+)
+
+crew = Crew(agents=[writer], tasks=[doc_task], verbose=True)
+crew.kickoff()
+```
+
+Ensure the target directory exists or use a path your environment can create.
+
+## Markdown-formatted output with `markdown=True`
+
+Set `markdown=True` when you want headings, lists, and emphasis rather than a plain wall of text.
+
+```python
+from crewai import Agent, Task, Crew
+
+editor = Agent(
+    role="Documentation Editor",
+    goal="Produce well-structured Markdown",
+    backstory="You format docs with clear headings and lists.",
+    verbose=True,
+)
+
+md_task = Task(
+    description="Explain how `expected_output` guides an agent, for junior developers.",
+    expected_output="Markdown with ## headings, bullet lists, and one short example fenced code block.",
+    agent=editor,
+    markdown=True,
+)
+
+crew = Crew(agents=[editor], tasks=[md_task], verbose=True)
+crew.kickoff()
+```
+
+## `expected_output` best practices
+
+- **Be specific about shape**: Say whether you want bullets, a table, JSON keys, sections, or max length.
+- **Describe quality constraints**: Tone, audience, what to avoid (e.g. “no hallucinated APIs”).
+- **Align with downstream tasks**: If another task consumes this output via `context`, specify a stable structure.
+- **Match optional validators**: If you use `output_pydantic` or `output_json`, your `expected_output` should describe the same fields the model must populate.
+
+## `TaskOutput` properties
+
+After a task runs, access structured results on the task’s output object (commonly `task.output`):
+
+| Property | Meaning |
+|----------|---------|
+| `.raw` | Raw string content from the agent |
+| `.pydantic` | Parsed Pydantic instance when `output_pydantic` was set |
+| `.json_dict` | Dict parsed from JSON-style output when applicable |
+| `.agent` | The agent that produced the output |
+
+```python
+# After crew.kickoff():
+print(summarize_task.output.raw)
+# summarize_task.output.pydantic  # if output_pydantic was used
+# summarize_task.output.json_dict
+# summarize_task.output.agent
+```
+
+## Key takeaways
+
+- A **Task** packages instructions (`description`) and a contract for the deliverable (`expected_output`).
+- Optional parameters control **who** runs it, **tools**, **file output**, **structured output**, **dependencies** (`context`), **callbacks**, **human-in-the-loop**, **async** behavior, and **Markdown** formatting.
+- Strong `expected_output` text is one of the highest-leverage prompts in CrewAI.
+- **`TaskOutput`** exposes `.raw`, `.pydantic`, `.json_dict`, and `.agent` for programmatic use after execution.

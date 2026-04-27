@@ -1,0 +1,42 @@
+## The Problem
+
+Your financial research agent has a `fetch_report` tool that calls an external API to get company annual reports. The upstream API recently changed — it now **requires a new `output_format` parameter** (accepting `"json"`, `"text"`, or `"csv"`). Your tool's schema doesn't include this parameter, so every call fails with `API Error: Missing required parameter 'output_format'`. Your job is to **update the tool schema to support the new parameter** while maintaining backward compatibility — existing prompts and workflows that call the tool without specifying `output_format` must still work.
+
+## Examples
+
+### Example 1
+
+**User input:** Get me Apple's 2024 annual report
+
+**Current (bad) output:** The tool raises `ValueError: API Error: Missing required parameter 'output_format'`. The agent either crashes or tells the user it can't fetch the report.
+
+**Expected (good) output:** The tool defaults `output_format` to `"text"` (or another sensible default), the API call succeeds, and the agent presents the report content.
+
+### Example 2
+
+**User input:** Fetch Google's 2023 report in JSON format
+
+**Current (bad) output:** The same API error — the tool has no way to accept `output_format` even if the user specifies it.
+
+**Expected (good) output:** The agent calls `fetch_report(company="Google", year=2023, output_format="json")` and receives a JSON-formatted report.
+
+### Example 3
+
+**User input:** Get Tesla's 2024 report as CSV
+
+**Expected (good) output:** The agent passes `output_format="csv"` to the tool, and the API returns data in CSV format.
+
+## Your Task
+
+- Add the `output_format` parameter to the tool with a sensible default value (e.g., `"text"`).
+- Ensure the parameter is passed to the API call so it no longer raises the missing parameter error.
+- Update the tool's docstring to document the new parameter and its accepted values.
+- Verify that existing agent interactions (without explicitly specifying `output_format`) still work.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **New parameter is supported:** The tool accepts `output_format` and passes it to the API.
+- **Backward compatible:** Existing callers that don't specify the format still work via a default.
+- **No API errors:** The tool no longer raises the missing parameter error.

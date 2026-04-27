@@ -1,0 +1,170 @@
+# Input & Output Guardrails
+
+Guardrails let you validate, filter, or block agent inputs and outputs before they're processed or returned. The OpenAI Agents SDK provides `@input_guardrail` and `@output_guardrail` decorators that run checks in parallel with (or before) the agent, tripping a wire if the content is unsafe or invalid.
+
+## Why Guardrails
+
+Agents can receive malicious prompts and produce harmful outputs. Guardrails act as safety gates — checking inputs before the agent processes them and validating outputs before they reach the user.
+
+```
+Input → [Input Guardrail] → Agent processes → [Output Guardrail] → Response
+         ↓ tripwire                              ↓ tripwire
+         Block & raise exception                 Block & raise exception
+```
+
+## Input Guardrails
+
+An input guardrail runs when the agent receives input. It can inspect the user's message and decide whether to allow or block it:
+
+```python
+from agents import Agent, Runner, input_guardrail, GuardrailFunctionOutput
+
+@input_guardrail
+async def block_profanity(ctx, agent, input):
+    """Block messages containing inappropriate language."""
+    bad_words = ["spam", "scam", "hack"]
+    contains_bad = any(word in input.lower() for word in bad_words)
+    return GuardrailFunctionOutput(
+        output_info={"flagged": contains_bad},
+        tripwire_triggered=contains_bad,
+    )
+
+agent = Agent(
+    name="Safe Agent",
+    instructions="You are a helpful assistant.",
+    input_guardrails=[block_profanity],
+)
+
+result = Runner.run_sync(agent, "Hello, how are you?")
+print(result.final_output)
+```
+
+## Output Guardrails
+
+An output guardrail runs after the agent produces its response. It can validate the output and block it if needed:
+
+```python
+from agents import Agent, Runner, output_guardrail, GuardrailFunctionOutput
+
+@output_guardrail
+async def block_pii(ctx, agent, output):
+    """Block responses that might contain personal information."""
+    pii_patterns = ["SSN", "social security", "credit card"]
+    contains_pii = any(pattern in output.lower() for pattern in pii_patterns)
+    return GuardrailFunctionOutput(
+        output_info={"contains_pii": contains_pii},
+        tripwire_triggered=contains_pii,
+    )
+
+agent = Agent(
+    name="Careful Agent",
+    instructions="You are a helpful assistant. Never share personal information.",
+    output_guardrails=[block_pii],
+)
+
+result = Runner.run_sync(agent, "Tell me about data privacy.")
+print(result.final_output)
+```
+
+## GuardrailFunctionOutput
+
+Every guardrail function returns a `GuardrailFunctionOutput`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `output_info` | `dict` | Metadata about the check (for logging/debugging) |
+| `tripwire_triggered` | `bool` | `True` to block, `False` to allow |
+
+## Handling Tripwire Exceptions
+
+When a guardrail trips, the SDK raises an exception. Catch it to handle blocked requests gracefully:
+
+```python
+from agents.exceptions import InputGuardrailTripwireTriggered, OutputGuardrailTripwireTriggered
+
+try:
+    result = Runner.run_sync(agent, "How do I hack a website?")
+    print(result.final_output)
+except InputGuardrailTripwireTriggered:
+    print("Input blocked: Your message was flagged by our safety system.")
+except OutputGuardrailTripwireTriggered:
+    print("Output blocked: The response was flagged by our safety system.")
+```
+
+## LLM-Based Guardrails
+
+For more sophisticated checks, use a secondary agent as a guardrail:
+
+```python
+from agents import Agent, Runner, input_guardrail, GuardrailFunctionOutput
+
+guardrail_agent = Agent(
+    name="Content Classifier",
+    instructions=(
+        "Classify the user's message as 'safe' or 'unsafe'. "
+        "Respond with exactly one word: safe or unsafe."
+    ),
+)
+
+@input_guardrail
+async def llm_safety_check(ctx, agent, input):
+    """Use an LLM to classify input safety."""
+    result = await Runner.run(guardrail_agent, input)
+    is_unsafe = result.final_output.strip().lower() == "unsafe"
+    return GuardrailFunctionOutput(
+        output_info={"classification": result.final_output},
+        tripwire_triggered=is_unsafe,
+    )
+
+main_agent = Agent(
+    name="Main Agent",
+    instructions="You are a helpful assistant.",
+    input_guardrails=[llm_safety_check],
+)
+```
+
+## Multiple Guardrails
+
+You can stack multiple guardrails. They run in parallel by default:
+
+```python
+agent = Agent(
+    name="Protected Agent",
+    instructions="You are a helpful assistant.",
+    input_guardrails=[block_profanity, llm_safety_check],
+    output_guardrails=[block_pii],
+)
+```
+
+## Guardrails on First and Last Agent
+
+In multi-agent systems with handoffs, guardrails only run on specific agents:
+
+- **Input guardrails** run only on the **first agent** (the one that receives the user's input)
+- **Output guardrails** run only on the **last agent** (the one that produces the final response)
+
+```python
+specialist = Agent(
+    name="Specialist",
+    instructions="You handle technical questions.",
+)
+
+triage = Agent(
+    name="Triage",
+    instructions="Route questions to the right specialist.",
+    handoffs=[specialist],
+    input_guardrails=[block_profanity],   # Runs — this is the first agent
+    output_guardrails=[block_pii],        # Does NOT run if specialist produces the output
+)
+```
+
+To protect the final output, place output guardrails on the agent that actually generates the response.
+
+## Key Takeaways
+
+- `@input_guardrail` validates user messages before the agent processes them
+- `@output_guardrail` validates agent responses before they reach the user
+- Return `GuardrailFunctionOutput(tripwire_triggered=True)` to block content
+- Catch `InputGuardrailTripwireTriggered` and `OutputGuardrailTripwireTriggered` exceptions
+- Use LLM-based guardrails for nuanced content classification
+- In multi-agent flows, input guardrails run on the first agent and output guardrails on the last agent

@@ -1,0 +1,40 @@
+## The Problem
+
+Your team shipped an AI research assistant that can search the web. In practice, users ask for learning resources and the model happily lists URLs—many of which were never returned by search. People click broken or invented links, assume the product is broken, and trust drops. The underlying search tool is fine; the issue is the **system prompt**: it encourages thorough answers without requiring that every link come from tool output. Your job is to **fix only the system prompt** so the agent either cites **real URLs from search results** or explicitly says it does not have a verified link.
+
+## Examples
+
+### Example 1
+
+**User input:** What are the best resources to learn LangChain?
+
+**Current (bad) output:** Here are great resources: `https://langchain-official-tutorial.io/beginners`, `https://learn-langchain-free.com/course`, and the docs at `https://python.langchain.com` (the first two are fabricated; users get 404s).
+
+**Expected (good) output:** After calling search, the assistant summarizes what it found and only includes URLs that appeared in the tool output. If search did not return clear links, it says something like: *I couldn't find a verified link for this in my search results; here is what I can infer from the snippets…* without inventing URLs.
+
+### Example 2
+
+**User input:** What is the official site for the OpenAI Agents SDK?
+
+**Current (bad) output:** A confident answer with a plausible-looking URL that was never retrieved from search.
+
+**Expected (good) output:** Either the official URL copied from search results, or an explicit statement such as: *I don't have a verified URL from search right now—I'd recommend checking OpenAI's documentation from your browser.*
+
+## Your Task
+
+Update the **system prompt** (and only that) so the agent:
+
+- Never fabricates URLs, citations, or links.
+- Uses links only when they come from verified tool output (e.g. search results).
+- Still answers helpfully with guidance, summaries, and next steps when links are unavailable.
+- States clearly when it lacks verified sources.
+
+Do not add tools or change tool code.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **No fabricated URLs:** The agent does not output URLs it did not get from a tool.
+- **Still answers helpfully:** The response remains useful and on-topic for the user's question.
+- **Handles unknowns gracefully:** When information is missing, the agent acknowledges the gap instead of guessing links.

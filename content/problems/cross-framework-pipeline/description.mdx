@@ -1,0 +1,38 @@
+## The Problem
+
+Your team uses different agent frameworks for different strengths: **CrewAI** excels at role-based multi-agent research, **LangGraph** is great for stateful processing workflows, **LangChain** handles chain-based transformations, and **OpenAI Agents SDK** offers a clean single-agent interface. Currently, the entire pipeline runs in a single framework. Your task is to build a **cross-framework pipeline** where different stages use different frameworks, with data flowing correctly between framework boundaries.
+
+## Examples
+
+### Example 1
+
+**User input:** Topic: Best cloud provider for AI workloads
+
+**Current (bad) output:** All three stages (research, processing, decision) run in one framework. It works but doesn't leverage each framework's strengths.
+
+**Expected (good) output:** Research runs in CrewAI (leveraging its role-based multi-agent approach), processing runs in LangGraph (using its stateful graph for structured analysis), and the final recommendation is produced. Data flows seamlessly between frameworks.
+
+### Example 2
+
+**User input:** Topic: Sustainable packaging alternatives for e-commerce
+
+**Current (bad) output:** A monolithic pipeline in one framework.
+
+**Expected (good) output:** Each stage runs in the most appropriate framework. The research findings are extracted as plain text or a dictionary and passed as input to the next framework's stage.
+
+## Your Task
+
+Refactor the starter code so that:
+
+- The pipeline uses **at least two different frameworks** for different stages.
+- **Data flows correctly** between framework boundaries (extract output from one, pass as input to the next).
+- Each framework handles its own **distinct stage** of the pipeline.
+- The final output is a coherent recommendation grounded in the earlier stages.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Uses multiple frameworks:** The pipeline uses at least two different agent frameworks.
+- **Data flows across boundaries:** Output from one framework's stage correctly feeds into the next framework's stage.
+- **Each framework handles its stage:** Each framework is responsible for a distinct stage of the pipeline.

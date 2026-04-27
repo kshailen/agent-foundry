@@ -1,0 +1,561 @@
+## Approach
+
+The starter code runs three LLM calls per customer query (classify, respond, suggest follow-up) with zero observability. There are no logs recording what each call sent and received, no trace IDs linking the three calls within a single request, and no aggregated metrics showing latency distributions or total cost. When something goes wrong in production — a slow response, an incorrect classification, a cost spike — there is no data to diagnose the issue.
+
+The fix adds a production-grade observability layer with three pillars. First, structured logging: every LLM call emits a JSON log entry with the step name, model, input/output token counts, latency, and a truncated output. Second, distributed tracing: a unique `trace_id` is generated per user request and attached to every log entry within that request, so all three LLM calls can be correlated. Third, aggregated metrics: after all queries are processed, the system computes latency percentiles (p50, p95), total token usage, estimated cost, error rate, and identifies the slowest step. Critically, the observability layer is transparent — it does not change the agent's behavior or output.
+
+In LangChain, this is implemented using a custom callback handler that hooks into `on_llm_start` and `on_llm_end` events. In LangGraph, the same callback handler is passed when invoking the graph, capturing all LLM calls within nodes.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.callbacks import BaseCallbackHandler
+import time
+import uuid
+import json
+import numpy as np
+
+PRICING = {"input": 0.15 / 1_000_000, "output": 0.60 / 1_000_000}
+
+
+class ObservabilityHandler(BaseCallbackHandler):
+    def __init__(self, trace_id: str, step_name: str):
+        self.trace_id = trace_id
+        self.step_name = step_name
+        self.start_time = None
+        self.log_entry = None
+
+    def on_llm_start(self, serialized, prompts, **kwargs):
+        self.start_time = time.time()
+
+    def on_llm_end(self, response, **kwargs):
+        latency_ms = (time.time() - self.start_time) * 1000
+        generation = response.generations[0][0]
+        usage = response.llm_output.get("token_usage", {})
+        input_tokens = usage.get("prompt_tokens", 0)
+        output_tokens = usage.get("completion_tokens", 0)
+        cost = input_tokens * PRICING["input"] + output_tokens * PRICING["output"]
+
+        self.log_entry = {
+            "trace_id": self.trace_id,
+            "step": self.step_name,
+            "model": "gpt-4o-mini",
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "latency_ms": round(latency_ms),
+            "cost": cost,
+            "output": generation.text[:100],
+        }
+
+
+class MetricsCollector:
+    def __init__(self):
+        self.logs: list[dict] = []
+        self.errors: int = 0
+        self.total_requests: int = 0
+
+    def record(self, log_entry: dict):
+        self.logs.append(log_entry)
+        print(f"  LOG: {json.dumps(log_entry, default=str)}")
+
+    def record_error(self):
+        self.errors += 1
+
+    def report(self) -> str:
+        if not self.logs:
+            return "No data collected."
+
+        latencies = [log["latency_ms"] for log in self.logs]
+        total_input = sum(log["input_tokens"] for log in self.logs)
+        total_output = sum(log["output_tokens"] for log in self.logs)
+        total_cost = sum(log["cost"] for log in self.logs)
+
+        step_latencies: dict[str, list[float]] = {}
+        for log in self.logs:
+            step_latencies.setdefault(log["step"], []).append(log["latency_ms"])
+        slowest_step = max(step_latencies, key=lambda s: np.mean(step_latencies[s]))
+        slowest_avg = np.mean(step_latencies[slowest_step])
+
+        error_rate = (self.errors / self.total_requests * 100) if self.total_requests > 0 else 0
+
+        lines = [
+            "=== Observability Report ===",
+            f"Total requests: {self.total_requests}",
+            f"Total LLM calls: {len(self.logs)}",
+            f"Latency: p50={np.percentile(latencies, 50):.0f}ms, p95={np.percentile(latencies, 95):.0f}ms",
+            f"Total tokens: {total_input:,} input / {total_output:,} output",
+            f"Estimated cost: ${total_cost:.4f}",
+            f"Error rate: {error_rate:.1f}%",
+            f"Slowest step: \"{slowest_step}\" (avg {slowest_avg:.0f}ms)",
+        ]
+        return "\n".join(lines)
+
+
+metrics = MetricsCollector()
+
+
+def handle_support_query(query: str) -> str:
+    trace_id = str(uuid.uuid4())[:8]
+    metrics.total_requests += 1
+
+    classify_handler = ObservabilityHandler(trace_id, "classify")
+    llm_classify = ChatOpenAI(model="gpt-4o-mini", callbacks=[classify_handler])
+    classification = llm_classify.invoke([
+        SystemMessage(content="Classify this query as: billing, technical, or general. Reply with just the category."),
+        HumanMessage(content=query),
+    ])
+    metrics.record(classify_handler.log_entry)
+
+    respond_handler = ObservabilityHandler(trace_id, "respond")
+    llm_respond = ChatOpenAI(model="gpt-4o-mini", callbacks=[respond_handler])
+    response = llm_respond.invoke([
+        SystemMessage(content=f"You are a {classification.content.strip()} support specialist. Help the customer."),
+        HumanMessage(content=query),
+    ])
+    metrics.record(respond_handler.log_entry)
+
+    followup_handler = ObservabilityHandler(trace_id, "followup")
+    llm_followup = ChatOpenAI(model="gpt-4o-mini", callbacks=[followup_handler])
+    followup = llm_followup.invoke([
+        SystemMessage(content="Based on this conversation, suggest one proactive follow-up action."),
+        HumanMessage(content=f"Query: {query}\nResponse: {response.content}"),
+    ])
+    metrics.record(followup_handler.log_entry)
+
+    return f"{response.content}\n\nSuggested follow-up: {followup.content}"
+
+
+queries = [
+    "Why was I charged twice for my subscription?",
+    "The app crashes when I upload large files",
+    "Do you have a student discount?",
+    "I can't reset my password",
+    "What's the difference between Pro and Enterprise plans?",
+]
+for q in queries:
+    print(f"\nQ: {q}")
+    result = handle_support_query(q)
+    print(f"A: {result[:150]}...")
+
+print(f"\n{metrics.report()}")
+```
+
+### LangGraph
+
+```python
+from langgraph.graph import StateGraph, START, END
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.callbacks import BaseCallbackHandler
+from typing import TypedDict, Optional
+import time
+import uuid
+import json
+import numpy as np
+
+PRICING = {"input": 0.15 / 1_000_000, "output": 0.60 / 1_000_000}
+
+
+class MetricsCollector:
+    def __init__(self):
+        self.logs: list[dict] = []
+        self.errors: int = 0
+        self.total_requests: int = 0
+
+    def record(self, log_entry: dict):
+        self.logs.append(log_entry)
+        print(f"  LOG: {json.dumps(log_entry, default=str)}")
+
+    def report(self) -> str:
+        if not self.logs:
+            return "No data collected."
+
+        latencies = [log["latency_ms"] for log in self.logs]
+        total_input = sum(log["input_tokens"] for log in self.logs)
+        total_output = sum(log["output_tokens"] for log in self.logs)
+        total_cost = sum(log["cost"] for log in self.logs)
+
+        step_latencies: dict[str, list[float]] = {}
+        for log in self.logs:
+            step_latencies.setdefault(log["step"], []).append(log["latency_ms"])
+        slowest_step = max(step_latencies, key=lambda s: np.mean(step_latencies[s]))
+        slowest_avg = np.mean(step_latencies[slowest_step])
+
+        error_rate = (self.errors / self.total_requests * 100) if self.total_requests > 0 else 0
+
+        lines = [
+            "=== Observability Report ===",
+            f"Total requests: {self.total_requests}",
+            f"Total LLM calls: {len(self.logs)}",
+            f"Latency: p50={np.percentile(latencies, 50):.0f}ms, p95={np.percentile(latencies, 95):.0f}ms",
+            f"Total tokens: {total_input:,} input / {total_output:,} output",
+            f"Estimated cost: ${total_cost:.4f}",
+            f"Error rate: {error_rate:.1f}%",
+            f"Slowest step: \"{slowest_step}\" (avg {slowest_avg:.0f}ms)",
+        ]
+        return "\n".join(lines)
+
+
+metrics = MetricsCollector()
+
+
+class SupportState(TypedDict):
+    query: str
+    trace_id: str
+    classification: Optional[str]
+    response: Optional[str]
+    followup: Optional[str]
+    final_output: Optional[str]
+
+
+def traced_llm_call(trace_id: str, step_name: str, system_prompt: str, user_content: str) -> tuple[str, dict]:
+    llm = ChatOpenAI(model="gpt-4o-mini")
+    start = time.time()
+    response = llm.invoke([
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=user_content),
+    ])
+    latency_ms = (time.time() - start) * 1000
+    usage = response.usage_metadata
+    cost = usage.input_tokens * PRICING["input"] + usage.output_tokens * PRICING["output"]
+
+    log_entry = {
+        "trace_id": trace_id,
+        "step": step_name,
+        "model": "gpt-4o-mini",
+        "input_tokens": usage.input_tokens,
+        "output_tokens": usage.output_tokens,
+        "latency_ms": round(latency_ms),
+        "cost": cost,
+        "output": response.content[:100],
+    }
+    metrics.record(log_entry)
+    return response.content, log_entry
+
+
+def classify_node(state: SupportState) -> dict:
+    content, _ = traced_llm_call(
+        state["trace_id"], "classify",
+        "Classify this query as: billing, technical, or general. Reply with just the category.",
+        state["query"],
+    )
+    return {"classification": content.strip()}
+
+
+def respond_node(state: SupportState) -> dict:
+    content, _ = traced_llm_call(
+        state["trace_id"], "respond",
+        f"You are a {state['classification']} support specialist. Help the customer.",
+        state["query"],
+    )
+    return {"response": content}
+
+
+def followup_node(state: SupportState) -> dict:
+    content, _ = traced_llm_call(
+        state["trace_id"], "followup",
+        "Based on this conversation, suggest one proactive follow-up action.",
+        f"Query: {state['query']}\nResponse: {state['response']}",
+    )
+    return {"followup": content, "final_output": f"{state['response']}\n\nSuggested follow-up: {content}"}
+
+
+graph = StateGraph(SupportState)
+graph.add_node("classify", classify_node)
+graph.add_node("respond", respond_node)
+graph.add_node("followup", followup_node)
+graph.add_edge(START, "classify")
+graph.add_edge("classify", "respond")
+graph.add_edge("respond", "followup")
+graph.add_edge("followup", END)
+
+app = graph.compile()
+
+queries = [
+    "Why was I charged twice for my subscription?",
+    "The app crashes when I upload large files",
+    "Do you have a student discount?",
+    "I can't reset my password",
+    "What's the difference between Pro and Enterprise plans?",
+]
+for q in queries:
+    trace_id = str(uuid.uuid4())[:8]
+    metrics.total_requests += 1
+    print(f"\nQ: {q}")
+    result = app.invoke({"query": q, "trace_id": trace_id})
+    print(f"A: {result['final_output'][:150]}...")
+
+print(f"\n{metrics.report()}")
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+import time
+import uuid
+import json
+import numpy as np
+
+PRICING = {"input": 0.15 / 1_000_000, "output": 0.60 / 1_000_000}
+
+
+class MetricsCollector:
+    def __init__(self):
+        self.logs: list[dict] = []
+        self.errors: int = 0
+        self.total_requests: int = 0
+
+    def record(self, log_entry: dict):
+        self.logs.append(log_entry)
+        print(f"  LOG: {json.dumps(log_entry, default=str)}")
+
+    def report(self) -> str:
+        if not self.logs:
+            return "No data collected."
+
+        latencies = [log["latency_ms"] for log in self.logs]
+        total_input = sum(log["input_tokens"] for log in self.logs)
+        total_output = sum(log["output_tokens"] for log in self.logs)
+        total_cost = sum(log["cost"] for log in self.logs)
+
+        step_latencies: dict[str, list[float]] = {}
+        for log in self.logs:
+            step_latencies.setdefault(log["step"], []).append(log["latency_ms"])
+        slowest_step = max(step_latencies, key=lambda s: np.mean(step_latencies[s]))
+        slowest_avg = np.mean(step_latencies[slowest_step])
+
+        error_rate = (self.errors / self.total_requests * 100) if self.total_requests > 0 else 0
+
+        lines = [
+            "=== Observability Report ===",
+            f"Total requests: {self.total_requests}",
+            f"Total LLM calls: {len(self.logs)}",
+            f"Latency: p50={np.percentile(latencies, 50):.0f}ms, p95={np.percentile(latencies, 95):.0f}ms",
+            f"Total tokens: {total_input:,} input / {total_output:,} output",
+            f"Estimated cost: ${total_cost:.4f}",
+            f"Error rate: {error_rate:.1f}%",
+            f"Slowest step: \"{slowest_step}\" (avg {slowest_avg:.0f}ms)",
+        ]
+        return "\n".join(lines)
+
+
+metrics = MetricsCollector()
+
+
+def traced_crew_call(trace_id: str, step_name: str, crew: Crew) -> str:
+    start = time.time()
+    result = crew.kickoff()
+    latency_ms = (time.time() - start) * 1000
+    usage = result.token_usage
+    input_tokens = getattr(usage, "prompt_tokens", 0)
+    output_tokens = getattr(usage, "completion_tokens", 0)
+    cost = input_tokens * PRICING["input"] + output_tokens * PRICING["output"]
+
+    log_entry = {
+        "trace_id": trace_id,
+        "step": step_name,
+        "model": "gpt-4o-mini",
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "latency_ms": round(latency_ms),
+        "cost": cost,
+        "output": str(result)[:100],
+    }
+    metrics.record(log_entry)
+    return str(result)
+
+
+classifier = Agent(
+    role="Query Classifier",
+    goal="Classify support queries into categories",
+    backstory="You classify queries as billing, technical, or general. Reply with just the category.",
+)
+
+responder = Agent(
+    role="Support Specialist",
+    goal="Help customers with their queries",
+    backstory="You are a customer support specialist.",
+)
+
+
+def handle_support_query(query: str) -> str:
+    trace_id = str(uuid.uuid4())[:8]
+    metrics.total_requests += 1
+
+    classify_task = Task(
+        description=f"Classify this query as billing, technical, or general: '{query}'. Reply with just the category.",
+        expected_output="The category: billing, technical, or general",
+        agent=classifier,
+    )
+    classify_crew = Crew(agents=[classifier], tasks=[classify_task])
+    category = traced_crew_call(trace_id, "classify", classify_crew)
+
+    respond_task = Task(
+        description=f"You are a {category.strip()} support specialist. Help with: '{query}'",
+        expected_output="A helpful customer support response",
+        agent=responder,
+    )
+    respond_crew = Crew(agents=[responder], tasks=[respond_task])
+    response = traced_crew_call(trace_id, "respond", respond_crew)
+
+    followup_task = Task(
+        description=f"Based on this conversation, suggest one proactive follow-up action.\nQuery: {query}\nResponse: {response}",
+        expected_output="One proactive follow-up action",
+        agent=responder,
+    )
+    followup_crew = Crew(agents=[responder], tasks=[followup_task])
+    followup = traced_crew_call(trace_id, "followup", followup_crew)
+
+    return f"{response}\n\nSuggested follow-up: {followup}"
+
+
+queries = [
+    "Why was I charged twice for my subscription?",
+    "The app crashes when I upload large files",
+    "Do you have a student discount?",
+]
+for q in queries:
+    print(f"\nQ: {q}")
+    result = handle_support_query(q)
+    print(f"A: {result[:150]}...")
+
+print(f"\n{metrics.report()}")
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from openai import OpenAI
+import time
+import uuid
+import json
+import numpy as np
+
+client = OpenAI()
+
+PRICING = {"input": 0.15 / 1_000_000, "output": 0.60 / 1_000_000}
+
+
+class MetricsCollector:
+    def __init__(self):
+        self.logs: list[dict] = []
+        self.errors: int = 0
+        self.total_requests: int = 0
+
+    def record(self, log_entry: dict):
+        self.logs.append(log_entry)
+        print(f"  LOG: {json.dumps(log_entry, default=str)}")
+
+    def report(self) -> str:
+        if not self.logs:
+            return "No data collected."
+
+        latencies = [log["latency_ms"] for log in self.logs]
+        total_input = sum(log["input_tokens"] for log in self.logs)
+        total_output = sum(log["output_tokens"] for log in self.logs)
+        total_cost = sum(log["cost"] for log in self.logs)
+
+        step_latencies: dict[str, list[float]] = {}
+        for log in self.logs:
+            step_latencies.setdefault(log["step"], []).append(log["latency_ms"])
+        slowest_step = max(step_latencies, key=lambda s: np.mean(step_latencies[s]))
+        slowest_avg = np.mean(step_latencies[slowest_step])
+
+        error_rate = (self.errors / self.total_requests * 100) if self.total_requests > 0 else 0
+
+        lines = [
+            "=== Observability Report ===",
+            f"Total requests: {self.total_requests}",
+            f"Total LLM calls: {len(self.logs)}",
+            f"Latency: p50={np.percentile(latencies, 50):.0f}ms, p95={np.percentile(latencies, 95):.0f}ms",
+            f"Total tokens: {total_input:,} input / {total_output:,} output",
+            f"Estimated cost: ${total_cost:.4f}",
+            f"Error rate: {error_rate:.1f}%",
+            f"Slowest step: \"{slowest_step}\" (avg {slowest_avg:.0f}ms)",
+        ]
+        return "\n".join(lines)
+
+
+metrics = MetricsCollector()
+
+
+def traced_llm_call(trace_id: str, step_name: str, system_prompt: str, user_content: str) -> str:
+    start = time.time()
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+    )
+    latency_ms = (time.time() - start) * 1000
+    usage = response.usage
+    cost = usage.prompt_tokens * PRICING["input"] + usage.completion_tokens * PRICING["output"]
+
+    log_entry = {
+        "trace_id": trace_id,
+        "step": step_name,
+        "model": "gpt-4o-mini",
+        "input_tokens": usage.prompt_tokens,
+        "output_tokens": usage.completion_tokens,
+        "latency_ms": round(latency_ms),
+        "cost": cost,
+        "output": response.choices[0].message.content[:100],
+    }
+    metrics.record(log_entry)
+    return response.choices[0].message.content
+
+
+def handle_support_query(query: str) -> str:
+    trace_id = str(uuid.uuid4())[:8]
+    metrics.total_requests += 1
+
+    category = traced_llm_call(
+        trace_id, "classify",
+        "Classify this query as: billing, technical, or general. Reply with just the category.",
+        query,
+    )
+
+    response = traced_llm_call(
+        trace_id, "respond",
+        f"You are a {category.strip()} support specialist. Help the customer.",
+        query,
+    )
+
+    followup = traced_llm_call(
+        trace_id, "followup",
+        "Based on this conversation, suggest one proactive follow-up action.",
+        f"Query: {query}\nResponse: {response}",
+    )
+
+    return f"{response}\n\nSuggested follow-up: {followup}"
+
+
+queries = [
+    "Why was I charged twice for my subscription?",
+    "The app crashes when I upload large files",
+    "Do you have a student discount?",
+]
+for q in queries:
+    print(f"\nQ: {q}")
+    result = handle_support_query(q)
+    print(f"A: {result[:150]}...")
+
+print(f"\n{metrics.report()}")
+```
+
+## Why This Works
+
+The observability layer wraps every LLM call with instrumentation that captures timing, token usage, and content — without modifying the agent's logic or output. The `trace_id` ties all three calls (classify, respond, followup) within a single request together, so when a specific request is slow or incorrect, you can pull all related logs instantly. Aggregated metrics (p50/p95 latency, total cost, error rate, slowest step) provide the production dashboard data needed to spot trends and regressions. The callback-based approach in LangChain means the observability layer is composable and can be added to any LLM call chain without restructuring the application code. The per-step breakdown reveals which stage is the bottleneck — typically the "respond" step since it generates the longest output.
+
+## Key Takeaways
+
+- Every production LLM application needs structured logging with trace IDs — without them, debugging multi-call workflows is impossible.
+- Compute and report latency percentiles (p50/p95), not just averages — averages hide tail latency that affects user experience.
+- The observability layer must be transparent: add instrumentation without changing the agent's behavior, so you can trust that observed metrics reflect real production performance.

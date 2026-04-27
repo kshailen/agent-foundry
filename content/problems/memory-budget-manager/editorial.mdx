@@ -1,0 +1,348 @@
+## Approach
+
+The bug is that the memory list grows without bound. Every user message and every assistant response is appended, and no items are ever removed. After 30 turns, the memory contains thousands of tokens. Eventually the prompt exceeds the context window and the agent fails. A simple sliding window would drop the oldest items, but that risks losing important information. A budget manager is more sophisticated: it tracks token usage, scores items by relevance and recency, and evicts only the least valuable items when the budget is exceeded — while protecting pinned items from eviction.
+
+The fix introduces a `MemoryBudgetManager` class that wraps each memory item with metadata: an approximate token count, a timestamp, an access counter, and a pinned flag. Before each LLM call, the manager checks whether total tokens exceed the budget. If so, it sorts unpinned items by a score combining recency and access frequency, then evicts the lowest-scoring items until the budget is satisfied. Pinned items are never evicted regardless of budget pressure.
+
+Token counting uses a simple heuristic (word count divided by 0.75) to avoid needing a tokenizer dependency. This is accurate enough for budget enforcement purposes.
+
+## Solution
+
+### LangChain
+
+```python
+from datetime import datetime
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+TOKEN_BUDGET = 2000
+
+class MemoryItem:
+    def __init__(self, content: str, pinned: bool = False):
+        self.content = content
+        self.pinned = pinned
+        self.timestamp = datetime.now()
+        self.access_count = 0
+        self.token_count = self._estimate_tokens(content)
+
+    def _estimate_tokens(self, text: str) -> int:
+        return max(1, int(len(text.split()) / 0.75))
+
+    def score(self) -> float:
+        age_seconds = (datetime.now() - self.timestamp).total_seconds() + 1
+        recency_score = 1.0 / age_seconds
+        return recency_score * 1000 + self.access_count
+
+class MemoryBudgetManager:
+    def __init__(self, budget: int = TOKEN_BUDGET):
+        self.budget = budget
+        self.items: list[MemoryItem] = []
+
+    def add(self, content: str, pinned: bool = False):
+        self.items.append(MemoryItem(content, pinned))
+
+    def total_tokens(self) -> int:
+        return sum(item.token_count for item in self.items)
+
+    def enforce_budget(self):
+        while self.total_tokens() > self.budget:
+            unpinned = [item for item in self.items if not item.pinned]
+            if not unpinned:
+                break
+            unpinned.sort(key=lambda x: x.score())
+            victim = unpinned[0]
+            self.items.remove(victim)
+
+    def get_context(self) -> str:
+        self.enforce_budget()
+        for item in self.items:
+            item.access_count += 1
+        return "\n".join(item.content for item in self.items)
+
+memory = MemoryBudgetManager(budget=TOKEN_BUDGET)
+
+def chat(user_input: str) -> str:
+    memory.add(f"User: {user_input}")
+    memory_block = memory.get_context()
+    messages = [
+        SystemMessage(content=f"You are a helpful assistant. Memory:\n{memory_block}"),
+        HumanMessage(content=user_input),
+    ]
+    response = llm.invoke(messages)
+    memory.add(f"Assistant: {response.content}")
+    return response.content
+
+# Pin an important item
+memory.add("IMPORTANT: User's API key expires on March 1st.", pinned=True)
+
+for i in range(30):
+    topic = f"Tell me an interesting fact about country number {i + 1} in the world."
+    reply = chat(topic)
+    print(f"Turn {i + 1} ({len(memory.items)} items, ~{memory.total_tokens()} tokens): {reply[:60]}...")
+
+print(f"\nTotal memory items: {len(memory.items)}")
+print(f"Total tokens: {memory.total_tokens()}")
+print(f"Budget: {TOKEN_BUDGET}")
+pinned = [item.content for item in memory.items if item.pinned]
+print(f"Pinned items preserved: {pinned}")
+```
+
+### LangGraph
+
+```python
+from datetime import datetime
+from langchain_openai import ChatOpenAI
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict
+from langchain_core.messages import HumanMessage, SystemMessage
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+TOKEN_BUDGET = 2000
+
+class MemoryItem:
+    def __init__(self, content: str, pinned: bool = False):
+        self.content = content
+        self.pinned = pinned
+        self.timestamp = datetime.now()
+        self.access_count = 0
+        self.token_count = self._estimate_tokens(content)
+
+    def _estimate_tokens(self, text: str) -> int:
+        return max(1, int(len(text.split()) / 0.75))
+
+    def score(self) -> float:
+        age_seconds = (datetime.now() - self.timestamp).total_seconds() + 1
+        recency_score = 1.0 / age_seconds
+        return recency_score * 1000 + self.access_count
+
+class MemoryBudgetManager:
+    def __init__(self, budget: int = TOKEN_BUDGET):
+        self.budget = budget
+        self.items: list[MemoryItem] = []
+
+    def add(self, content: str, pinned: bool = False):
+        self.items.append(MemoryItem(content, pinned))
+
+    def total_tokens(self) -> int:
+        return sum(item.token_count for item in self.items)
+
+    def enforce_budget(self):
+        while self.total_tokens() > self.budget:
+            unpinned = [item for item in self.items if not item.pinned]
+            if not unpinned:
+                break
+            unpinned.sort(key=lambda x: x.score())
+            victim = unpinned[0]
+            self.items.remove(victim)
+
+    def get_context(self) -> str:
+        self.enforce_budget()
+        for item in self.items:
+            item.access_count += 1
+        return "\n".join(item.content for item in self.items)
+
+memory = MemoryBudgetManager(budget=TOKEN_BUDGET)
+
+class State(TypedDict):
+    query: str
+    response: str
+
+def answer(state: State) -> State:
+    memory.add(f"User: {state['query']}")
+    memory_block = memory.get_context()
+    messages = [
+        SystemMessage(content=f"You are a helpful assistant. Memory:\n{memory_block}"),
+        HumanMessage(content=state["query"]),
+    ]
+    response = llm.invoke(messages)
+    memory.add(f"Assistant: {response.content}")
+    return {"response": response.content}
+
+graph = StateGraph(State)
+graph.add_node("answer", answer)
+graph.add_edge(START, "answer")
+graph.add_edge("answer", END)
+app = graph.compile()
+
+memory.add("IMPORTANT: User's API key expires on March 1st.", pinned=True)
+
+for i in range(30):
+    topic = f"Tell me an interesting fact about country number {i + 1} in the world."
+    result = app.invoke({"query": topic})
+    print(f"Turn {i + 1} ({len(memory.items)} items, ~{memory.total_tokens()} tokens): {result['response'][:60]}...")
+
+print(f"\nTotal memory items: {len(memory.items)}")
+print(f"Total tokens: {memory.total_tokens()}")
+print(f"Budget: {TOKEN_BUDGET}")
+```
+
+### CrewAI
+
+```python
+from datetime import datetime
+from crewai import Agent, Task, Crew
+
+TOKEN_BUDGET = 2000
+
+class MemoryItem:
+    def __init__(self, content: str, pinned: bool = False):
+        self.content = content
+        self.pinned = pinned
+        self.timestamp = datetime.now()
+        self.access_count = 0
+        self.token_count = self._estimate_tokens(content)
+
+    def _estimate_tokens(self, text: str) -> int:
+        return max(1, int(len(text.split()) / 0.75))
+
+    def score(self) -> float:
+        age_seconds = (datetime.now() - self.timestamp).total_seconds() + 1
+        recency_score = 1.0 / age_seconds
+        return recency_score * 1000 + self.access_count
+
+class MemoryBudgetManager:
+    def __init__(self, budget: int = TOKEN_BUDGET):
+        self.budget = budget
+        self.items: list[MemoryItem] = []
+
+    def add(self, content: str, pinned: bool = False):
+        self.items.append(MemoryItem(content, pinned))
+
+    def total_tokens(self) -> int:
+        return sum(item.token_count for item in self.items)
+
+    def enforce_budget(self):
+        while self.total_tokens() > self.budget:
+            unpinned = [item for item in self.items if not item.pinned]
+            if not unpinned:
+                break
+            unpinned.sort(key=lambda x: x.score())
+            victim = unpinned[0]
+            self.items.remove(victim)
+
+    def get_context(self) -> str:
+        self.enforce_budget()
+        for item in self.items:
+            item.access_count += 1
+        return "\n".join(item.content for item in self.items)
+
+memory = MemoryBudgetManager(budget=TOKEN_BUDGET)
+
+assistant = Agent(
+    role="Assistant",
+    goal="Answer questions about world countries",
+    backstory="You are a helpful assistant with managed memory.",
+)
+
+memory.add("IMPORTANT: User's API key expires on March 1st.", pinned=True)
+
+for i in range(30):
+    topic = f"Tell me an interesting fact about country number {i + 1} in the world."
+    memory.add(f"User: {topic}")
+    memory_block = memory.get_context()
+    task = Task(
+        description=f"Memory:\n{memory_block}\n\nRespond to: {topic}",
+        expected_output="An interesting fact about the country",
+        agent=assistant,
+    )
+    crew = Crew(agents=[assistant], tasks=[task])
+    result = crew.kickoff()
+    memory.add(f"Assistant: {str(result)[:200]}")
+    print(f"Turn {i + 1} ({len(memory.items)} items, ~{memory.total_tokens()} tokens): {str(result)[:60]}...")
+
+print(f"\nTotal memory items: {len(memory.items)}")
+print(f"Total tokens: {memory.total_tokens()}")
+print(f"Budget: {TOKEN_BUDGET}")
+pinned = [item.content for item in memory.items if item.pinned]
+print(f"Pinned items preserved: {pinned}")
+```
+
+### OpenAI Agents SDK
+
+```python
+from datetime import datetime
+from agents import Agent, Runner
+
+TOKEN_BUDGET = 2000
+
+class MemoryItem:
+    def __init__(self, content: str, pinned: bool = False):
+        self.content = content
+        self.pinned = pinned
+        self.timestamp = datetime.now()
+        self.access_count = 0
+        self.token_count = self._estimate_tokens(content)
+
+    def _estimate_tokens(self, text: str) -> int:
+        return max(1, int(len(text.split()) / 0.75))
+
+    def score(self) -> float:
+        age_seconds = (datetime.now() - self.timestamp).total_seconds() + 1
+        recency_score = 1.0 / age_seconds
+        return recency_score * 1000 + self.access_count
+
+class MemoryBudgetManager:
+    def __init__(self, budget: int = TOKEN_BUDGET):
+        self.budget = budget
+        self.items: list[MemoryItem] = []
+
+    def add(self, content: str, pinned: bool = False):
+        self.items.append(MemoryItem(content, pinned))
+
+    def total_tokens(self) -> int:
+        return sum(item.token_count for item in self.items)
+
+    def enforce_budget(self):
+        while self.total_tokens() > self.budget:
+            unpinned = [item for item in self.items if not item.pinned]
+            if not unpinned:
+                break
+            unpinned.sort(key=lambda x: x.score())
+            victim = unpinned[0]
+            self.items.remove(victim)
+
+    def get_context(self) -> str:
+        self.enforce_budget()
+        for item in self.items:
+            item.access_count += 1
+        return "\n".join(item.content for item in self.items)
+
+memory = MemoryBudgetManager(budget=TOKEN_BUDGET)
+
+agent = Agent(
+    name="Assistant",
+    instructions="You are a helpful assistant.",
+)
+
+memory.add("IMPORTANT: User's API key expires on March 1st.", pinned=True)
+
+for i in range(30):
+    topic = f"Tell me an interesting fact about country number {i + 1} in the world."
+    memory.add(f"User: {topic}")
+    memory_block = memory.get_context()
+    prompt = f"Memory:\n{memory_block}\n\nRespond to: {topic}"
+    result = Runner.run_sync(agent, prompt)
+    memory.add(f"Assistant: {result.final_output[:200]}")
+    print(f"Turn {i + 1} ({len(memory.items)} items, ~{memory.total_tokens()} tokens): {result.final_output[:60]}...")
+
+print(f"\nTotal memory items: {len(memory.items)}")
+print(f"Total tokens: {memory.total_tokens()}")
+print(f"Budget: {TOKEN_BUDGET}")
+pinned = [item.content for item in memory.items if item.pinned]
+print(f"Pinned items preserved: {pinned}")
+```
+
+## Why This Works
+
+The budget manager treats memory as a finite resource, similar to how an operating system manages RAM. Each memory item has a cost (estimated tokens) and a value (score based on recency and access frequency). When the total cost exceeds the budget, the lowest-value unpinned items are evicted first. This ensures that recent, frequently-accessed information survives while old, rarely-used items are dropped.
+
+The pinning mechanism protects critical information from eviction. In the example, the API key expiration note is pinned and survives all 30 turns of unrelated conversation, even as dozens of country facts are evicted to stay within budget. This gives users and developers explicit control over what memory is considered essential.
+
+## Key Takeaways
+
+- Unbounded memory growth will eventually crash the agent — a token budget with automatic enforcement prevents this.
+- Scoring items by recency and access frequency produces better eviction decisions than simple FIFO or random eviction.
+- Pinning critical items ensures they survive budget pressure, preventing loss of important information like deadlines or credentials.

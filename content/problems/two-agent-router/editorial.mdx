@@ -1,0 +1,195 @@
+## Approach
+
+The bug is that a single agent with a broad, unfocused prompt handles both billing questions and technical support. This leads to shallow, confused responses that mix financial advice with debugging steps. The agent lacks the specialized context and instructions needed to handle either domain well.
+
+The fix is to split the workload into three components: a billing agent with a focused billing-only system prompt, a tech support agent with a focused troubleshooting-only system prompt, and a router that classifies the user's intent and delegates to the correct specialist. The router inspects the incoming message for domain-specific keywords — billing terms (charge, invoice, refund, subscription, payment) route to the billing agent, while technical terms (crash, error, bug, install, export) route to the tech support agent. Each specialist agent has a narrow system prompt that keeps it focused on its domain, producing higher-quality, more relevant responses.
+
+In the OpenAI Agents SDK, the router can be implemented as a triage agent with `handoffs` to the two specialists, which is a first-class pattern in the framework. In LangChain, the router is a classification function that selects which chain to invoke based on the query content.
+
+## Solution
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+
+billing_agent = Agent(
+    name="Billing Specialist",
+    instructions=(
+        "You are a billing specialist. Help customers with billing issues including "
+        "charges, refunds, invoices, subscription management, and payment methods. "
+        "Do not provide technical support or troubleshooting advice."
+    ),
+)
+
+tech_support_agent = Agent(
+    name="Tech Support Specialist",
+    instructions=(
+        "You are a technical support specialist. Help customers with technical issues "
+        "including app crashes, bugs, errors, installation problems, and feature usage. "
+        "Do not provide billing or financial advice."
+    ),
+)
+
+router_agent = Agent(
+    name="Customer Support Router",
+    instructions=(
+        "You are a customer support router. Analyze the user's message and hand off to "
+        "the appropriate specialist:\n"
+        "- For billing, charges, refunds, invoices, subscriptions, or payment issues, "
+        "hand off to Billing Specialist.\n"
+        "- For technical issues, crashes, bugs, errors, or feature problems, "
+        "hand off to Tech Support Specialist."
+    ),
+    handoffs=[billing_agent, tech_support_agent],
+)
+
+print("--- Billing Query ---")
+result = Runner.run_sync(router_agent, "I was charged twice for my subscription last month")
+print(result.final_output)
+
+print("\n--- Tech Support Query ---")
+result = Runner.run_sync(router_agent, "My app keeps crashing when I try to export PDFs")
+print(result.final_output)
+```
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+billing_prompt = ChatPromptTemplate.from_messages([
+    ("system",
+     "You are a billing specialist. Help customers with billing issues including "
+     "charges, refunds, invoices, subscription management, and payment methods. "
+     "Do not provide technical support or troubleshooting advice."),
+    ("human", "{input}"),
+])
+
+tech_prompt = ChatPromptTemplate.from_messages([
+    ("system",
+     "You are a technical support specialist. Help customers with technical issues "
+     "including app crashes, bugs, errors, installation problems, and feature usage. "
+     "Do not provide billing or financial advice."),
+    ("human", "{input}"),
+])
+
+billing_chain = billing_prompt | llm
+tech_chain = tech_prompt | llm
+
+BILLING_KEYWORDS = [
+    "charge", "charged", "bill", "billing", "invoice", "refund", "subscription",
+    "payment", "pay", "price", "pricing", "plan", "upgrade", "downgrade",
+    "cancel", "renewal", "receipt", "fee", "cost", "credit card", "discount",
+]
+
+TECH_KEYWORDS = [
+    "crash", "crashing", "error", "bug", "broken", "fix", "install",
+    "update", "export", "import", "login", "password", "reset", "slow",
+    "freeze", "loading", "sync", "connect", "download", "upload", "feature",
+]
+
+def classify_intent(text: str) -> str:
+    text_lower = text.lower()
+    billing_score = sum(1 for kw in BILLING_KEYWORDS if kw in text_lower)
+    tech_score = sum(1 for kw in TECH_KEYWORDS if kw in text_lower)
+    if billing_score >= tech_score and billing_score > 0:
+        return "billing"
+    if tech_score > 0:
+        return "tech"
+    return "tech"
+
+def route_query(user_input: str) -> str:
+    intent = classify_intent(user_input)
+    if intent == "billing":
+        result = billing_chain.invoke({"input": user_input})
+    else:
+        result = tech_chain.invoke({"input": user_input})
+    return result.content
+
+print("--- Billing Query ---")
+print(route_query("I was charged twice for my subscription last month"))
+
+print("\n--- Tech Support Query ---")
+print(route_query("My app keeps crashing when I try to export PDFs"))
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew, Process
+
+billing_agent = Agent(
+    role="Billing Specialist",
+    goal="Help customers with billing issues including charges, refunds, invoices, and subscriptions.",
+    backstory=(
+        "You are a billing specialist. Help customers with billing issues including "
+        "charges, refunds, invoices, subscription management, and payment methods. "
+        "Do not provide technical support or troubleshooting advice."
+    ),
+)
+
+tech_support_agent = Agent(
+    role="Tech Support Specialist",
+    goal="Help customers with technical issues including crashes, bugs, errors, and feature usage.",
+    backstory=(
+        "You are a technical support specialist. Help customers with technical issues "
+        "including app crashes, bugs, errors, installation problems, and feature usage. "
+        "Do not provide billing or financial advice."
+    ),
+)
+
+BILLING_KEYWORDS = [
+    "charge", "charged", "bill", "billing", "invoice", "refund", "subscription",
+    "payment", "pay", "price", "pricing", "plan", "upgrade", "downgrade",
+    "cancel", "renewal", "receipt", "fee", "cost", "credit card", "discount",
+]
+
+TECH_KEYWORDS = [
+    "crash", "crashing", "error", "bug", "broken", "fix", "install",
+    "update", "export", "import", "login", "password", "reset", "slow",
+    "freeze", "loading", "sync", "connect", "download", "upload", "feature",
+]
+
+def classify_intent(text: str) -> str:
+    text_lower = text.lower()
+    billing_score = sum(1 for kw in BILLING_KEYWORDS if kw in text_lower)
+    tech_score = sum(1 for kw in TECH_KEYWORDS if kw in text_lower)
+    if billing_score >= tech_score and billing_score > 0:
+        return "billing"
+    if tech_score > 0:
+        return "tech"
+    return "tech"
+
+def route_query(user_input: str) -> str:
+    intent = classify_intent(user_input)
+    agent = billing_agent if intent == "billing" else tech_support_agent
+    task = Task(
+        description=user_input,
+        expected_output="A helpful, domain-specific response to the customer's issue.",
+        agent=agent,
+    )
+    crew = Crew(agents=[agent], tasks=[task], process=Process.sequential)
+    return str(crew.kickoff())
+
+print("--- Billing Query ---")
+print(route_query("I was charged twice for my subscription last month"))
+
+print("\n--- Tech Support Query ---")
+print(route_query("My app keeps crashing when I try to export PDFs"))
+```
+
+## Why This Works
+
+Splitting the single generalist agent into two specialists with focused system prompts dramatically improves response quality. The billing agent only knows about charges, refunds, and subscriptions — it won't accidentally suggest technical troubleshooting. The tech support agent only knows about crashes, errors, and fixes — it won't wander into billing territory. The router ensures each query reaches the right specialist based on intent classification.
+
+In the OpenAI Agents SDK solution, the `handoffs` parameter creates a native delegation mechanism where the router agent can seamlessly pass control to either specialist. In the LangChain solution, the `classify_intent` function uses keyword scoring to determine which chain to invoke — a simple but effective approach for clear domain boundaries. Both patterns ensure domain isolation: each specialist stays in its lane, producing focused, high-quality responses.
+
+## Key Takeaways
+
+- Specialized agents with focused system prompts produce better responses than a single generalist agent trying to cover multiple domains.
+- A router (triage agent or classification function) is essential for directing queries to the correct specialist.
+- Domain isolation prevents cross-contamination — billing advice stays in the billing agent, technical help stays in the tech agent.

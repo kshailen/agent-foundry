@@ -1,0 +1,220 @@
+## Approach
+
+The starter code relies on a single fact-checking agent whose answer is accepted without validation. Since LLMs can hallucinate or be confidently wrong, relying on one agent's output is risky. The fix implements a consensus protocol: multiple agents independently evaluate the same claim, and a voting mechanism aggregates their answers to determine the final result. This is analogous to ensemble methods in machine learning — multiple independent models reduce the impact of any single model's error.
+
+The implementation requires at least three verifier agents that independently assess the claim, each producing a TRUE/FALSE verdict with reasoning. A consensus mechanism then tallies the votes and selects the majority answer. When agents disagree, the majority rules, and the final output includes the consensus reasoning from the winning side.
+
+In CrewAI, each verifier runs as a separate task, and a final aggregation task combines the verdicts. In LangGraph, verifier nodes run (in parallel via fan-out or sequentially), their outputs are collected in state, and a consensus node counts votes and produces the final answer.
+
+## Solution
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai import LLM
+
+llm = LLM(model="gpt-4o-mini")
+
+verifier_1 = Agent(
+    role="Fact Checker A",
+    goal="Verify factual claims with careful reasoning",
+    backstory="You are a meticulous fact-checker who examines claims from a scientific perspective.",
+    llm=llm,
+)
+
+verifier_2 = Agent(
+    role="Fact Checker B",
+    goal="Verify factual claims with careful reasoning",
+    backstory="You are a skeptical fact-checker who looks for common misconceptions and myths.",
+    llm=llm,
+)
+
+verifier_3 = Agent(
+    role="Fact Checker C",
+    goal="Verify factual claims with careful reasoning",
+    backstory="You are a historical fact-checker who cross-references claims with established knowledge.",
+    llm=llm,
+)
+
+consensus_agent = Agent(
+    role="Consensus Aggregator",
+    goal="Aggregate multiple fact-check verdicts and determine the consensus answer",
+    backstory="You tally votes from multiple fact-checkers and produce a final majority verdict with reasoning.",
+    llm=llm,
+)
+
+verify_task_1 = Task(
+    description="Is the following claim true or false? Provide your verdict (TRUE or FALSE) and brief reasoning. Claim: '{claim}'",
+    expected_output="TRUE or FALSE with reasoning",
+    agent=verifier_1,
+)
+
+verify_task_2 = Task(
+    description="Is the following claim true or false? Provide your verdict (TRUE or FALSE) and brief reasoning. Claim: '{claim}'",
+    expected_output="TRUE or FALSE with reasoning",
+    agent=verifier_2,
+)
+
+verify_task_3 = Task(
+    description="Is the following claim true or false? Provide your verdict (TRUE or FALSE) and brief reasoning. Claim: '{claim}'",
+    expected_output="TRUE or FALSE with reasoning",
+    agent=verifier_3,
+)
+
+consensus_task = Task(
+    description="Review the three fact-check verdicts below and determine the consensus answer by majority vote. Report the final verdict (TRUE or FALSE), the vote tally, and the strongest reasoning.",
+    expected_output="Final verdict with vote tally and consensus reasoning",
+    agent=consensus_agent,
+    context=[verify_task_1, verify_task_2, verify_task_3],
+)
+
+crew = Crew(
+    agents=[verifier_1, verifier_2, verifier_3, consensus_agent],
+    tasks=[verify_task_1, verify_task_2, verify_task_3, consensus_task],
+    process=Process.sequential,
+)
+
+result = crew.kickoff(inputs={"claim": "The Great Wall of China is visible from space with the naked eye"})
+print(result)
+```
+
+### LangGraph
+
+```python
+from langchain_openai import ChatOpenAI
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+class State(TypedDict):
+    claim: str
+    verdict_1: str
+    verdict_2: str
+    verdict_3: str
+    answer: str
+
+def verifier_1(state: State) -> dict:
+    prompt = (
+        f"You are a meticulous fact-checker examining claims from a scientific perspective. "
+        f"Is this claim true or false? Provide your verdict (TRUE or FALSE) and brief reasoning.\n\n"
+        f"Claim: '{state['claim']}'"
+    )
+    response = llm.invoke(prompt)
+    return {"verdict_1": response.content}
+
+def verifier_2(state: State) -> dict:
+    prompt = (
+        f"You are a skeptical fact-checker who looks for common misconceptions and myths. "
+        f"Is this claim true or false? Provide your verdict (TRUE or FALSE) and brief reasoning.\n\n"
+        f"Claim: '{state['claim']}'"
+    )
+    response = llm.invoke(prompt)
+    return {"verdict_2": response.content}
+
+def verifier_3(state: State) -> dict:
+    prompt = (
+        f"You are a historical fact-checker who cross-references with established knowledge. "
+        f"Is this claim true or false? Provide your verdict (TRUE or FALSE) and brief reasoning.\n\n"
+        f"Claim: '{state['claim']}'"
+    )
+    response = llm.invoke(prompt)
+    return {"verdict_3": response.content}
+
+def consensus(state: State) -> dict:
+    prompt = (
+        f"Three fact-checkers have evaluated this claim: '{state['claim']}'\n\n"
+        f"Verdict A: {state['verdict_1']}\n\n"
+        f"Verdict B: {state['verdict_2']}\n\n"
+        f"Verdict C: {state['verdict_3']}\n\n"
+        f"Determine the consensus by majority vote. Report the final verdict (TRUE or FALSE), "
+        f"the vote tally (e.g., 2 TRUE vs 1 FALSE), and the strongest reasoning from the majority side."
+    )
+    response = llm.invoke(prompt)
+    return {"answer": response.content}
+
+graph = StateGraph(State)
+graph.add_node("verifier_1", verifier_1)
+graph.add_node("verifier_2", verifier_2)
+graph.add_node("verifier_3", verifier_3)
+graph.add_node("consensus", consensus)
+
+graph.add_edge(START, "verifier_1")
+graph.add_edge(START, "verifier_2")
+graph.add_edge(START, "verifier_3")
+graph.add_edge("verifier_1", "consensus")
+graph.add_edge("verifier_2", "consensus")
+graph.add_edge("verifier_3", "consensus")
+graph.add_edge("consensus", END)
+
+app = graph.compile()
+result = app.invoke({
+    "claim": "The Great Wall of China is visible from space with the naked eye",
+    "verdict_1": "",
+    "verdict_2": "",
+    "verdict_3": "",
+    "answer": "",
+})
+print(result["answer"])
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+
+verifier_1 = Agent(
+    name="Fact Checker A",
+    instructions="You are a meticulous fact-checker who examines claims from a scientific perspective. Is the claim true or false? Provide your verdict (TRUE or FALSE) and brief reasoning.",
+    model="gpt-4o-mini",
+)
+
+verifier_2 = Agent(
+    name="Fact Checker B",
+    instructions="You are a skeptical fact-checker who looks for common misconceptions and myths. Is the claim true or false? Provide your verdict (TRUE or FALSE) and brief reasoning.",
+    model="gpt-4o-mini",
+)
+
+verifier_3 = Agent(
+    name="Fact Checker C",
+    instructions="You are a historical fact-checker who cross-references claims with established knowledge. Is the claim true or false? Provide your verdict (TRUE or FALSE) and brief reasoning.",
+    model="gpt-4o-mini",
+)
+
+consensus_agent = Agent(
+    name="Consensus Aggregator",
+    instructions="You tally votes from multiple fact-checkers and produce a final majority verdict. Report the final verdict (TRUE or FALSE), the vote tally, and the strongest reasoning from the majority side.",
+    model="gpt-4o-mini",
+)
+
+claim = "The Great Wall of China is visible from space with the naked eye"
+
+verdict_1 = Runner.run_sync(verifier_1, f"Claim: '{claim}'")
+verdict_2 = Runner.run_sync(verifier_2, f"Claim: '{claim}'")
+verdict_3 = Runner.run_sync(verifier_3, f"Claim: '{claim}'")
+
+consensus_input = (
+    f"Three fact-checkers have evaluated this claim: '{claim}'\n\n"
+    f"Verdict A: {verdict_1.final_output}\n\n"
+    f"Verdict B: {verdict_2.final_output}\n\n"
+    f"Verdict C: {verdict_3.final_output}\n\n"
+    f"Determine the consensus by majority vote. Report the final verdict (TRUE or FALSE), "
+    f"the vote tally, and the strongest reasoning from the majority side."
+)
+
+result = Runner.run_sync(consensus_agent, consensus_input)
+print(result.final_output)
+```
+
+## Why This Works
+
+Independent verification by multiple agents reduces the probability that a single hallucination becomes the accepted answer. If one agent incorrectly says TRUE while two correctly say FALSE, the majority vote corrects the error. Each verifier has a slightly different perspective (scientific, skeptical, historical), which increases the diversity of reasoning and reduces correlated errors.
+
+The consensus node does not simply count keywords — it reviews the full reasoning from each verifier and produces a nuanced final answer that includes the vote tally and the strongest arguments from the majority side. No single agent's answer is automatically preferred, eliminating first-agent bias.
+
+## Key Takeaways
+
+- Multi-agent consensus reduces the impact of individual hallucinations by requiring agreement among independent verifiers.
+- Give each verifier a distinct perspective or backstory to reduce correlated errors — if all verifiers think identically, consensus provides no benefit.
+- The consensus mechanism should report the vote tally and reasoning, not just the final verdict, so the user can assess confidence level.

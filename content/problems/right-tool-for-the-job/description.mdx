@@ -1,0 +1,44 @@
+## The Problem
+
+You have an assistant with four tools: weather lookup, web search, a calculator, and a calendar check. In testing, the model often picks the **wrong** tool—weather questions trigger `web_search`, percentage math goes to `calendar_check`, and scheduling questions bounce between tools. The implementations are correct; the bug is that **tool docstrings are vague** and the **system prompt** does not route traffic. Under the problem constraints you may **not** remove tools or change implementations—you may only improve **tool descriptions** and the **system prompt** so each query type maps to the right tool.
+
+## Examples
+
+### Weather query
+
+**User input:** What's the weather in San Francisco?
+
+**Wrong behavior:** Agent calls `web_search` (or `calendar_check`) instead of `weather_lookup`.
+
+**Expected:** Agent calls `weather_lookup` with a location string and answers from that tool's output.
+
+### Math query
+
+**User input:** What is 15% of 230?
+
+**Wrong behavior:** Agent calls `calendar_check` or `web_search` instead of evaluating the expression.
+
+**Expected:** Agent calls `calculator` with an appropriate arithmetic expression (e.g. `230 * 0.15`) and returns the numeric result.
+
+### Calendar query
+
+**User input:** Do I have any meetings on Friday?
+
+**Wrong behavior:** Agent uses `web_search` or `weather_lookup`.
+
+**Expected:** Agent calls `calendar_check` with the relevant date and answers from the returned events.
+
+## Your Task
+
+1. Rewrite each tool's description so it states **what the tool is for**, **what input it expects**, and **what output the model should expect**—without overlapping another tool's job.
+2. Update the **system prompt** with explicit routing rules (e.g. weather → `weather_lookup`, general knowledge / broad search → `web_search`, arithmetic → `calculator`, schedule → `calendar_check`).
+3. Keep all four tools and their bodies unchanged.
+
+## Evaluation
+
+Submissions are judged on:
+
+- **Correct tool selection:** The right tool is chosen for each kind of question.
+- **No unnecessary tool calls:** The agent does not chain extra tools when one suffices.
+- **Clear tool descriptions:** Each description is specific about purpose, inputs, and outputs.
+- **All test queries pass:** The provided weather, calculator, and calendar test prompts route to the correct tools.

@@ -1,0 +1,55 @@
+{
+  "number": 67,
+  "title": "Output Schema Validator",
+  "difficulty": "medium",
+  "categories": [
+    "guardrails"
+  ],
+  "frameworks": [
+    "langchain",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "The agent's output must be validated against a Pydantic model before being returned",
+    "Invalid outputs must trigger a re-prompt or a structured error, not a crash",
+    "The Pydantic schema must not be weakened to match bad outputs"
+  ],
+  "hints": [
+    "Define a Pydantic model for the expected output shape and validate the agent's response against it",
+    "If validation fails, re-prompt the LLM with the validation error to get a corrected response",
+    "Use json.loads() to parse the agent's output before passing it to Pydantic"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom pydantic import BaseModel\n\nclass ProductReview(BaseModel):\n    product_name: str\n    rating: int  # 1-5\n    summary: str\n    pros: list[str]\n    cons: list[str]\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a product review assistant. Analyze the given product and return a structured review.\"),\n    (\"human\", \"{input}\"),\n])\n\nchain = prompt | llm\n\n# BUG: The output is not validated — it may not match the ProductReview schema\nresult = chain.invoke({\"input\": \"Review the Sony WH-1000XM5 headphones\"})\nprint(result.content)",
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom pydantic import BaseModel\n\nclass ProductReview(BaseModel):\n    product_name: str\n    rating: int  # 1-5\n    summary: str\n    pros: list[str]\n    cons: list[str]\n\n# BUG: The output is not validated — it may not match the ProductReview schema\nagent = Agent(\n    name=\"Review Assistant\",\n    instructions=\"You are a product review assistant. Analyze the given product and return a structured JSON review with fields: product_name, rating (1-5), summary, pros (list), cons (list).\",\n)\n\nresult = Runner.run_sync(agent, \"Review the Sony WH-1000XM5 headphones\")\nprint(result.final_output)",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom pydantic import BaseModel\n\nclass ProductReview(BaseModel):\n    product_name: str\n    rating: int  # 1-5\n    summary: str\n    pros: list[str]\n    cons: list[str]\n\n# BUG: The output is not validated — it may not match the ProductReview schema\nreviewer = Agent(\n    role=\"Review Assistant\",\n    goal=\"Analyze products and return structured reviews\",\n    backstory=\"You are a product review assistant who provides detailed, structured reviews.\",\n)\n\ntask = Task(\n    description=\"Review the Sony WH-1000XM5 headphones. Return a structured JSON review with fields: product_name, rating (1-5), summary, pros (list), cons (list).\",\n    expected_output=\"A structured product review with product_name, rating, summary, pros, and cons\",\n    agent=reviewer,\n)\n\ncrew = Crew(agents=[reviewer], tasks=[task])\nresult = crew.kickoff()\nprint(result)"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/output-schema-validator-langchain.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/output-schema-validator-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/output-schema-validator-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "schema-validated",
+      "label": "Output matches Pydantic schema",
+      "description": "The final output validates successfully against the ProductReview model"
+    },
+    {
+      "id": "invalid-handled",
+      "label": "Invalid output is handled",
+      "description": "If the LLM returns malformed output, it is caught and corrected or reported cleanly"
+    },
+    {
+      "id": "all-fields-present",
+      "label": "All required fields present",
+      "description": "The output includes product_name, rating, summary, pros, and cons"
+    },
+    {
+      "id": "no-crash",
+      "label": "No unhandled exceptions",
+      "description": "Schema validation failures do not crash the application"
+    }
+  ]
+}

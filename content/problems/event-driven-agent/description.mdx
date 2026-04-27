@@ -1,0 +1,45 @@
+## The Problem
+
+Your personal assistant agent uses a pull-based polling loop—checking for new events every 5 seconds, processing everything with the same generic handler, and losing context between related events. An email about the Q4 report and a follow-up email adding APAC numbers are treated as completely independent events. Your job is to **refactor this into an event-driven architecture** where events trigger specific handlers reactively, and related events share context.
+
+## Examples
+
+### Example 1
+
+**Events:**
+1. New email from boss: "Please prepare the Q4 report by Friday."
+2. Schedule change: Team standup moved from 9:00 AM to 10:30 AM.
+3. Follow-up email from boss: "Also include the APAC numbers."
+
+**Current (bad) output:** All three events get the same generic "Handle this event" processing. The follow-up email has no context about the original Q4 report request.
+
+**Expected (good) output:**
+- Email handler drafts a task: *"Q4 report for boss — deadline Friday."*
+- Schedule handler updates calendar: *"Standup moved to 10:30 AM. Notifying attendees."*
+- Follow-up email handler recognizes the thread and updates the task: *"Q4 report — added requirement: include APAC numbers."*
+
+### Example 2
+
+**Event:** High-severity alert — Server CPU at 95%
+
+**Current (bad) output:** Generic response with no urgency or alert-specific actions.
+
+**Expected (good) output:** Alert handler triggers immediately with urgency: *"[HIGH ALERT] Server CPU at 95%. Actions: 1) Notify on-call engineer. 2) Check for runaway processes. 3) Scale if auto-scaling is available."*
+
+## Your Task
+
+Modify the starter code so that:
+
+- The agent **reacts to events** as they arrive rather than polling on a fixed interval.
+- Each event type (email, schedule change, alert) has a **dedicated handler** with specialized behavior.
+- Events are processed **asynchronously** as they arrive.
+- The agent **maintains context** across related events (e.g., email threads from the same sender/subject).
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Reactive event processing:** The agent reacts to events as they arrive rather than polling at intervals.
+- **Event-specific handlers:** Each event type triggers a different handler with appropriate behavior.
+- **Asynchronous processing:** Events are processed asynchronously as they arrive, not batched.
+- **Cross-event context:** The agent maintains context across related events like email threads.

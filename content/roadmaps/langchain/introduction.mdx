@@ -1,0 +1,39 @@
+# What is LangChain?
+
+LangChain is an open-source framework designed to simplify building applications powered by large language models (LLMs). It provides a standard interface for chains, agents, memory, and integrations with dozens of LLM providers and tools.
+
+## Why LangChain?
+
+Building production-grade LLM applications involves much more than just calling an API. You need to:
+
+- **Compose complex workflows** — chain multiple LLM calls, tool invocations, and data retrieval steps together.
+- **Manage conversation state** — remember what the user said earlier in long conversations.
+- **Connect to external data** — ground responses in your own documents, databases, and APIs.
+- **Handle errors gracefully** — retry, fallback, and validate outputs reliably.
+
+LangChain solves these problems with a modular, composable architecture.
+
+## Core Abstractions
+
+| Concept | Description |
+|---------|-------------|
+| **Models** | Wrappers around LLM providers (OpenAI, Anthropic, etc.) |
+| **Prompts** | Templates for constructing inputs to models |
+| **Chains** | Sequences of calls (model, tool, retriever, etc.) |
+| **Agents** | Autonomous decision-makers that choose tools at runtime |
+| **Memory** | State management across interactions |
+| **Retrievers** | Fetch relevant documents for context-augmented generation |
+
+## LangChain vs. Calling the API Directly
+
+Using an LLM API directly is fine for simple use cases. LangChain becomes valuable when you need:
+
+- Multi-step reasoning chains
+- Dynamic tool selection by an agent
+- Retrieval-augmented generation (RAG) pipelines
+- Persistent memory across sessions
+- Structured output parsing
+
+## What You'll Learn
+
+In this roadmap, you'll go from zero to building fully functional AI agents with LangChain. Each section builds on the previous one, taking you from basic prompt templates to production-ready RAG and agent architectures.

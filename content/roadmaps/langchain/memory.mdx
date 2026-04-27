@@ -1,0 +1,187 @@
+# Short-Term & Long-Term Memory
+
+Memory allows agents to recall information from previous interactions. LangChain provides two types: **short-term memory** for conversation history within a session, and **long-term memory** for persistent knowledge across sessions.
+
+## Short-Term Memory with InMemorySaver
+
+Short-term memory preserves conversation history across multiple turns within a thread. It uses a checkpointer to save agent state after each interaction:
+
+```python
+from langchain.chat_models import init_chat_model
+from langgraph.prebuilt import create_react_agent
+from langgraph.checkpoint.memory import InMemorySaver
+
+model = init_chat_model("gpt-4o-mini", model_provider="openai")
+checkpointer = InMemorySaver()
+
+agent = create_react_agent(
+    model=model,
+    tools=[],
+    prompt="You are a helpful assistant. Remember what the user tells you.",
+    checkpointer=checkpointer,
+)
+```
+
+## Thread IDs for Conversation Persistence
+
+Each conversation is identified by a `thread_id`. Messages sent with the same thread ID share context:
+
+```python
+from langchain_core.messages import HumanMessage
+
+config = {"configurable": {"thread_id": "session-1"}}
+
+result = agent.invoke(
+    {"messages": [HumanMessage(content="My name is Alice and I'm a software engineer.")]},
+    config=config,
+)
+print(result["messages"][-1].content)
+
+result = agent.invoke(
+    {"messages": [HumanMessage(content="What's my name and profession?")]},
+    config=config,
+)
+print(result["messages"][-1].content)
+```
+
+The agent remembers Alice's name and profession because both calls share `thread_id: "session-1"`. A different thread ID starts a fresh conversation with no shared history.
+
+## Long-Term Memory with InMemoryStore
+
+Long-term memory persists facts beyond a single conversation thread. It uses a **store** with namespaces and keys to save and retrieve information:
+
+```python
+from langgraph.store.memory import InMemoryStore
+
+store = InMemoryStore()
+
+agent = create_react_agent(
+    model=model,
+    tools=[],
+    prompt="You are a helpful assistant with access to long-term memory.",
+    checkpointer=checkpointer,
+    store=store,
+)
+```
+
+## store.put — Saving Memories
+
+Use `store.put()` to save a memory item under a namespace and key:
+
+```python
+store.put(
+    namespace=("users", "alice"),
+    key="preferences",
+    value={"favorite_color": "blue", "language": "Python", "timezone": "PST"},
+)
+
+store.put(
+    namespace=("users", "alice"),
+    key="bio",
+    value={"role": "engineer", "company": "Acme Corp", "years_exp": 5},
+)
+```
+
+Namespaces act like folders. You can organize memories by user, topic, or any hierarchy that makes sense.
+
+## store.get — Retrieving Memories
+
+Retrieve a specific item by namespace and key:
+
+```python
+item = store.get(namespace=("users", "alice"), key="preferences")
+print(item.value)
+# {"favorite_color": "blue", "language": "Python", "timezone": "PST"}
+```
+
+## store.search — Listing Memories
+
+Search for all items within a namespace:
+
+```python
+items = store.search(namespace=("users", "alice"))
+for item in items:
+    print(f"{item.key}: {item.value}")
+```
+
+## Semantic Search with IndexConfig
+
+You can enable semantic search over stored memories using `IndexConfig`. This creates embeddings so you can find memories by meaning rather than exact key:
+
+```python
+from langgraph.store.memory import InMemoryStore
+
+store = InMemoryStore(
+    index={
+        "dims": 1536,
+        "embed": "openai:text-embedding-3-small",
+    }
+)
+
+store.put(
+    namespace=("knowledge",),
+    key="python-tip",
+    value={"text": "Use list comprehensions for concise loops in Python"},
+)
+store.put(
+    namespace=("knowledge",),
+    key="testing-tip",
+    value={"text": "Write unit tests before refactoring code"},
+)
+store.put(
+    namespace=("knowledge",),
+    key="git-tip",
+    value={"text": "Commit often with meaningful messages"},
+)
+```
+
+Now search by meaning:
+
+```python
+results = store.search(
+    namespace=("knowledge",),
+    query="how to write better Python code",
+)
+for result in results:
+    print(f"{result.key}: {result.value['text']} (score: {result.score:.3f})")
+```
+
+## Combining Short-Term and Long-Term Memory
+
+The real power comes from using both together. Short-term memory handles the current conversation, while long-term memory stores persistent facts:
+
+```python
+checkpointer = InMemorySaver()
+store = InMemoryStore()
+
+store.put(
+    namespace=("users", "alice"),
+    key="preferences",
+    value={"favorite_language": "Python", "experience": "senior"},
+)
+
+agent = create_react_agent(
+    model=model,
+    tools=[],
+    prompt="You are a helpful coding assistant. Use the user's stored preferences when giving advice.",
+    checkpointer=checkpointer,
+    store=store,
+)
+
+config = {"configurable": {"thread_id": "coding-help"}}
+
+result = agent.invoke(
+    {"messages": [HumanMessage(content="Can you suggest a project for me?")]},
+    config=config,
+)
+print(result["messages"][-1].content)
+```
+
+## Key Takeaways
+
+- **Short-term memory** uses `InMemorySaver` as a checkpointer to persist conversation history within a thread
+- The `thread_id` in config groups messages into a conversation — different IDs create isolated threads
+- **Long-term memory** uses `InMemoryStore` with namespaces and keys to store persistent facts
+- `store.put()` saves data, `store.get()` retrieves by key, `store.search()` lists by namespace
+- Semantic search with `IndexConfig` lets you find memories by meaning using embeddings
+- Combine both memory types for agents that remember conversation context and persistent user preferences

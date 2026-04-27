@@ -1,0 +1,38 @@
+## The Problem
+
+You have a two-agent pipeline for processing customer feedback: an **extractor** pulls out key fields (customer name, issue, product) and an **analyzer** classifies sentiment and priority. Currently the extractor passes its output as **free-text prose**, and the analyzer sometimes misinterprets or loses important fields. Your task is to switch to **structured messages** (e.g., Pydantic models or typed dictionaries) so that all fields are explicitly named and reliably preserved across agent boundaries.
+
+## Examples
+
+### Example 1
+
+**User input:** "I'm John and my ProMax laptop screen flickered twice today. Very frustrated!"
+
+**Current (bad) output:** The extractor outputs a paragraph like "The customer John reported a screen flickering issue with a ProMax laptop." The analyzer receives this text, sometimes misses the product name, and outputs an incomplete analysis.
+
+**Expected (good) output:** The extractor outputs a structured object: `{"customer_name": "John", "issue": "screen flickered twice", "product": "ProMax laptop"}`. The analyzer parses these fields and returns `{"sentiment": "negative", "priority": "high", "customer_name": "John", "product": "ProMax laptop"}`.
+
+### Example 2
+
+**User input:** "Sarah here — love the new CloudSync feature on my TabletX. Works great!"
+
+**Current (bad) output:** The extractor buries the product name in prose. The analyzer may output a sentiment but without clear product attribution.
+
+**Expected (good) output:** Structured extraction: `{"customer_name": "Sarah", "issue": "positive feedback on CloudSync feature", "product": "TabletX"}`. Structured analysis: `{"sentiment": "positive", "priority": "low"}`.
+
+## Your Task
+
+Refactor the starter code so that:
+
+- A **structured schema** (Pydantic model or typed dict) defines the message format between agents.
+- The **extractor** outputs structured data conforming to the schema.
+- The **analyzer** receives and parses the structured data, preserving all fields.
+- No key information is lost between agents.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Structured schema defined:** A Pydantic model or equivalent schema defines the inter-agent message format.
+- **All fields preserved:** Key information (customer name, issue, product) is not lost between agents.
+- **Receiver parses structured data:** The receiving agent parses the structured message rather than treating it as raw text.

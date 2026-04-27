@@ -1,0 +1,146 @@
+# Hierarchical Process
+
+In CrewAI, a **hierarchical process** adds a **manager** layer on top of your specialist agents. The manager **coordinates** the run, **delegates** work to the right people based on what each task needs, and **checks** that outputs meet expectations before the crew finishes. Specialists focus on execution; the manager focuses on planning, assignment, and quality control.
+
+## Tasks are not pre-assigned to agents
+
+Unlike a rigid sequential pipeline where you often pin each `Task` to a specific `agent`, **hierarchical mode is built around delegation**: you still define **what** needs to be done (task descriptions and expected outputs), but **who** does each piece is **not fixed up front** in the same way. The manager reads the task, considers each specialist’s **role, goal, and capabilities**, and **allocates** work at runtime. That is why hierarchical crews shine when the best next step depends on intermediate results rather than a fixed script.
+
+## Two ways to configure the manager
+
+**1. Auto-created manager — `manager_llm`**
+
+Pass an LLM string (or compatible config). CrewAI **creates a manager** for you that uses that model to reason about delegation and validation.
+
+```python
+crew = Crew(
+    agents=[researcher, analyst, writer],
+    tasks=[task_a, task_b, task_c],
+    process=Process.hierarchical,
+    manager_llm="gpt-4o",
+    verbose=True,
+)
+```
+
+**2. Custom manager — `manager_agent`**
+
+Build an `Agent` with an explicit **role**, **goal**, and **backstory** so the lead behaves like *your* product owner, tech lead, or editor—not a generic coordinator.
+
+```python
+crew = Crew(
+    agents=[researcher, analyst, writer],
+    tasks=[task_a, task_b, task_c],
+    process=Process.hierarchical,
+    manager_agent=project_manager,
+    verbose=True,
+)
+```
+
+Use **`manager_llm`** for a quick start; use **`manager_agent`** when tone, priorities, and decision style matter for your product.
+
+## Complete example: three specialists and `Process.hierarchical`
+
+Below, **three specialists** (research, analysis, writing) are available to the crew. Tasks describe outcomes; under hierarchical process the **manager** decides how to use the team. Worker agents typically set **`allow_delegation=False`** so only the manager orchestrates. The manager (auto or custom) uses **`allow_delegation=True`** when you configure it explicitly.
+
+```python
+from crewai import Agent, Task, Crew, Process
+
+researcher = Agent(
+    role="Researcher",
+    goal="Gather accurate, sourced facts and concise notes on the topic.",
+    backstory="You are rigorous about facts and avoid speculation.",
+    verbose=True,
+    allow_delegation=False,
+)
+
+analyst = Agent(
+    role="Analyst",
+    goal="Turn raw information into clear insights, risks, and recommendations.",
+    backstory="You structure messy inputs and call out assumptions.",
+    verbose=True,
+    allow_delegation=False,
+)
+
+writer = Agent(
+    role="Writer",
+    goal="Produce polished prose that matches the requested format.",
+    backstory="You edit for clarity and audience-appropriate tone.",
+    verbose=True,
+    allow_delegation=False,
+)
+
+task_a = Task(
+    description="Understand the landscape for {topic}: key players, trends, and one open question.",
+    expected_output="Short structured notes suitable for further analysis.",
+)
+
+task_b = Task(
+    description="From the team’s findings so far, identify top risks and opportunities for {topic}.",
+    expected_output="Bulleted risks and opportunities with one-line rationale each.",
+)
+
+task_c = Task(
+    description="Produce a brief executive summary for stakeholders on {topic}.",
+    expected_output="Two or three tight paragraphs, no fluff.",
+)
+
+crew = Crew(
+    agents=[researcher, analyst, writer],
+    tasks=[task_a, task_b, task_c],
+    process=Process.hierarchical,
+    manager_llm="gpt-4o",
+    verbose=True,
+)
+
+result = crew.kickoff(inputs={"topic": "agentic AI in enterprises"})
+print(result.raw)
+```
+
+## Manager responsibilities
+
+- **Task delegation** — Breaks work down (implicitly or explicitly), picks which specialist handles each slice, and sequences or parallelizes based on the situation.
+- **Result validation** — Compares worker outputs to `expected_output` and the overall goal; may send work back for revision or ask another agent to supplement.
+- **Conflict resolution** — When two perspectives disagree or quality is unclear, the manager arbitrates, asks for clarification, or reframes the next task so the crew converges.
+
+## Hierarchical vs sequential
+
+| Prefer **hierarchical** when… | Prefer **sequential** when… |
+|------------------------------|-----------------------------|
+| The problem is **complex** and multi-step, and a single fixed order is hard to specify in advance | The workflow is a **known pipeline** with stable stages |
+| **Task order or staffing** should depend on **intermediate results** | You want **predictable** ordering from the `tasks` list alone |
+| You want **intelligent coordination**—a lead that adapts planning and handoffs | You want **simpler tracing** and minimal orchestration overhead |
+
+Sequential crews are usually easier to debug line-by-line; hierarchical crews trade that for **flexibility** when the manager’s judgment adds real value.
+
+## Custom manager agent: role and goal
+
+Define the manager like any other agent, but aim its **role** and **goal** at **coordination and quality**, not at doing every specialist job itself. Keep **worker agents** in the `agents` list; pass the manager only via **`manager_agent`** (do not duplicate it as a worker unless your version’s docs explicitly require otherwise).
+
+```python
+project_manager = Agent(
+    role="Engagement Lead",
+    goal="Deliver a coherent, client-ready brief by delegating to research, analysis, and writing experts—and reject work that misses the brief.",
+    backstory=(
+        "You have run consulting engagements for a decade. "
+        "You insist on clarity, traceable reasoning, and one voice in the final summary."
+    ),
+    verbose=True,
+    allow_delegation=True,
+)
+
+crew = Crew(
+    agents=[researcher, analyst, writer],
+    tasks=[task_a, task_b, task_c],
+    process=Process.hierarchical,
+    manager_agent=project_manager,
+    verbose=True,
+)
+```
+
+## Key takeaways
+
+- **Hierarchical process** uses a **manager** to **coordinate**, **delegate** to specialists, and **validate** outcomes.
+- **Delegation is dynamic**: tasks describe work; **assignment follows capabilities** and runtime context, not a single fixed mapping you set in stone.
+- Configure the lead with **`manager_llm="gpt-4o"`** (auto manager) or **`manager_agent=Agent(...)`** (custom personality and priorities).
+- Use **`Process.hierarchical`** on `Crew` together with one of those manager options.
+- Choose **hierarchical** for **complex**, **context-dependent** workflows; choose **sequential** for **straightforward, ordered pipelines**.

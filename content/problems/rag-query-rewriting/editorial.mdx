@@ -1,0 +1,241 @@
+## Approach
+
+Users rarely phrase questions using the exact terminology found in documentation. A user asks "How do I log in?" while the document says "OAuth 2.0 authentication with JWT tokens." Vector similarity between "log in" and "OAuth 2.0 authentication" is weak, so the retriever misses the most relevant document. The starter code passes the user's raw query directly to the retriever with no preprocessing.
+
+The fix is to add a query rewriting step before retrieval. Use the LLM to reformulate the user's vague or colloquial question into a more specific search query that uses technical terminology likely to appear in the documents. "How do I log in?" becomes something like "authentication OAuth JWT token setup." This dramatically improves retrieval accuracy because the rewritten query has stronger semantic overlap with the actual document content.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="Authentication uses OAuth 2.0 with JWT tokens. Tokens expire after 24 hours."),
+    Document(page_content="Rate limiting: API allows 1000 requests per minute per API key."),
+    Document(page_content="Error handling: 4xx errors return JSON with 'error' and 'message' fields."),
+    Document(page_content="Pagination: Use 'cursor' parameter for paginated endpoints. Max page size is 100."),
+    Document(page_content="Webhook events are signed with HMAC-SHA256. Verify the X-Signature header."),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+retriever = vectorstore.as_retriever()
+
+rewrite_prompt = ChatPromptTemplate.from_messages([
+    ("system",
+     "You are a search query optimizer. Rewrite the user's question into a "
+     "more specific search query that uses technical terminology likely found "
+     "in API documentation. Return ONLY the rewritten query, nothing else."),
+    ("human", "{question}"),
+])
+
+answer_prompt = ChatPromptTemplate.from_messages([
+    ("system",
+     "Answer the question based on the context below.\n\nContext:\n{context}"),
+    ("human", "{question}"),
+])
+
+def ask(question: str) -> str:
+    rewrite_chain = rewrite_prompt | llm
+    rewritten = rewrite_chain.invoke({"question": question}).content
+
+    docs = retriever.invoke(rewritten)
+    context = "\n".join([doc.page_content for doc in docs])
+
+    answer_chain = answer_prompt | llm
+    result = answer_chain.invoke({"context": context, "question": question})
+    return result.content
+
+print(ask("How do I log in?"))
+print(ask("What happens when something goes wrong?"))
+print(ask("How do I get notified of changes?"))
+```
+
+### LangGraph
+
+```python
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="Authentication uses OAuth 2.0 with JWT tokens. Tokens expire after 24 hours."),
+    Document(page_content="Rate limiting: API allows 1000 requests per minute per API key."),
+    Document(page_content="Error handling: 4xx errors return JSON with 'error' and 'message' fields."),
+    Document(page_content="Pagination: Use 'cursor' parameter for paginated endpoints. Max page size is 100."),
+    Document(page_content="Webhook events are signed with HMAC-SHA256. Verify the X-Signature header."),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+retriever = vectorstore.as_retriever()
+
+class State(TypedDict):
+    question: str
+    rewritten_query: str
+    context: str
+    answer: str
+
+def rewrite_query(state: State) -> State:
+    response = llm.invoke(
+        f"You are a search query optimizer. Rewrite this question into a "
+        f"more specific search query using technical terminology likely found "
+        f"in API documentation. Return ONLY the rewritten query.\n\n"
+        f"Question: {state['question']}"
+    )
+    return {"rewritten_query": response.content}
+
+def retrieve(state: State) -> State:
+    docs = retriever.invoke(state["rewritten_query"])
+    context = "\n".join([doc.page_content for doc in docs])
+    return {"context": context}
+
+def answer(state: State) -> State:
+    response = llm.invoke(
+        f"Answer the question based on the context below.\n\n"
+        f"Context:\n{state['context']}\n\n"
+        f"Question: {state['question']}"
+    )
+    return {"answer": response.content}
+
+graph = StateGraph(State)
+graph.add_node("rewrite", rewrite_query)
+graph.add_node("retrieve", retrieve)
+graph.add_node("answer", answer)
+graph.add_edge(START, "rewrite")
+graph.add_edge("rewrite", "retrieve")
+graph.add_edge("retrieve", "answer")
+graph.add_edge("answer", END)
+
+app = graph.compile()
+result = app.invoke({"question": "How do I log in?"})
+print(result["answer"])
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="Authentication uses OAuth 2.0 with JWT tokens. Tokens expire after 24 hours."),
+    Document(page_content="Rate limiting: API allows 1000 requests per minute per API key."),
+    Document(page_content="Error handling: 4xx errors return JSON with 'error' and 'message' fields."),
+    Document(page_content="Pagination: Use 'cursor' parameter for paginated endpoints. Max page size is 100."),
+    Document(page_content="Webhook events are signed with HMAC-SHA256. Verify the X-Signature header."),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+retriever = vectorstore.as_retriever()
+
+rewriter = Agent(
+    role="Query Optimizer",
+    goal="Rewrite vague user queries into specific technical search queries",
+    backstory="You are a search query optimizer. Rewrite questions into specific queries using technical terminology likely found in API documentation. Return ONLY the rewritten query.",
+)
+
+answerer = Agent(
+    role="Q&A Assistant",
+    goal="Answer questions accurately based on provided context",
+    backstory="You answer questions using only the provided context.",
+)
+
+def ask(question: str) -> str:
+    rewrite_task = Task(
+        description=f"Rewrite this question into a more specific search query using technical terminology: {question}",
+        expected_output="A rewritten search query",
+        agent=rewriter,
+    )
+    rewrite_crew = Crew(agents=[rewriter], tasks=[rewrite_task])
+    rewritten = str(rewrite_crew.kickoff())
+
+    docs = retriever.invoke(rewritten)
+    context = "\n".join([doc.page_content for doc in docs])
+
+    answer_task = Task(
+        description=f"Answer this question based on the context.\n\nContext:\n{context}\n\nQuestion: {question}",
+        expected_output="A helpful answer based on the context",
+        agent=answerer,
+    )
+    answer_crew = Crew(agents=[answerer], tasks=[answer_task])
+    return str(answer_crew.kickoff())
+
+print(ask("How do I log in?"))
+print(ask("What happens when something goes wrong?"))
+print(ask("How do I get notified of changes?"))
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="Authentication uses OAuth 2.0 with JWT tokens. Tokens expire after 24 hours."),
+    Document(page_content="Rate limiting: API allows 1000 requests per minute per API key."),
+    Document(page_content="Error handling: 4xx errors return JSON with 'error' and 'message' fields."),
+    Document(page_content="Pagination: Use 'cursor' parameter for paginated endpoints. Max page size is 100."),
+    Document(page_content="Webhook events are signed with HMAC-SHA256. Verify the X-Signature header."),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+retriever = vectorstore.as_retriever()
+
+rewriter_agent = Agent(
+    name="Query Optimizer",
+    instructions=(
+        "You are a search query optimizer. Rewrite the user's question into a "
+        "more specific search query that uses technical terminology likely found "
+        "in API documentation. Return ONLY the rewritten query, nothing else."
+    ),
+)
+
+def ask(question: str) -> str:
+    rewrite_result = Runner.run_sync(rewriter_agent, question)
+    rewritten = rewrite_result.final_output
+
+    docs = retriever.invoke(rewritten)
+    context = "\n".join([doc.page_content for doc in docs])
+
+    answer_agent = Agent(
+        name="Q&A Assistant",
+        instructions=f"Answer the question based on this context:\n{context}",
+    )
+    result = Runner.run_sync(answer_agent, question)
+    return result.final_output
+
+print(ask("How do I log in?"))
+print(ask("What happens when something goes wrong?"))
+print(ask("How do I get notified of changes?"))
+```
+
+## Why This Works
+
+The LLM acts as a translator between the user's colloquial language and the technical vocabulary in the documents. "How do I log in?" becomes a query about "authentication OAuth JWT tokens," which has strong semantic similarity to the actual authentication document. The retriever then surfaces the right document, and the answer is grounded in accurate context. The original user question is still passed to the answer step so the response addresses what the user actually asked.
+
+## Key Takeaways
+
+- Users and documents often use different vocabulary for the same concept — query rewriting bridges this gap.
+- An LLM-based rewrite step before retrieval is cheap and dramatically improves recall for vague queries.
+- Always answer using the original user question (not the rewritten one) so the response feels natural and addresses the user's actual intent.

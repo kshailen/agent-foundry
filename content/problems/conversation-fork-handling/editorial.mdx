@@ -1,0 +1,326 @@
+## Approach
+
+The bug is that conversation is strictly linear — messages only go forward. When a user explores Option A (Japan trip) for several turns and then wants to "go back" and explore Option B (Italy), there is no mechanism to restore an earlier conversation state. The Japan itinerary is baked into the history, so even if the user asks to switch, the model carries all that context forward, causing confusion and context bleed.
+
+The fix adds a checkpoint system. At any point, the user (or the agent automatically) can save a named snapshot of the current conversation state. This is a deep copy of the message history at that moment. When the user asks to restore a checkpoint, the history is replaced with the saved snapshot and the conversation continues from that point. The abandoned branch (the Japan itinerary turns) is removed from active history, preventing context leakage.
+
+The implementation uses a dictionary mapping checkpoint names to copies of the message history. Three operations are supported: save a checkpoint, restore a checkpoint, and list available checkpoints. The agent detects checkpoint commands via keyword matching in the user input and handles them before passing the message to the LLM.
+
+## Solution
+
+### LangGraph
+
+```python
+import copy
+from langchain_openai import ChatOpenAI
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict, Annotated
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+import operator
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+checkpoints = {}
+messages = [SystemMessage(content="You are a helpful trip planning assistant.")]
+
+class State(TypedDict):
+    messages: Annotated[list, operator.add]
+
+def chatbot(state: State) -> State:
+    response = llm.invoke(state["messages"])
+    return {"messages": [response]}
+
+graph = StateGraph(State)
+graph.add_node("chatbot", chatbot)
+graph.add_edge(START, "chatbot")
+graph.add_edge("chatbot", END)
+app = graph.compile()
+
+def save_checkpoint(name: str):
+    checkpoints[name] = copy.deepcopy(messages)
+
+def restore_checkpoint(name: str) -> bool:
+    global messages
+    if name in checkpoints:
+        messages = copy.deepcopy(checkpoints[name])
+        return True
+    return False
+
+def list_checkpoints() -> list[str]:
+    return list(checkpoints.keys())
+
+def chat(user_input: str) -> str:
+    global messages
+
+    lower_input = user_input.lower()
+
+    if lower_input.startswith("save checkpoint "):
+        name = user_input[len("save checkpoint "):].strip()
+        save_checkpoint(name)
+        return f"Checkpoint '{name}' saved. You can restore it anytime."
+
+    if lower_input.startswith("restore checkpoint "):
+        name = user_input[len("restore checkpoint "):].strip()
+        if restore_checkpoint(name):
+            return f"Restored checkpoint '{name}'. Continuing from that point."
+        return f"Checkpoint '{name}' not found. Available: {list_checkpoints()}"
+
+    if lower_input in ("list checkpoints", "what checkpoints do i have?"):
+        names = list_checkpoints()
+        if names:
+            return f"Available checkpoints: {', '.join(names)}"
+        return "No checkpoints saved yet."
+
+    messages.append(HumanMessage(content=user_input))
+    result = app.invoke({"messages": messages})
+    messages = result["messages"]
+    return messages[-1].content
+
+# Plan two options
+print(chat("Plan me a 7-day trip. Option A: Japan. Option B: Italy."))
+
+# Save checkpoint before diving into an option
+print(chat("save checkpoint both_options"))
+
+# Explore Option A
+print(chat("Let's explore Option A — Japan. Give me a day-by-day itinerary."))
+print(chat("Add a visit to Mount Fuji on day 3."))
+
+# Save checkpoint for Japan branch
+print(chat("save checkpoint japan_itinerary"))
+
+# List checkpoints
+print(chat("list checkpoints"))
+
+# Go back and explore Option B
+print(chat("restore checkpoint both_options"))
+print(chat("Let's explore Option B — Italy. Give me a day-by-day itinerary."))
+```
+
+### LangChain
+
+```python
+import copy
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+checkpoints = {}
+history = [SystemMessage(content="You are a helpful trip planning assistant.")]
+
+def save_checkpoint(name: str):
+    checkpoints[name] = copy.deepcopy(history)
+
+def restore_checkpoint(name: str) -> bool:
+    global history
+    if name in checkpoints:
+        history = copy.deepcopy(checkpoints[name])
+        return True
+    return False
+
+def list_checkpoints() -> list[str]:
+    return list(checkpoints.keys())
+
+def chat(user_input: str) -> str:
+    global history
+
+    lower_input = user_input.lower()
+
+    if lower_input.startswith("save checkpoint "):
+        name = user_input[len("save checkpoint "):].strip()
+        save_checkpoint(name)
+        return f"Checkpoint '{name}' saved. You can restore it anytime."
+
+    if lower_input.startswith("restore checkpoint "):
+        name = user_input[len("restore checkpoint "):].strip()
+        if restore_checkpoint(name):
+            return f"Restored checkpoint '{name}'. Continuing from that point."
+        return f"Checkpoint '{name}' not found. Available: {list_checkpoints()}"
+
+    if lower_input in ("list checkpoints", "what checkpoints do i have?"):
+        names = list_checkpoints()
+        if names:
+            return f"Available checkpoints: {', '.join(names)}"
+        return "No checkpoints saved yet."
+
+    history.append(HumanMessage(content=user_input))
+    response = llm.invoke(history)
+    history.append(response)
+    return response.content
+
+# Plan two options
+print(chat("Plan me a 7-day trip. Option A: Japan. Option B: Italy."))
+
+# Save checkpoint before diving into an option
+print(chat("save checkpoint both_options"))
+
+# Explore Option A
+print(chat("Let's explore Option A — Japan. Give me a day-by-day itinerary."))
+print(chat("Add a visit to Mount Fuji on day 3."))
+
+# Save checkpoint for Japan branch
+print(chat("save checkpoint japan_itinerary"))
+
+# List checkpoints
+print(chat("list checkpoints"))
+
+# Go back and explore Option B
+print(chat("restore checkpoint both_options"))
+print(chat("Let's explore Option B — Italy. Give me a day-by-day itinerary."))
+
+print(f"\nTotal messages: {len(history)}")
+```
+
+### CrewAI
+
+```python
+import copy
+from crewai import Agent, Task, Crew
+from crewai import LLM
+
+llm = LLM(model="gpt-4o-mini")
+
+agent = Agent(
+    role="Trip Planning Assistant",
+    goal="Help users plan trips",
+    backstory="You are a helpful trip planning assistant.",
+    llm=llm,
+)
+
+checkpoints = {}
+history = []
+
+def save_checkpoint(name: str):
+    checkpoints[name] = copy.deepcopy(history)
+
+def restore_checkpoint(name: str) -> bool:
+    global history
+    if name in checkpoints:
+        history = copy.deepcopy(checkpoints[name])
+        return True
+    return False
+
+def list_checkpoints() -> list[str]:
+    return list(checkpoints.keys())
+
+def chat(user_input: str) -> str:
+    global history
+    lower_input = user_input.lower()
+
+    if lower_input.startswith("save checkpoint "):
+        name = user_input[len("save checkpoint "):].strip()
+        save_checkpoint(name)
+        return f"Checkpoint '{name}' saved. You can restore it anytime."
+
+    if lower_input.startswith("restore checkpoint "):
+        name = user_input[len("restore checkpoint "):].strip()
+        if restore_checkpoint(name):
+            return f"Restored checkpoint '{name}'. Continuing from that point."
+        return f"Checkpoint '{name}' not found. Available: {list_checkpoints()}"
+
+    if lower_input in ("list checkpoints", "what checkpoints do i have?"):
+        names = list_checkpoints()
+        if names:
+            return f"Available checkpoints: {', '.join(names)}"
+        return "No checkpoints saved yet."
+
+    history.append(f"User: {user_input}")
+    context = "\n".join(history)
+    task = Task(
+        description=f"Continue this conversation:\n{context}\n\nRespond to the latest message.",
+        expected_output="A helpful response",
+        agent=agent,
+    )
+    crew = Crew(agents=[agent], tasks=[task])
+    result = str(crew.kickoff())
+    history.append(f"Assistant: {result}")
+    return result
+
+print(chat("Plan me a 7-day trip. Option A: Japan. Option B: Italy."))
+print(chat("save checkpoint both_options"))
+print(chat("Let's explore Option A — Japan. Give me a day-by-day itinerary."))
+print(chat("Add a visit to Mount Fuji on day 3."))
+print(chat("save checkpoint japan_itinerary"))
+print(chat("list checkpoints"))
+print(chat("restore checkpoint both_options"))
+print(chat("Let's explore Option B — Italy. Give me a day-by-day itinerary."))
+```
+
+### OpenAI Agents SDK
+
+```python
+import copy
+from agents import Agent, Runner
+
+agent = Agent(
+    name="Trip Planning Assistant",
+    instructions="You are a helpful trip planning assistant.",
+)
+
+checkpoints = {}
+history = []
+
+def save_checkpoint(name: str):
+    checkpoints[name] = copy.deepcopy(history)
+
+def restore_checkpoint(name: str) -> bool:
+    global history
+    if name in checkpoints:
+        history = copy.deepcopy(checkpoints[name])
+        return True
+    return False
+
+def list_checkpoints() -> list[str]:
+    return list(checkpoints.keys())
+
+def chat(user_input: str) -> str:
+    global history
+    lower_input = user_input.lower()
+
+    if lower_input.startswith("save checkpoint "):
+        name = user_input[len("save checkpoint "):].strip()
+        save_checkpoint(name)
+        return f"Checkpoint '{name}' saved. You can restore it anytime."
+
+    if lower_input.startswith("restore checkpoint "):
+        name = user_input[len("restore checkpoint "):].strip()
+        if restore_checkpoint(name):
+            return f"Restored checkpoint '{name}'. Continuing from that point."
+        return f"Checkpoint '{name}' not found. Available: {list_checkpoints()}"
+
+    if lower_input in ("list checkpoints", "what checkpoints do i have?"):
+        names = list_checkpoints()
+        if names:
+            return f"Available checkpoints: {', '.join(names)}"
+        return "No checkpoints saved yet."
+
+    history.append({"role": "user", "content": user_input})
+    result = Runner.run_sync(agent, history)
+    response_text = result.final_output
+    history.append({"role": "assistant", "content": response_text})
+    return response_text
+
+print(chat("Plan me a 7-day trip. Option A: Japan. Option B: Italy."))
+print(chat("save checkpoint both_options"))
+print(chat("Let's explore Option A — Japan. Give me a day-by-day itinerary."))
+print(chat("Add a visit to Mount Fuji on day 3."))
+print(chat("save checkpoint japan_itinerary"))
+print(chat("list checkpoints"))
+print(chat("restore checkpoint both_options"))
+print(chat("Let's explore Option B — Italy. Give me a day-by-day itinerary."))
+```
+
+## Why This Works
+
+Checkpoints work by saving a deep copy of the entire conversation state at a specific moment. When the user restores a checkpoint, the message history is replaced with that snapshot. All messages added after the checkpoint (the Japan branch) are discarded from active history. The next message continues from the restored state, so the model sees only the conversation up to the checkpoint — no Japan context leaks into the Italy exploration.
+
+The deep copy is essential. A shallow copy would share references to the same message objects, meaning modifications to one branch would affect the other. `copy.deepcopy()` ensures each checkpoint is a fully independent snapshot.
+
+The command-based interface (`save checkpoint`, `restore checkpoint`, `list checkpoints`) is simple and explicit. In a production system, this could be exposed through a UI with buttons, but the underlying mechanism is the same: save, restore, and list named state snapshots.
+
+## Key Takeaways
+
+- Linear conversation models cannot handle "go back" requests — checkpoint/fork support requires saving and restoring conversation state snapshots.
+- Deep copying the message history is essential to prevent branches from interfering with each other.
+- Conversation forking enables exploratory workflows (comparing trip options, trying different approaches) that are impossible with a linear-only model.

@@ -1,0 +1,75 @@
+# Async Execution
+
+In CrewAI, **async execution** means you can run **multiple tasks or whole crews concurrently** instead of strictly one-after-another, which improves throughput when work is **independent** (research branches, batch inputs, parallel crews).
+
+## Task-level async
+
+Set **`async_execution=True`** on individual **`Task`** instances that should run **alongside** other eligible async tasks. Tasks that list those async tasks in **`context`** act as a **join**: they **wait until every referenced async task has finished**, then run with **all** of those outputs available.
+
+```python
+task_1 = Task(
+    description="Research AI trends",
+    expected_output="Trend report",
+    agent=researcher,
+    async_execution=True,
+)
+
+task_2 = Task(
+    description="Research market data",
+    expected_output="Market report",
+    agent=analyst,
+    async_execution=True,
+)
+
+# This task waits for both async tasks to finish
+synthesis = Task(
+    description="Synthesize findings",
+    expected_output="Combined report",
+    agent=writer,
+    context=[task_1, task_2],
+)
+```
+
+**Behavior in short:** async-marked tasks **run concurrently** where the process allows it; a **downstream** task with **`context=[...]`** pointing at those tasks **blocks until all** listed predecessors complete, then receives their results together.
+
+## Crew-level async kickoff methods
+
+| Method | What it does |
+| --- | --- |
+| `kickoff()` | Standard **synchronous** run. |
+| `kickoff_async()` | **Thread-based** async (backward compatible with older patterns). |
+| `akickoff()` | **Native** `async`/`await` (recommended when you are already in an async stack). |
+| `kickoff_for_each()` | **Synchronous** batch: run the crew once per item in a collection. |
+| `akickoff_for_each()` | **Asynchronous** batch: same idea as above, with async scheduling. |
+
+## Multiple crews in parallel with `asyncio.gather`
+
+When two or more **crews** are independent, you can **`await`** each **`akickoff(...)`** and run them together:
+
+```python
+import asyncio
+
+async def run_parallel():
+    results = await asyncio.gather(
+        crew1.akickoff(inputs={"topic": "AI"}),
+        crew2.akickoff(inputs={"topic": "ML"}),
+    )
+    return results
+
+results = asyncio.run(run_parallel())
+```
+
+Use the same idea from an app server or notebook that already has a running loop: call **`await asyncio.gather(...)`** from within **`async def`** instead of **`asyncio.run`** when you are not the entrypoint.
+
+## When to use async
+
+- **Independent research or analysis tasks** that do not need each other’s outputs until a later merge step.
+- **Batch processing** (`kickoff_for_each` / `akickoff_for_each`) when the same crew should handle many inputs.
+- **Parallel crew execution** when separate crews tackle different topics or tenants at the same time.
+
+## Key takeaways
+
+- **`async_execution=True`** on tasks enables **concurrent** execution of those tasks; **`context`** on a later task **waits for all** listed async predecessors.
+- Prefer **`akickoff()`** for **native async**; use **`kickoff_async()`** when you need the **thread-based** compatibility layer.
+- **`asyncio.gather`** is the natural way to run **multiple `akickoff` calls** (multiple crews) **at once**.
+- Reach for async when work is **parallelizable**; keep dependencies explicit with **`context`** so ordering stays clear.

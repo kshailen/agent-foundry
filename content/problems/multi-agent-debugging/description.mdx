@@ -1,0 +1,45 @@
+## The Problem
+
+You have a **four-agent pipeline** (collector → cleaner → analyzer → reporter) that processes data and generates executive reports. The final reports sometimes contain incorrect conclusions, but with no observability, you cannot tell which agent introduced the error. Did the collector gather wrong data? Did the cleaner corrupt something? Did the analyzer draw wrong conclusions? Or did the reporter misrepresent the analysis? Your task is to **add tracing and logging** to each agent so you can inspect every agent's input and output and pinpoint where errors originate.
+
+## Examples
+
+### Example 1
+
+**User input:** Topic: global renewable energy adoption trends
+
+**Current (bad) output:** The final report claims solar energy adoption is declining (incorrect), but there is no way to tell where this error originated in the four-agent chain.
+
+**Expected (good) output:** With tracing enabled, the logs show:
+- **Collector** gathered correct data (solar growing at 25% YoY).
+- **Cleaner** correctly normalized the data.
+- **Analyzer** incorrectly interpreted the growth as decline.
+- **Reporter** faithfully reported the analyzer's wrong conclusion.
+
+The trace pinpoints the **analyzer** as the faulty agent.
+
+### Example 2
+
+**User input:** Topic: remote work adoption in tech companies
+
+**Current (bad) output:** The report contains statistics that don't match publicly available data, with no debugging trail.
+
+**Expected (good) output:** The trace reveals the **collector** introduced fabricated statistics that propagated through the rest of the pipeline. Each subsequent agent processed the bad data correctly — the root cause was the first stage.
+
+## Your Task
+
+Add observability to the starter code so that:
+
+- Every agent's **input and output** are logged with the agent's name.
+- The trace makes it easy to **identify which agent** introduced an error.
+- Each trace entry includes the **agent name**, **input received**, and **output produced**.
+- The agents' core logic and prompts remain unchanged — only add tracing.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Tracing added to each agent:** Each agent's input and output are logged or traced.
+- **Faulty agent identifiable:** The trace output makes it possible to identify which specific agent produced incorrect output.
+- **Trace includes key information:** Each trace entry includes the agent name, input received, and output produced.
+- **Core logic unchanged:** The agents' core prompts and logic are not modified — only observability is added.

@@ -1,0 +1,140 @@
+## Approach
+
+The bug is that the agent's system prompt tells it to provide "thorough, detailed answers" with no length constraint. The LLM happily generates 1,500–2,000 word essays for even simple questions, burning through tokens and overwhelming users. There is nothing capping output length at any level — not in the prompt, not in post-processing.
+
+The best fix combines two strategies. First, update the system prompt to explicitly instruct the model to keep responses concise (under 200 words). This gives the LLM soft guidance to self-limit. Second, add a hard post-processing truncation step that enforces the limit in case the model overshoots. The truncation function splits the output into sentences and keeps adding sentences until the word limit is reached, so the response always ends at a clean sentence boundary rather than mid-word.
+
+This two-layer approach — prompt-level guidance plus a hard truncation fallback — is more robust than either strategy alone. The prompt keeps most responses naturally concise, and the truncation catches edge cases where the model ignores the instruction.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+
+WORD_LIMIT = 200
+
+def truncate_to_limit(text: str, max_words: int = WORD_LIMIT) -> str:
+    words = text.split()
+    if len(words) <= max_words:
+        return text
+    sentences = text.replace("! ", ".|").replace("? ", ".|").replace(". ", ".|").split("|")
+    result = []
+    word_count = 0
+    for sentence in sentences:
+        sentence_words = sentence.split()
+        if word_count + len(sentence_words) > max_words and result:
+            break
+        result.append(sentence)
+        word_count += len(sentence_words)
+    truncated = " ".join(result).strip()
+    if not truncated.endswith((".", "!", "?")):
+        truncated += "."
+    return truncated
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a helpful assistant. Keep your responses concise and under 200 words. Be clear and direct."),
+    ("human", "{input}"),
+])
+
+chain = prompt | llm
+
+result = chain.invoke({"input": "Explain how neural networks work"})
+output = truncate_to_limit(result.content)
+print(output)
+print(f"\n--- Output length: {len(output.split())} words ---")
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+
+WORD_LIMIT = 200
+
+def truncate_to_limit(text: str, max_words: int = WORD_LIMIT) -> str:
+    words = text.split()
+    if len(words) <= max_words:
+        return text
+    sentences = text.replace("! ", ".|").replace("? ", ".|").replace(". ", ".|").split("|")
+    result = []
+    word_count = 0
+    for sentence in sentences:
+        sentence_words = sentence.split()
+        if word_count + len(sentence_words) > max_words and result:
+            break
+        result.append(sentence)
+        word_count += len(sentence_words)
+    truncated = " ".join(result).strip()
+    if not truncated.endswith((".", "!", "?")):
+        truncated += "."
+    return truncated
+
+agent = Agent(
+    name="Explainer",
+    instructions="You are a helpful assistant. Keep your responses concise and under 200 words. Be clear and direct.",
+)
+
+result = Runner.run_sync(agent, "Explain how neural networks work")
+output = truncate_to_limit(result.final_output)
+print(output)
+print(f"\n--- Output length: {len(output.split())} words ---")
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+
+WORD_LIMIT = 200
+
+def truncate_to_limit(text: str, max_words: int = WORD_LIMIT) -> str:
+    words = text.split()
+    if len(words) <= max_words:
+        return text
+    sentences = text.replace("! ", ".|").replace("? ", ".|").replace(". ", ".|").split("|")
+    result = []
+    word_count = 0
+    for sentence in sentences:
+        sentence_words = sentence.split()
+        if word_count + len(sentence_words) > max_words and result:
+            break
+        result.append(sentence)
+        word_count += len(sentence_words)
+    truncated = " ".join(result).strip()
+    if not truncated.endswith((".", "!", "?")):
+        truncated += "."
+    return truncated
+
+explainer = Agent(
+    role="Explainer",
+    goal="Provide clear and concise answers under 200 words",
+    backstory="You are a helpful assistant who explains concepts clearly and concisely.",
+)
+
+task = Task(
+    description="Explain how neural networks work. Keep your response concise and under 200 words.",
+    expected_output="A concise explanation of neural networks in under 200 words",
+    agent=explainer,
+)
+
+crew = Crew(agents=[explainer], tasks=[task])
+result = crew.kickoff()
+output = truncate_to_limit(str(result))
+print(output)
+print(f"\n--- Output length: {len(output.split())} words ---")
+```
+
+## Why This Works
+
+The system prompt now explicitly tells the LLM to stay under 200 words, which the model respects in most cases. For the rare times it overshoots, the `truncate_to_limit` function enforces a hard ceiling. It works by splitting text on sentence boundaries (periods, exclamation marks, question marks) and accumulating sentences until adding the next one would exceed the word limit. This ensures the output always ends at a natural sentence boundary rather than cutting off mid-thought. The combination of prompt-level guidance and programmatic enforcement gives you the best of both worlds: natural-sounding concise responses with a guaranteed upper bound.
+
+## Key Takeaways
+
+- Prompt-level length instructions work well but are not 100% reliable — always pair them with a hard truncation fallback.
+- Truncating at sentence boundaries keeps the output coherent and professional, unlike a raw word-count cutoff.
+- Output length control directly reduces token costs and improves user experience — verbose responses waste money and attention.

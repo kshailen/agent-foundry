@@ -1,0 +1,36 @@
+## The Problem
+
+Your shipping assistant agent has `validate_address` and `calculate_shipping` tools that take addresses as **flat strings**. The agent formats these strings inconsistently — sometimes as `"123 Main St, Springfield, IL 62701"`, other times as `"Springfield IL 123 Main"`. The downstream API expects structured address data (street, city, state, zip), and parsing a flat string is fragile and error-prone. Your job is to **replace the flat string input with a structured schema** that has separate fields for each address component.
+
+## Examples
+
+### Example 1
+
+**User input:** Validate and get shipping cost for a 5lb package to 742 Evergreen Terrace, Springfield, IL 62704
+
+**Current (bad) output:** The agent calls `validate_address("742 Evergreen Terrace Springfield IL 62704")` — a flat string with inconsistent formatting. The comma-splitting parser may fail or misparse the components.
+
+**Expected (good) output:** The agent calls `validate_address(street="742 Evergreen Terrace", city="Springfield", state="IL", zip="62704")`. Each field is separate and unambiguous.
+
+### Example 2
+
+**User input:** Ship to apt 4B, 100 Broadway, New York, NY 10005
+
+**Current (bad) output:** The flat string `"apt 4B 100 Broadway New York NY 10005"` gets split incorrectly — the apartment number might be parsed as the city.
+
+**Expected (good) output:** The agent fills `street="100 Broadway, Apt 4B"`, `city="New York"`, `state="NY"`, `zip="10005"` — each in its correct field.
+
+## Your Task
+
+- Replace the flat `address: str` parameter with a structured type (e.g., Pydantic model) having `street`, `city`, `state`, and `zip` fields.
+- Update both `validate_address` and `calculate_shipping` tools to use the structured input.
+- Add validation to ensure required fields are present and non-empty.
+- Ensure the agent correctly populates all fields from natural language input.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Tool uses structured input:** The address parameter is a structured object with separate fields, not a flat string.
+- **All fields are correctly populated:** The agent fills in street, city, state, and zip as separate values.
+- **Validation catches missing fields:** The tool validates that all required address components are present.

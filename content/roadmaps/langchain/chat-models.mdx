@@ -1,0 +1,115 @@
+# Chat Models & Providers
+
+LangChain provides a universal interface for chat models across providers. Instead of importing provider-specific classes, you can use `init_chat_model` to instantiate any supported model with a single function call.
+
+## Initializing a Chat Model
+
+The `init_chat_model` function lets you create a chat model by specifying the model name and provider:
+
+```python
+from langchain.chat_models import init_chat_model
+
+model = init_chat_model("gpt-4o-mini", model_provider="openai")
+response = model.invoke("What is LangChain?")
+print(response.content)
+```
+
+## Supported Providers
+
+`init_chat_model` supports all major LLM providers out of the box:
+
+| Provider | `model_provider` | Example Model |
+|----------|-------------------|---------------|
+| OpenAI | `"openai"` | `"gpt-4o-mini"` |
+| Anthropic | `"anthropic"` | `"claude-sonnet-4-20250514"` |
+| Google | `"google_genai"` | `"gemini-2.0-flash"` |
+
+Each provider requires its own API key set as an environment variable (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`).
+
+## Key Parameters
+
+You can pass configuration parameters when initializing a model:
+
+```python
+model = init_chat_model(
+    "gpt-4o-mini",
+    model_provider="openai",
+    temperature=0.7,
+    max_tokens=256,
+    timeout=30,
+)
+```
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `temperature` | Controls randomness. 0 = deterministic, 1 = creative | Provider default |
+| `max_tokens` | Maximum number of tokens in the response | Provider default |
+| `timeout` | Request timeout in seconds | Provider default |
+
+## Invoking a Model
+
+### With a Simple String
+
+The simplest way to call a model is with a plain string:
+
+```python
+response = model.invoke("Explain AI agents in one sentence.")
+print(response.content)
+```
+
+### With a Message List
+
+For more control, pass a list of messages:
+
+```python
+from langchain_core.messages import SystemMessage, HumanMessage
+
+messages = [
+    SystemMessage(content="You are a concise assistant."),
+    HumanMessage(content="What is LangChain?"),
+]
+
+response = model.invoke(messages)
+print(response.content)
+```
+
+## Switching Providers Seamlessly
+
+The power of `init_chat_model` is that your application code stays the same regardless of the provider. Only the initialization changes:
+
+```python
+openai_model = init_chat_model("gpt-4o-mini", model_provider="openai")
+anthropic_model = init_chat_model("claude-sonnet-4-20250514", model_provider="anthropic")
+google_model = init_chat_model("gemini-2.0-flash", model_provider="google_genai")
+
+question = "What is an AI agent?"
+
+for model in [openai_model, anthropic_model, google_model]:
+    response = model.invoke(question)
+    print(response.content)
+    print("---")
+```
+
+This makes it trivial to benchmark models, switch providers, or let users choose their preferred model at runtime.
+
+## Configurable Models
+
+You can create a model that defers the provider choice until invocation time:
+
+```python
+configurable_model = init_chat_model(configurable_fields="any")
+
+result = configurable_model.invoke(
+    "Hello",
+    config={"configurable": {"model": "gpt-4o-mini", "model_provider": "openai"}},
+)
+print(result.content)
+```
+
+## Key Takeaways
+
+- `init_chat_model` provides a single entry point for all chat model providers
+- Switching between OpenAI, Anthropic, and Google requires changing only the model name and provider string
+- Key parameters like `temperature`, `max_tokens`, and `timeout` work consistently across providers
+- Models can be invoked with a simple string or a structured list of messages
+- Configurable models let you defer provider selection to runtime

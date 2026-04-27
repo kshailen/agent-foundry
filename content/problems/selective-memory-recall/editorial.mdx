@@ -1,0 +1,264 @@
+## Approach
+
+The bug is that all 100 facts are dumped into the system prompt on every query, regardless of relevance. When the user asks "Who is my manager?", the model receives 100 facts including 90+ irrelevant trivia items. This wastes tokens, increases latency and cost, and can confuse the model with noise.
+
+The fix is semantic retrieval using embeddings. Convert each fact into a vector embedding and store them in an in-memory vector store. When the user asks a question, embed the query, find the top-K most similar facts by cosine similarity, and inject only those into the prompt. This way, asking "Who is my manager?" retrieves facts about the manager, team structure, and company — not random trivia about miscellaneous topics.
+
+The approach uses OpenAI embeddings for vectorization and a simple in-memory list with cosine similarity for retrieval. No external vector database is needed for 100 facts. The top 5 most relevant facts are injected, keeping the prompt lean and focused.
+
+## Solution
+
+### LangChain
+
+```python
+import numpy as np
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_core.messages import HumanMessage, SystemMessage
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+
+TOP_K = 5
+
+facts = [
+    "The user's name is Jordan.",
+    "Jordan works at a startup called DataFlow.",
+    "Jordan's favorite programming language is Python.",
+    "The company DataFlow builds ETL pipelines.",
+    "Jordan has a meeting with the VP of Engineering every Monday.",
+    "The office is located in San Francisco.",
+    "Jordan prefers dark mode in all applications.",
+    "The team uses Slack for communication.",
+    "Jordan's manager is named Priya.",
+    "The company was founded in 2021.",
+] + [f"Fact {i}: Random trivia item number {i} about miscellaneous topics." for i in range(11, 101)]
+
+fact_vectors = embeddings.embed_documents(facts)
+
+def retrieve_relevant_facts(query: str, top_k: int = TOP_K) -> list[str]:
+    query_vector = embeddings.embed_query(query)
+    similarities = [
+        np.dot(query_vector, fv) / (np.linalg.norm(query_vector) * np.linalg.norm(fv))
+        for fv in fact_vectors
+    ]
+    top_indices = np.argsort(similarities)[-top_k:][::-1]
+    return [facts[i] for i in top_indices]
+
+def chat(user_input: str) -> str:
+    relevant_facts = retrieve_relevant_facts(user_input)
+    facts_block = "\n".join(relevant_facts)
+    messages = [
+        SystemMessage(content=f"You are a helpful assistant. Relevant context:\n{facts_block}"),
+        HumanMessage(content=user_input),
+    ]
+    response = llm.invoke(messages)
+    return response.content
+
+print(chat("Who is my manager?"))
+print(chat("What programming language do I like?"))
+print(chat("Tell me about DataFlow."))
+```
+
+### LangGraph
+
+```python
+import numpy as np
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict
+from langchain_core.messages import HumanMessage, SystemMessage
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+
+TOP_K = 5
+
+facts = [
+    "The user's name is Jordan.",
+    "Jordan works at a startup called DataFlow.",
+    "Jordan's favorite programming language is Python.",
+    "The company DataFlow builds ETL pipelines.",
+    "Jordan has a meeting with the VP of Engineering every Monday.",
+    "The office is located in San Francisco.",
+    "Jordan prefers dark mode in all applications.",
+    "The team uses Slack for communication.",
+    "Jordan's manager is named Priya.",
+    "The company was founded in 2021.",
+] + [f"Fact {i}: Random trivia item number {i} about miscellaneous topics." for i in range(11, 101)]
+
+fact_vectors = embeddings.embed_documents(facts)
+
+def retrieve_relevant_facts(query: str, top_k: int = TOP_K) -> list[str]:
+    query_vector = embeddings.embed_query(query)
+    similarities = [
+        np.dot(query_vector, fv) / (np.linalg.norm(query_vector) * np.linalg.norm(fv))
+        for fv in fact_vectors
+    ]
+    top_indices = np.argsort(similarities)[-top_k:][::-1]
+    return [facts[i] for i in top_indices]
+
+class State(TypedDict):
+    query: str
+    response: str
+
+def answer(state: State) -> State:
+    relevant_facts = retrieve_relevant_facts(state["query"])
+    facts_block = "\n".join(relevant_facts)
+    messages = [
+        SystemMessage(content=f"You are a helpful assistant. Relevant context:\n{facts_block}"),
+        HumanMessage(content=state["query"]),
+    ]
+    response = llm.invoke(messages)
+    return {"response": response.content}
+
+graph = StateGraph(State)
+graph.add_node("answer", answer)
+graph.add_edge(START, "answer")
+graph.add_edge("answer", END)
+app = graph.compile()
+
+print(app.invoke({"query": "Who is my manager?"})["response"])
+print(app.invoke({"query": "What programming language do I like?"})["response"])
+print(app.invoke({"query": "Tell me about DataFlow."})["response"])
+```
+
+
+### CrewAI
+
+```python
+import numpy as np
+from openai import OpenAI
+from crewai import Agent, Task, Crew
+from crewai import LLM
+
+client = OpenAI()
+llm = LLM(model="gpt-4o-mini")
+
+TOP_K = 5
+
+facts = [
+    "The user's name is Jordan.",
+    "Jordan works at a startup called DataFlow.",
+    "Jordan's favorite programming language is Python.",
+    "The company DataFlow builds ETL pipelines.",
+    "Jordan has a meeting with the VP of Engineering every Monday.",
+    "The office is located in San Francisco.",
+    "Jordan prefers dark mode in all applications.",
+    "The team uses Slack for communication.",
+    "Jordan's manager is named Priya.",
+    "The company was founded in 2021.",
+] + [f"Fact {i}: Random trivia item number {i} about miscellaneous topics." for i in range(11, 101)]
+
+
+def get_embedding(text: str) -> list[float]:
+    response = client.embeddings.create(input=text, model="text-embedding-3-small")
+    return response.data[0].embedding
+
+
+fact_vectors = [get_embedding(f) for f in facts]
+
+
+def retrieve_relevant_facts(query: str, top_k: int = TOP_K) -> list[str]:
+    query_vector = get_embedding(query)
+    similarities = [
+        np.dot(query_vector, fv) / (np.linalg.norm(query_vector) * np.linalg.norm(fv))
+        for fv in fact_vectors
+    ]
+    top_indices = np.argsort(similarities)[-top_k:][::-1]
+    return [facts[i] for i in top_indices]
+
+
+def chat(user_input: str) -> str:
+    relevant_facts = retrieve_relevant_facts(user_input)
+    facts_block = "\n".join(relevant_facts)
+    agent = Agent(
+        role="Helpful Assistant",
+        goal="Answer the user's question accurately",
+        backstory=f"You are a helpful assistant. Relevant context:\n{facts_block}",
+        llm=llm,
+    )
+    task = Task(
+        description=user_input,
+        expected_output="A direct answer to the question",
+        agent=agent,
+    )
+    crew = Crew(agents=[agent], tasks=[task])
+    result = crew.kickoff()
+    return str(result)
+
+
+print(chat("Who is my manager?"))
+print(chat("What programming language do I like?"))
+print(chat("Tell me about DataFlow."))
+```
+
+### OpenAI Agents SDK
+
+```python
+import numpy as np
+from openai import OpenAI
+from agents import Agent, Runner
+
+client = OpenAI()
+
+TOP_K = 5
+
+facts = [
+    "The user's name is Jordan.",
+    "Jordan works at a startup called DataFlow.",
+    "Jordan's favorite programming language is Python.",
+    "The company DataFlow builds ETL pipelines.",
+    "Jordan has a meeting with the VP of Engineering every Monday.",
+    "The office is located in San Francisco.",
+    "Jordan prefers dark mode in all applications.",
+    "The team uses Slack for communication.",
+    "Jordan's manager is named Priya.",
+    "The company was founded in 2021.",
+] + [f"Fact {i}: Random trivia item number {i} about miscellaneous topics." for i in range(11, 101)]
+
+
+def get_embedding(text: str) -> list[float]:
+    response = client.embeddings.create(input=text, model="text-embedding-3-small")
+    return response.data[0].embedding
+
+
+fact_vectors = [get_embedding(f) for f in facts]
+
+
+def retrieve_relevant_facts(query: str, top_k: int = TOP_K) -> list[str]:
+    query_vector = get_embedding(query)
+    similarities = [
+        np.dot(query_vector, fv) / (np.linalg.norm(query_vector) * np.linalg.norm(fv))
+        for fv in fact_vectors
+    ]
+    top_indices = np.argsort(similarities)[-top_k:][::-1]
+    return [facts[i] for i in top_indices]
+
+
+def chat(user_input: str) -> str:
+    relevant_facts = retrieve_relevant_facts(user_input)
+    facts_block = "\n".join(relevant_facts)
+    agent = Agent(
+        name="Assistant",
+        instructions=f"You are a helpful assistant. Relevant context:\n{facts_block}",
+    )
+    result = Runner.run_sync(agent, user_input)
+    return result.final_output
+
+
+print(chat("Who is my manager?"))
+print(chat("What programming language do I like?"))
+print(chat("Tell me about DataFlow."))
+```
+
+## Why This Works
+
+Embedding-based retrieval converts both the query and stored facts into the same vector space, where semantic similarity can be measured by cosine distance. When the user asks "Who is my manager?", the query embedding is closest to facts about the manager ("Jordan's manager is named Priya") and related organizational facts. Random trivia items have low similarity and are filtered out.
+
+By injecting only the top-K relevant facts (instead of all 100), the prompt is dramatically smaller — a few hundred tokens instead of thousands. This reduces cost, latency, and the chance of the model being confused by irrelevant information. The answers are just as accurate because the relevant facts are still present; the irrelevant ones are simply not included.
+
+## Key Takeaways
+
+- Dumping all stored knowledge into the prompt wastes tokens and can confuse the model — selective retrieval is essential for any non-trivial knowledge base.
+- Embedding-based semantic search is the standard approach for finding relevant facts from a large memory store.
+- For small fact stores (under a few hundred items), an in-memory vector store with cosine similarity is sufficient — no external database needed.

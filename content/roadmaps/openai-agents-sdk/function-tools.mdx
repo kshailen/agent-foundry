@@ -1,0 +1,145 @@
+# Function Tools
+
+Function tools let your agents call plain Python functions during their reasoning loop. The OpenAI Agents SDK uses the `@function_tool` decorator to turn any function into a tool — automatically generating the JSON schema from type hints and docstrings.
+
+## The @function_tool Decorator
+
+Decorate a plain function to make it available to an agent:
+
+```python
+from agents import Agent, Runner, function_tool
+
+@function_tool
+def get_weather(city: str) -> str:
+    """Get the current weather for a given city."""
+    return f"The weather in {city} is 72°F and sunny."
+
+agent = Agent(
+    name="Weather Bot",
+    instructions="You help users check the weather.",
+    tools=[get_weather],
+)
+
+result = Runner.run_sync(agent, "What's the weather in Tokyo?")
+print(result.final_output)
+```
+
+The SDK inspects the function signature and docstring to build the tool schema that gets sent to the model. The model sees the tool name, description, and parameter types — then decides when to call it.
+
+## Automatic Schema Generation
+
+The SDK derives the tool schema from three sources:
+
+| Source | Maps To |
+|--------|---------|
+| Function name | Tool name |
+| Docstring | Tool description |
+| Type hints | Parameter types and required/optional |
+
+```python
+@function_tool
+def search_products(query: str, max_results: int = 5) -> str:
+    """Search the product catalog by keyword.
+
+    Args:
+        query: The search term to look for.
+        max_results: Maximum number of results to return.
+    """
+    return f"Found {max_results} products matching '{query}'"
+```
+
+The model sees `query` as a required string and `max_results` as an optional integer with a default of 5.
+
+## Sync and Async Tools
+
+Tools can be synchronous or asynchronous. Use `async` when the tool performs I/O like network requests or database queries:
+
+```python
+import httpx
+
+@function_tool
+async def fetch_headline(url: str) -> str:
+    """Fetch the headline from a news URL."""
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(url)
+        return resp.text[:200]
+```
+
+When using async tools, run your agent with the async runner:
+
+```python
+import asyncio
+
+async def main():
+    result = await Runner.run(agent, "Get the headline from https://example.com")
+    print(result.final_output)
+
+asyncio.run(main())
+```
+
+Sync tools work with both `Runner.run_sync()` and `Runner.run()`.
+
+## Attaching Tools to an Agent
+
+Pass tools as a list to the `tools` parameter:
+
+```python
+@function_tool
+def add(a: float, b: float) -> str:
+    """Add two numbers together."""
+    return str(a + b)
+
+@function_tool
+def multiply(a: float, b: float) -> str:
+    """Multiply two numbers together."""
+    return str(a * b)
+
+calculator = Agent(
+    name="Calculator",
+    instructions="You are a calculator. Use your tools to perform math operations.",
+    tools=[add, multiply],
+)
+
+result = Runner.run_sync(calculator, "What is 7 * 8 + 3?")
+print(result.final_output)
+```
+
+The agent sees both tools and decides which to call based on the user's request. It can call multiple tools across successive loop iterations.
+
+## Pydantic Models as Tool Inputs
+
+For tools with complex inputs, define a Pydantic model and use it as the parameter type:
+
+```python
+from pydantic import BaseModel
+
+class FlightSearch(BaseModel):
+    origin: str
+    destination: str
+    date: str
+    max_price: float = 1000.0
+
+@function_tool
+def search_flights(search: FlightSearch) -> str:
+    """Search for available flights matching the criteria."""
+    return f"Found 3 flights from {search.origin} to {search.destination} on {search.date} under ${search.max_price}"
+
+travel_agent = Agent(
+    name="Travel Agent",
+    instructions="You help users find flights.",
+    tools=[search_flights],
+)
+
+result = Runner.run_sync(travel_agent, "Find flights from NYC to London on March 15th under $800")
+print(result.final_output)
+```
+
+Pydantic models give you nested objects, validation, and default values — all automatically reflected in the tool schema.
+
+## Key Takeaways
+
+- `@function_tool` turns any Python function into an agent tool with zero boilerplate
+- The SDK generates the JSON schema from the function name, docstring, and type hints
+- Both sync and async functions are supported
+- Pass tools to an agent via `Agent(tools=[...])`
+- Use Pydantic models for complex, validated tool inputs

@@ -1,0 +1,189 @@
+## Approach
+
+The starter code processes 20 documents by summarizing them one at a time in a for loop, then combining all summaries into a final report. Since each LLM call takes roughly 1 second, the sequential approach takes over 20 seconds — purely due to unnecessary serialization of independent work. Each document's summary is completely independent of every other document, making this an embarrassingly parallel problem.
+
+The fix implements a classic map-reduce pattern. The map phase fans out to summarize all documents in parallel (one LLM call per document, all running concurrently), and the reduce phase waits for every summary to arrive before synthesizing them into a single executive report. This cuts the map phase from ~20 seconds to ~2 seconds (bounded by the slowest single call), while the reduce step adds ~1 second.
+
+In LangGraph, the `Send` API dynamically creates one node invocation per document, fanning out at runtime. Each invocation writes its summary into a shared list in the state, and the reduce node fires only after all summaries are collected. In CrewAI, parallel execution is achieved by marking the individual summarization tasks with `async_execution=True` and having the synthesis task depend on all of them via `context`.
+
+## Solution
+
+### LangGraph
+
+```python
+from langgraph.graph import StateGraph, START, END
+from langgraph.types import Send
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage
+from typing import TypedDict, Annotated
+import operator
+import time
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+documents = [
+    f"Document {i}: This is a report about topic {chr(65 + i % 26)} covering various aspects of the subject including analysis, findings, and recommendations for Q{(i % 4) + 1} 2024."
+    for i in range(20)
+]
+
+
+class SummaryState(TypedDict):
+    doc: str
+    summary: str
+
+
+class OverallState(TypedDict):
+    documents: list[str]
+    summaries: Annotated[list[str], operator.add]
+    report: str
+
+
+def fan_out_docs(state: OverallState) -> list[Send]:
+    return [Send("summarize_doc", {"doc": doc}) for doc in state["documents"]]
+
+
+def summarize_doc(state: SummaryState) -> dict:
+    response = llm.invoke([
+        SystemMessage(content="Summarize this document in 2-3 sentences."),
+        HumanMessage(content=state["doc"]),
+    ])
+    return {"summary": response.content}
+
+
+def collect_summary(state: SummaryState) -> dict:
+    return {"summaries": [state["summary"]]}
+
+
+def reduce_summaries(state: OverallState) -> dict:
+    combined = "\n\n".join(state["summaries"])
+    response = llm.invoke([
+        SystemMessage(content="Synthesize these document summaries into a cohesive executive report. Identify key themes and patterns across all documents."),
+        HumanMessage(content=combined),
+    ])
+    return {"report": response.content}
+
+
+graph = StateGraph(OverallState)
+graph.add_node("summarize_doc", summarize_doc | collect_summary)
+graph.add_node("reduce_summaries", reduce_summaries)
+graph.add_conditional_edges(START, fan_out_docs, ["summarize_doc"])
+graph.add_edge("summarize_doc", "reduce_summaries")
+graph.add_edge("reduce_summaries", END)
+
+app = graph.compile()
+
+start = time.time()
+result = app.invoke({"documents": documents, "summaries": [], "report": ""})
+elapsed = time.time() - start
+print(f"[Processed {len(documents)} docs in {elapsed:.2f}s]")
+print(result["report"])
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+import time
+
+documents = [
+    f"Document {i}: This is a report about topic {chr(65 + i % 26)} covering various aspects of the subject including analysis, findings, and recommendations for Q{(i % 4) + 1} 2024."
+    for i in range(20)
+]
+
+summarizer = Agent(
+    role="Document Summarizer",
+    goal="Summarize individual documents concisely",
+    backstory="You are a research analyst who distills documents into 2-3 sentence summaries.",
+)
+
+synthesizer = Agent(
+    role="Report Synthesizer",
+    goal="Synthesize document summaries into a cohesive executive report",
+    backstory="You are a senior analyst who identifies themes and patterns across many document summaries.",
+)
+
+
+def process_documents(docs: list[str]) -> str:
+    start = time.time()
+
+    summary_tasks = []
+    for i, doc in enumerate(docs):
+        task = Task(
+            description=f"Summarize this document in 2-3 sentences: '{doc}'",
+            expected_output="A 2-3 sentence summary",
+            agent=summarizer,
+            async_execution=True,
+        )
+        summary_tasks.append(task)
+
+    synthesis_task = Task(
+        description="Synthesize all the document summaries into a cohesive executive report. Identify key themes and patterns across all documents.",
+        expected_output="An executive summary report identifying cross-cutting themes",
+        agent=synthesizer,
+        context=summary_tasks,
+    )
+
+    crew = Crew(
+        agents=[summarizer, synthesizer],
+        tasks=[*summary_tasks, synthesis_task],
+    )
+    result = crew.kickoff()
+
+    elapsed = time.time() - start
+    return f"[Processed {len(docs)} docs in {elapsed:.2f}s]\n{result}"
+
+
+result = process_documents(documents)
+print(result)
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+import asyncio
+import time
+
+documents = [
+    f"Document {i}: This is a report about topic {chr(65 + i % 26)} covering various aspects of the subject including analysis, findings, and recommendations for Q{(i % 4) + 1} 2024."
+    for i in range(20)
+]
+
+summarizer = Agent(
+    name="Document Summarizer",
+    instructions="Summarize this document in 2-3 sentences.",
+)
+
+synthesizer = Agent(
+    name="Report Synthesizer",
+    instructions="Synthesize these document summaries into a cohesive executive report. Identify key themes and patterns across all documents.",
+)
+
+
+async def process_documents(docs: list[str]) -> str:
+    start = time.time()
+
+    tasks = [Runner.run(summarizer, doc) for doc in docs]
+    results = await asyncio.gather(*tasks)
+    summaries = [r.final_output for r in results]
+
+    combined = "\n\n".join(summaries)
+    report_result = await Runner.run(synthesizer, combined)
+
+    elapsed = time.time() - start
+    return f"[Processed {len(docs)} docs in {elapsed:.2f}s]\n{report_result.final_output}"
+
+
+result = asyncio.run(process_documents(documents))
+print(result)
+```
+
+## Why This Works
+
+The map-reduce pattern works because the map phase (summarizing individual documents) involves completely independent operations — no document summary depends on any other. By running all 20 summarizations concurrently, the total map time is bounded by the single slowest LLM call rather than the sum of all calls. The reduce phase then operates on short summaries rather than full documents, keeping its input manageable. In LangGraph, the `Send` API dynamically spawns one node execution per document, and the reducer node only triggers after all sends complete and write their results into the aggregated `summaries` list via the `operator.add` annotation. This guarantees the fan-in barrier without manual synchronization.
+
+## Key Takeaways
+
+- When processing N independent items, fan out to process them in parallel — sequential processing of independent work is the most common performance anti-pattern in LLM pipelines.
+- Keep map outputs small (2-3 sentence summaries) so the reduce step receives manageable input rather than overwhelming context.
+- The reduce step should synthesize themes and patterns, not merely concatenate summaries — this is what makes the final report more valuable than the sum of its parts.

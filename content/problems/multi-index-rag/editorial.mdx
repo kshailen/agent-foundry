@@ -1,0 +1,313 @@
+## Approach
+
+The starter code dumps FAQ documents and technical API documentation into a single vector store index. When a user asks "How do I reset my password?", the retriever returns a mix of the friendly FAQ answer ("Go to Settings > Security > Reset Password") and the raw API spec ("POST /api/v2/auth/reset-password"). End users get confused by API details; developers get FAQ answers instead of endpoint specs. The single-index approach cannot distinguish between audiences.
+
+The fix is to create separate vector store indexes for FAQ and technical documents, then add a routing step that classifies each query before retrieval. An LLM classifier determines whether the query is an FAQ-style question (natural language, how-to) or a technical question (API endpoints, code, authentication specs), and routes to the appropriate index. This ensures each audience gets answers from the right document set.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings()
+
+faq_docs = [
+    Document(page_content="Q: How do I reset my password? A: Go to Settings > Security > Reset Password."),
+    Document(page_content="Q: What payment methods do you accept? A: We accept Visa, Mastercard, and PayPal."),
+    Document(page_content="Q: How do I cancel my subscription? A: Go to Billing > Manage Subscription > Cancel."),
+]
+
+technical_docs = [
+    Document(page_content="POST /api/v2/auth/reset-password - Requires email field. Returns 200 with reset token."),
+    Document(page_content="GET /api/v2/billing/subscription - Returns subscription object with status, plan, and next_billing_date."),
+    Document(page_content="Authentication: All API requests require Bearer token in Authorization header."),
+]
+
+faq_vectorstore = FAISS.from_documents(faq_docs, embeddings)
+faq_retriever = faq_vectorstore.as_retriever()
+
+technical_vectorstore = FAISS.from_documents(technical_docs, embeddings)
+technical_retriever = technical_vectorstore.as_retriever()
+
+route_prompt = ChatPromptTemplate.from_messages([
+    ("system",
+     "Classify the user's question as either 'faq' (general how-to, end-user question) "
+     "or 'technical' (API endpoints, code, developer question). "
+     "Reply with ONLY 'faq' or 'technical'."),
+    ("human", "{question}"),
+])
+
+answer_prompt = ChatPromptTemplate.from_messages([
+    ("system", "Answer the question based on the context below.\n\nContext:\n{context}"),
+    ("human", "{question}"),
+])
+
+def ask(question: str) -> str:
+    route_chain = route_prompt | llm
+    route_result = route_chain.invoke({"question": question})
+    query_type = route_result.content.strip().lower()
+
+    if "technical" in query_type:
+        retriever = technical_retriever
+    else:
+        retriever = faq_retriever
+
+    docs = retriever.invoke(question)
+    context = "\n".join([doc.page_content for doc in docs])
+
+    answer_chain = answer_prompt | llm
+    result = answer_chain.invoke({"context": context, "question": question})
+    return result.content
+
+print(ask("How do I reset my password?"))
+print(ask("What is the API endpoint for password reset?"))
+```
+
+### LangGraph
+
+```python
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict, Literal
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings()
+
+faq_docs = [
+    Document(page_content="Q: How do I reset my password? A: Go to Settings > Security > Reset Password."),
+    Document(page_content="Q: What payment methods do you accept? A: We accept Visa, Mastercard, and PayPal."),
+    Document(page_content="Q: How do I cancel my subscription? A: Go to Billing > Manage Subscription > Cancel."),
+]
+
+technical_docs = [
+    Document(page_content="POST /api/v2/auth/reset-password - Requires email field. Returns 200 with reset token."),
+    Document(page_content="GET /api/v2/billing/subscription - Returns subscription object with status, plan, and next_billing_date."),
+    Document(page_content="Authentication: All API requests require Bearer token in Authorization header."),
+]
+
+faq_vectorstore = FAISS.from_documents(faq_docs, embeddings)
+faq_retriever = faq_vectorstore.as_retriever()
+
+technical_vectorstore = FAISS.from_documents(technical_docs, embeddings)
+technical_retriever = technical_vectorstore.as_retriever()
+
+class State(TypedDict):
+    question: str
+    query_type: str
+    context: str
+    answer: str
+
+def classify_query(state: State) -> State:
+    response = llm.invoke(
+        f"Classify this question as either 'faq' (general how-to, end-user) "
+        f"or 'technical' (API, code, developer). Reply with ONLY 'faq' or 'technical'.\n\n"
+        f"Question: {state['question']}"
+    )
+    return {"query_type": response.content.strip().lower()}
+
+def retrieve_faq(state: State) -> State:
+    docs = faq_retriever.invoke(state["question"])
+    context = "\n".join([doc.page_content for doc in docs])
+    return {"context": context}
+
+def retrieve_technical(state: State) -> State:
+    docs = technical_retriever.invoke(state["question"])
+    context = "\n".join([doc.page_content for doc in docs])
+    return {"context": context}
+
+def answer(state: State) -> State:
+    response = llm.invoke(
+        f"Answer the question based on the context below.\n\n"
+        f"Context:\n{state['context']}\n\nQuestion: {state['question']}"
+    )
+    return {"answer": response.content}
+
+def route_to_index(state: State) -> Literal["retrieve_faq", "retrieve_technical"]:
+    if "technical" in state.get("query_type", ""):
+        return "retrieve_technical"
+    return "retrieve_faq"
+
+graph = StateGraph(State)
+graph.add_node("classify", classify_query)
+graph.add_node("retrieve_faq", retrieve_faq)
+graph.add_node("retrieve_technical", retrieve_technical)
+graph.add_node("answer", answer)
+
+graph.add_edge(START, "classify")
+graph.add_conditional_edges("classify", route_to_index)
+graph.add_edge("retrieve_faq", "answer")
+graph.add_edge("retrieve_technical", "answer")
+graph.add_edge("answer", END)
+
+app = graph.compile()
+print(app.invoke({"question": "How do I reset my password?"})["answer"])
+print(app.invoke({"question": "What is the API endpoint for password reset?"})["answer"])
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from crewai import LLM
+from crewai.tools import tool
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+
+llm = LLM(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings()
+
+faq_docs = [
+    Document(page_content="Q: How do I reset my password? A: Go to Settings > Security > Reset Password."),
+    Document(page_content="Q: What payment methods do you accept? A: We accept Visa, Mastercard, and PayPal."),
+    Document(page_content="Q: How do I cancel my subscription? A: Go to Billing > Manage Subscription > Cancel."),
+]
+
+technical_docs = [
+    Document(page_content="POST /api/v2/auth/reset-password - Requires email field. Returns 200 with reset token."),
+    Document(page_content="GET /api/v2/billing/subscription - Returns subscription object with status, plan, and next_billing_date."),
+    Document(page_content="Authentication: All API requests require Bearer token in Authorization header."),
+]
+
+faq_vectorstore = FAISS.from_documents(faq_docs, embeddings)
+faq_retriever = faq_vectorstore.as_retriever()
+
+technical_vectorstore = FAISS.from_documents(technical_docs, embeddings)
+technical_retriever = technical_vectorstore.as_retriever()
+
+def classify_query(question: str) -> str:
+    classifier = Agent(
+        role="Query Classifier",
+        goal="Classify questions as FAQ or technical",
+        backstory=(
+            "Classify questions as either 'faq' (general how-to, end-user) or "
+            "'technical' (API, code, developer). Reply with ONLY 'faq' or 'technical'."
+        ),
+        llm=llm,
+    )
+    task = Task(description=question, expected_output="faq or technical", agent=classifier)
+    crew = Crew(agents=[classifier], tasks=[task])
+    return str(crew.kickoff()).strip().lower()
+
+@tool
+def search_faq(question: str) -> str:
+    """Search FAQ documentation."""
+    docs = faq_retriever.invoke(question)
+    return "\n".join([doc.page_content for doc in docs])
+
+@tool
+def search_technical(question: str) -> str:
+    """Search technical API documentation."""
+    docs = technical_retriever.invoke(question)
+    return "\n".join([doc.page_content for doc in docs])
+
+def ask(question: str) -> str:
+    query_type = classify_query(question)
+    if "technical" in query_type:
+        tools = [search_technical]
+    else:
+        tools = [search_faq]
+    support_agent = Agent(
+        role="Support Agent",
+        goal="Answer questions accurately",
+        backstory="You answer questions using the provided search tool.",
+        tools=tools,
+        llm=llm,
+    )
+    task = Task(description=question, expected_output="An accurate answer", agent=support_agent)
+    crew = Crew(agents=[support_agent], tasks=[task])
+    return str(crew.kickoff())
+
+print(ask("How do I reset my password?"))
+print(ask("What is the API endpoint for password reset?"))
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from agents.tool import function_tool
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+
+embeddings = OpenAIEmbeddings()
+
+faq_docs = [
+    Document(page_content="Q: How do I reset my password? A: Go to Settings > Security > Reset Password."),
+    Document(page_content="Q: What payment methods do you accept? A: We accept Visa, Mastercard, and PayPal."),
+    Document(page_content="Q: How do I cancel my subscription? A: Go to Billing > Manage Subscription > Cancel."),
+]
+
+technical_docs = [
+    Document(page_content="POST /api/v2/auth/reset-password - Requires email field. Returns 200 with reset token."),
+    Document(page_content="GET /api/v2/billing/subscription - Returns subscription object with status, plan, and next_billing_date."),
+    Document(page_content="Authentication: All API requests require Bearer token in Authorization header."),
+]
+
+faq_vectorstore = FAISS.from_documents(faq_docs, embeddings)
+faq_retriever = faq_vectorstore.as_retriever()
+
+technical_vectorstore = FAISS.from_documents(technical_docs, embeddings)
+technical_retriever = technical_vectorstore.as_retriever()
+
+classifier = Agent(
+    name="Query Classifier",
+    instructions=(
+        "Classify the user's question as either 'faq' (general how-to, end-user) "
+        "or 'technical' (API, code, developer). Reply with ONLY 'faq' or 'technical'."
+    ),
+)
+
+@function_tool
+def search_faq(question: str) -> str:
+    """Search FAQ documentation."""
+    docs = faq_retriever.invoke(question)
+    return "\n".join([doc.page_content for doc in docs])
+
+@function_tool
+def search_technical(question: str) -> str:
+    """Search technical API documentation."""
+    docs = technical_retriever.invoke(question)
+    return "\n".join([doc.page_content for doc in docs])
+
+faq_agent = Agent(
+    name="FAQ Agent",
+    instructions="Answer end-user questions using the FAQ search tool.",
+    tools=[search_faq],
+)
+
+technical_agent = Agent(
+    name="Technical Agent",
+    instructions="Answer developer questions using the technical search tool.",
+    tools=[search_technical],
+)
+
+def ask(question: str) -> str:
+    route_result = Runner.run_sync(classifier, question)
+    query_type = route_result.final_output.strip().lower()
+    agent = technical_agent if "technical" in query_type else faq_agent
+    result = Runner.run_sync(agent, question)
+    return result.final_output
+
+print(ask("How do I reset my password?"))
+print(ask("What is the API endpoint for password reset?"))
+```
+
+## Why This Works
+
+Separate indexes ensure that FAQ answers and technical specs never contaminate each other's results. The LLM classifier reliably distinguishes between end-user language ("How do I...") and developer language ("What is the API endpoint..."), routing each query to the appropriate index. This gives each audience clean, relevant answers from the right document set.
+
+## Key Takeaways
+
+- Mixing document types in a single index causes cross-contamination in retrieval results.
+- Separate indexes for distinct document categories (FAQ, technical, legal, etc.) improve retrieval precision.
+- An LLM-based classifier is a simple and effective router — it handles the nuances of natural language better than rule-based approaches.

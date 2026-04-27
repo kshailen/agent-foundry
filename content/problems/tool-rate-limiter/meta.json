@@ -1,0 +1,57 @@
+{
+  "number": 26,
+  "title": "Tool Rate Limiter",
+  "difficulty": "hard",
+  "categories": [
+    "tool-calling",
+    "cost-optimization"
+  ],
+  "frameworks": [
+    "langchain",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "The expensive API tool must not be called more than 5 times per agent run",
+    "When the limit is reached, the agent must use cached or already-fetched results",
+    "The agent must inform the user when it has hit the rate limit",
+    "The rate limit counter must reset between separate agent runs"
+  ],
+  "hints": [
+    "Wrap the tool with a counter that tracks how many times it has been called and returns a rate-limit message after the threshold",
+    "In LangGraph, use graph state to track the call count and add a conditional edge that blocks further API calls",
+    "Consider caching results from earlier calls so the agent can still answer from cached data after hitting the limit"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain.agents import AgentExecutor, create_tool_calling_agent\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom langchain_core.tools import tool\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# BUG: No rate limiting — the agent calls this expensive API as many times as it wants\n# In production this has resulted in 50+ calls per run, costing $2+ per query\n# TODO: Add rate limiting to cap at 5 calls per run\n\n@tool\ndef analyze_company(company_name: str) -> str:\n    \"\"\"Call expensive financial analysis API for a company. Costs $0.05 per call.\"\"\"\n    return f\"Analysis for {company_name}: Revenue $10B, Growth 15%, P/E Ratio 25, Rating: Buy, Market Cap $150B, Sector: Technology\"\n\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a financial analyst assistant. Use the analyze_company tool to research companies. Analyze each company the user asks about.\"),\n    (\"human\", \"{input}\"),\n    (\"placeholder\", \"{agent_scratchpad}\"),\n])\n\nagent = create_tool_calling_agent(llm, [analyze_company], prompt)\nexecutor = AgentExecutor(agent=agent, tools=[analyze_company])\n\nresult = executor.invoke({\"input\": \"Compare the top 10 tech companies: Apple, Google, Microsoft, Amazon, Meta, Tesla, Nvidia, Netflix, Adobe, and Salesforce\"})\nprint(result[\"output\"])",
+    "crewai": "from crewai import Agent, Task, Crew, Process\nfrom crewai.tools import tool\n\n# BUG: No rate limiting — the agent calls this expensive API as many times as it wants\n# In production this has resulted in 50+ calls per run, costing $2+ per query\n# TODO: Add rate limiting to cap at 5 calls per run\n\n@tool\ndef analyze_company(company_name: str) -> str:\n    \"\"\"Call expensive financial analysis API for a company. Costs $0.05 per call.\"\"\"\n    return f\"Analysis for {company_name}: Revenue $10B, Growth 15%, P/E Ratio 25, Rating: Buy, Market Cap $150B, Sector: Technology\"\n\nanalyst_agent = Agent(\n    role=\"Financial Analyst\",\n    goal=\"Analyze companies and provide financial insights based on available data.\",\n    backstory=\"You are a financial analyst that researches companies using the analysis API.\",\n    tools=[analyze_company],\n)\n\ntask = Task(\n    description=\"Compare the top 10 tech companies: Apple, Google, Microsoft, Amazon, Meta, Tesla, Nvidia, Netflix, Adobe, and Salesforce\",\n    expected_output=\"A comparative analysis of the companies with key financial metrics.\",\n    agent=analyst_agent,\n)\n\ncrew = Crew(agents=[analyst_agent], tasks=[task], process=Process.sequential)\nresult = crew.kickoff()\nprint(result)",
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom agents.tool import function_tool\n\n# BUG: No rate limiting — the agent calls this expensive API as many times as it wants\n# In production this has resulted in 50+ calls per run, costing $2+ per query\n# TODO: Add rate limiting to cap at 5 calls per run\n\n@function_tool\ndef analyze_company(company_name: str) -> str:\n    \"\"\"Call expensive financial analysis API for a company. Costs $0.05 per call.\"\"\"\n    return f\"Analysis for {company_name}: Revenue $10B, Growth 15%, P/E Ratio 25, Rating: Buy, Market Cap $150B, Sector: Technology\"\n\nagent = Agent(\n    name=\"Financial Analyst\",\n    instructions=\"You are a financial analyst assistant. Use the analyze_company tool to research companies. Analyze each company the user asks about.\",\n    tools=[analyze_company],\n)\n\nresult = Runner.run_sync(agent, \"Compare the top 10 tech companies: Apple, Google, Microsoft, Amazon, Meta, Tesla, Nvidia, Netflix, Adobe, and Salesforce\")\nprint(result.final_output)"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/tool-rate-limiter-langchain.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/tool-rate-limiter-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/tool-rate-limiter-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "call-limit",
+      "label": "API calls capped at 5",
+      "description": "The expensive API tool is never called more than 5 times in a single run"
+    },
+    {
+      "id": "graceful-limit",
+      "label": "Limit is handled gracefully",
+      "description": "When the limit is reached, the agent informs the user and works with available data"
+    },
+    {
+      "id": "partial-results",
+      "label": "Partial results are still useful",
+      "description": "The agent provides analysis for the companies it was able to look up, not an empty response"
+    },
+    {
+      "id": "counter-resets",
+      "label": "Counter resets between runs",
+      "description": "Each new agent invocation starts with a fresh call counter"
+    }
+  ]
+}

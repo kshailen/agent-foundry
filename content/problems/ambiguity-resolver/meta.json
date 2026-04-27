@@ -1,0 +1,55 @@
+{
+  "number": 10,
+  "title": "Ambiguity Resolver",
+  "difficulty": "medium",
+  "categories": [
+    "prompt-design"
+  ],
+  "frameworks": [
+    "langchain",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "You may only modify the system prompt",
+    "The agent must not ask clarifying questions when the query is already specific",
+    "No additional tools or code logic may be added"
+  ],
+  "hints": [
+    "Define what makes a query 'ambiguous' vs 'clear' in the prompt with explicit criteria",
+    "Include examples of ambiguous queries and the clarifying questions the agent should ask",
+    "Instruct the agent to proceed immediately when all required information is present"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain_core.prompts import ChatPromptTemplate\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# BUG: This prompt makes the agent guess instead of asking for clarification\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a travel booking assistant. Help users book flights and hotels. Always provide a complete answer.\"),\n    (\"human\", \"{input}\"),\n])\n\nchain = prompt | llm\n\n# Test 1: Vague query — should ask clarifying questions\nresult1 = chain.invoke({\"input\": \"Book a flight\"})\nprint(\"Vague query:\", result1.content)\n\n# Test 2: Specific query — should proceed\nresult2 = chain.invoke({\"input\": \"Book a one-way flight from New York JFK to London Heathrow on March 15, 2025, economy class, for 1 adult\"})\nprint(\"Specific query:\", result2.content)\n\n# Test 3: Partially vague — should ask about missing info only\nresult3 = chain.invoke({\"input\": \"I need a flight from San Francisco to Tokyo next week\"})\nprint(\"Partial query:\", result3.content)",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\n# BUG: This instruction makes the agent guess instead of asking for clarification\nagent = Agent(\n    name=\"Travel Assistant\",\n    instructions=\"You are a travel booking assistant. Help users book flights and hotels. Always provide a complete answer.\",\n)\n\n# Test 1: Vague query — should ask clarifying questions\nresult1 = Runner.run_sync(agent, \"Book a flight\")\nprint(\"Vague query:\", result1.final_output)\n\n# Test 2: Specific query — should proceed\nresult2 = Runner.run_sync(agent, \"Book a one-way flight from New York JFK to London Heathrow on March 15, 2025, economy class, for 1 adult\")\nprint(\"Specific query:\", result2.final_output)\n\n# Test 3: Partially vague — should ask about missing info only\nresult3 = Runner.run_sync(agent, \"I need a flight from San Francisco to Tokyo next week\")\nprint(\"Partial query:\", result3.final_output)",
+    "crewai": "from crewai import Agent, Task, Crew, Process\nfrom crewai import LLM\n\nllm = LLM(model=\"gpt-4o-mini\")\n\n# BUG: This backstory makes the agent guess instead of asking for clarification\nassistant = Agent(\n    role=\"Travel Assistant\",\n    goal=\"Help users book flights and hotels\",\n    backstory=\"You are a travel booking assistant. Help users book flights and hotels. Always provide a complete answer.\",\n    llm=llm,\n)\n\nqueries = [\n    \"Book a flight\",\n    \"Book a one-way flight from New York JFK to London Heathrow on March 15, 2025, economy class, for 1 adult\",\n    \"I need a flight from San Francisco to Tokyo next week\",\n]\nfor q in queries:\n    task = Task(description=q, expected_output=\"A booking response\", agent=assistant)\n    crew = Crew(agents=[assistant], tasks=[task], process=Process.sequential)\n    result = crew.kickoff()\n    print(f\"Query: {q}\\nResponse: {result}\\n\")"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/ambiguity-resolver-langchain.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/ambiguity-resolver-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/ambiguity-resolver-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "asks-clarification",
+      "label": "Asks clarifying questions for vague queries",
+      "description": "The agent identifies missing information and asks targeted clarifying questions"
+    },
+    {
+      "id": "proceeds-on-clear",
+      "label": "Proceeds on clear queries",
+      "description": "When all required information is present, the agent acts without unnecessary questions"
+    },
+    {
+      "id": "no-over-asking",
+      "label": "Does not over-ask",
+      "description": "The agent only asks about genuinely missing information, not details already provided"
+    },
+    {
+      "id": "identifies-partial",
+      "label": "Handles partially complete queries",
+      "description": "The agent acknowledges provided info and asks only about what's missing"
+    }
+  ]
+}

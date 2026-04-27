@@ -1,0 +1,103 @@
+# Human-in-the-Loop
+
+Sometimes you want a **human to review agent output** before it is finalized—legal copy, customer-facing messaging, or anything where a model draft alone is not enough. CrewAI supports this with **human-in-the-loop** pauses on specific tasks.
+
+## What human-in-the-loop does
+
+When you mark a task with **`human_input=True`**, the agent works toward the task as usual, but **pauses before the final answer** and asks you for feedback. You can approve, reject, or steer the output; the agent then **incorporates that feedback** and produces the finalized result.
+
+## `human_input=True` on a `Task`
+
+```python
+task = Task(
+    description="Write a marketing copy for our new AI product",
+    expected_output="A compelling 200-word marketing copy",
+    agent=copywriter,
+    human_input=True,
+)
+```
+
+The pause happens at the point where the task would otherwise be considered complete from the agent’s perspective—so you get a **draft or near-final** version to react to, not a silent black box.
+
+## Flow: draft → review → revision → final
+
+1. The **agent produces a draft** aligned with the task description and `expected_output`.
+2. **Execution pauses** and CrewAI **prompts for human input** (see below for where that appears).
+3. You **review** and provide **feedback** (or approval) via that prompt.
+4. The **agent incorporates** your input and returns the **final output** for the task (and the crew continues if there are downstream tasks).
+
+This keeps automation for the bulk of the work while reserving a **mandatory checkpoint** where a person is in control.
+
+## Complete example: crew with a human-reviewed task
+
+```python
+from crewai import Agent, Crew, Process, Task
+
+copywriter = Agent(
+    role="Marketing Copywriter",
+    goal="Write clear, persuasive copy that matches brand tone",
+    backstory="You draft marketing copy, revise based on stakeholder feedback, and deliver polished final text.",
+    verbose=True,
+)
+
+draft_review_task = Task(
+    description=(
+        "Write a short marketing blurb (under 150 words) for a new AI assistant product "
+        "aimed at small business owners. Emphasize time savings and ease of use."
+    ),
+    expected_output="A polished marketing blurb ready for the website hero section.",
+    agent=copywriter,
+    human_input=True,
+)
+
+crew = Crew(
+    agents=[copywriter],
+    tasks=[draft_review_task],
+    process=Process.sequential,
+    verbose=True,
+)
+
+result = crew.kickoff()
+print(result.raw)
+```
+
+When you run this in **Google Colab**, a **terminal**, or any environment that supports **`input()`**, the prompt appears as **standard input**: you type your feedback where the process is waiting and submit it (typically Enter). In IDEs or notebooks, look for the **input cell or console** where Python is blocked waiting for your line.
+
+## When to use human input
+
+- **High-stakes content**: legal disclaimers, regulated industries, anything that must not ship without a person signing off.
+- **Creative and brand work**: tone, voice, and positioning where a human owner should align the output with guidelines the model cannot fully infer.
+- **Domain expertise**: decisions that need specialist judgment (medical, financial, security) where a model draft plus expert review is the right split of labor.
+
+Use it **sparingly** on the tasks that truly need a gate; every `human_input=True` task blocks automation until someone responds.
+
+## Combining with structured output: `human_input=True` + `output_pydantic`
+
+You can **pause for human review** and still require a **validated structured result**. After feedback is applied, the agent’s final answer is shaped and validated against your Pydantic model—same as a task without human input.
+
+```python
+from pydantic import BaseModel
+
+class MarketingCopy(BaseModel):
+    headline: str
+    body: str
+    call_to_action: str
+
+task = Task(
+    description="Write marketing copy for our new AI product with headline, body, and CTA.",
+    expected_output="Structured fields: headline, body, call_to_action.",
+    agent=copywriter,
+    human_input=True,
+    output_pydantic=MarketingCopy,
+)
+```
+
+After `crew.kickoff()`, read **`result.pydantic.headline`**, **`result.pydantic.body`**, and **`result.pydantic.call_to_action`** as you would for any `output_pydantic` task—the human step happens **before** that final structured payload is fixed.
+
+## Key takeaways
+
+- **`human_input=True`** on a **`Task`** pauses before the final answer so a **human can review and give feedback**.
+- The **flow** is: agent draft → **pause and prompt** → human feedback → agent **revises** → **final output**.
+- In **Colab** and **terminal** runs, the prompt shows up as **standard input** where you type your response.
+- Prefer human gates for **high-stakes**, **brand-sensitive**, or **expert-dependent** work—not for every task.
+- You can combine **`human_input=True`** with **`output_pydantic`** so the end state is still a **validated Pydantic** result on **`result.pydantic`**.

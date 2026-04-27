@@ -1,0 +1,295 @@
+## Approach
+
+The bug is that all memory is stored in Python variables — when the process restarts, everything is lost. The user spends a session telling the agent their name, project details, and deadlines. They come back later and the agent has no idea who they are. The memory list is purely in-memory with no persistence to disk.
+
+The fix adds file-based persistence using JSON serialization. After each turn, the memory state (conversation history plus any extracted facts) is saved to a JSON file. On startup, the agent checks for an existing persistence file and loads it if found. If no file exists (cold start), the agent starts fresh without errors. A session ID parameter keeps different users' data in separate files.
+
+The implementation uses two helper functions: `save_session()` serializes the memory to a JSON file after each turn, and `load_session()` reads it back on startup. The key design decisions are using JSON for human-readability, auto-saving after every turn for durability, and wrapping the load in a graceful fallback for cold starts.
+
+## Solution
+
+### LangGraph
+
+```python
+import json
+import os
+from langchain_openai import ChatOpenAI
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict, Annotated
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+import operator
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+MEMORY_DIR = "session_memory"
+os.makedirs(MEMORY_DIR, exist_ok=True)
+
+def get_session_path(session_id: str) -> str:
+    return os.path.join(MEMORY_DIR, f"{session_id}.json")
+
+def save_session(session_id: str, messages: list):
+    serialized = []
+    for msg in messages:
+        if isinstance(msg, SystemMessage):
+            serialized.append({"role": "system", "content": msg.content})
+        elif isinstance(msg, HumanMessage):
+            serialized.append({"role": "user", "content": msg.content})
+        elif isinstance(msg, AIMessage):
+            serialized.append({"role": "assistant", "content": msg.content})
+    with open(get_session_path(session_id), "w") as f:
+        json.dump(serialized, f, indent=2)
+
+def load_session(session_id: str) -> list:
+    path = get_session_path(session_id)
+    if not os.path.exists(path):
+        return [SystemMessage(content="You are a helpful assistant.")]
+    with open(path, "r") as f:
+        data = json.load(f)
+    messages = []
+    for item in data:
+        if item["role"] == "system":
+            messages.append(SystemMessage(content=item["content"]))
+        elif item["role"] == "user":
+            messages.append(HumanMessage(content=item["content"]))
+        elif item["role"] == "assistant":
+            messages.append(AIMessage(content=item["content"]))
+    return messages
+
+class State(TypedDict):
+    messages: Annotated[list, operator.add]
+
+def chatbot(state: State) -> State:
+    response = llm.invoke(state["messages"])
+    return {"messages": [response]}
+
+graph = StateGraph(State)
+graph.add_node("chatbot", chatbot)
+graph.add_edge(START, "chatbot")
+graph.add_edge("chatbot", END)
+app = graph.compile()
+
+SESSION_ID = "user_jordan"
+
+# Session 1
+print("=== Session 1 ===")
+messages = load_session(SESSION_ID)
+for msg in ["My name is Jordan.", "I'm working on Project Phoenix.", "The deadline is March 15th."]:
+    messages.append(HumanMessage(content=msg))
+    result = app.invoke({"messages": messages})
+    messages = result["messages"]
+    print(f"User: {msg}")
+    print(f"Agent: {messages[-1].content}\n")
+    save_session(SESSION_ID, messages)
+
+# Simulate process restart — reload from disk
+print("=== Session 2 (after restart) ===")
+messages = load_session(SESSION_ID)
+
+for msg in ["What's my name?", "What project am I working on?"]:
+    messages.append(HumanMessage(content=msg))
+    result = app.invoke({"messages": messages})
+    messages = result["messages"]
+    print(f"User: {msg}")
+    print(f"Agent: {messages[-1].content}\n")
+    save_session(SESSION_ID, messages)
+```
+
+### LangChain
+
+```python
+import json
+import os
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+MEMORY_DIR = "session_memory"
+os.makedirs(MEMORY_DIR, exist_ok=True)
+
+def get_session_path(session_id: str) -> str:
+    return os.path.join(MEMORY_DIR, f"{session_id}.json")
+
+def save_session(session_id: str, history: list):
+    serialized = []
+    for msg in history:
+        if isinstance(msg, SystemMessage):
+            serialized.append({"role": "system", "content": msg.content})
+        elif isinstance(msg, HumanMessage):
+            serialized.append({"role": "user", "content": msg.content})
+        elif isinstance(msg, AIMessage):
+            serialized.append({"role": "assistant", "content": msg.content})
+    with open(get_session_path(session_id), "w") as f:
+        json.dump(serialized, f, indent=2)
+
+def load_session(session_id: str) -> list:
+    path = get_session_path(session_id)
+    if not os.path.exists(path):
+        return [SystemMessage(content="You are a helpful assistant.")]
+    with open(path, "r") as f:
+        data = json.load(f)
+    messages = []
+    for item in data:
+        if item["role"] == "system":
+            messages.append(SystemMessage(content=item["content"]))
+        elif item["role"] == "user":
+            messages.append(HumanMessage(content=item["content"]))
+        elif item["role"] == "assistant":
+            messages.append(AIMessage(content=item["content"]))
+    return messages
+
+SESSION_ID = "user_jordan"
+
+# Session 1
+print("=== Session 1 ===")
+history = load_session(SESSION_ID)
+
+def chat(user_input: str) -> str:
+    history.append(HumanMessage(content=user_input))
+    response = llm.invoke(history)
+    history.append(response)
+    save_session(SESSION_ID, history)
+    return response.content
+
+print(chat("My name is Jordan."))
+print(chat("I'm working on Project Phoenix."))
+print(chat("The deadline is March 15th."))
+
+# Simulate process restart — reload from disk
+history = load_session(SESSION_ID)
+
+print("\n=== Session 2 (after restart) ===")
+print(chat("What's my name?"))
+print(chat("What project am I working on?"))
+```
+
+### CrewAI
+
+```python
+import json
+import os
+from crewai import Agent, Task, Crew
+from crewai import LLM
+
+llm = LLM(model="gpt-4o-mini")
+
+MEMORY_DIR = "session_memory"
+os.makedirs(MEMORY_DIR, exist_ok=True)
+
+def get_session_path(session_id: str) -> str:
+    return os.path.join(MEMORY_DIR, f"{session_id}.json")
+
+def save_session(session_id: str, history: list):
+    with open(get_session_path(session_id), "w") as f:
+        json.dump(history, f, indent=2)
+
+def load_session(session_id: str) -> list:
+    path = get_session_path(session_id)
+    if not os.path.exists(path):
+        return []
+    with open(path, "r") as f:
+        return json.load(f)
+
+agent = Agent(
+    role="Assistant",
+    goal="Help users with their questions",
+    backstory="You are a helpful assistant.",
+    llm=llm,
+)
+
+SESSION_ID = "user_jordan"
+
+print("=== Session 1 ===")
+history = load_session(SESSION_ID)
+
+def chat(user_input: str) -> str:
+    history.append(f"User: {user_input}")
+    context = "\n".join(history)
+    task = Task(
+        description=f"Continue this conversation:\n{context}\n\nRespond to the latest message.",
+        expected_output="A helpful response",
+        agent=agent,
+    )
+    crew = Crew(agents=[agent], tasks=[task])
+    result = str(crew.kickoff())
+    history.append(f"Assistant: {result}")
+    save_session(SESSION_ID, history)
+    return result
+
+print(chat("My name is Jordan."))
+print(chat("I'm working on Project Phoenix."))
+print(chat("The deadline is March 15th."))
+
+# Simulate process restart — reload from disk
+history = load_session(SESSION_ID)
+
+print("\n=== Session 2 (after restart) ===")
+print(chat("What's my name?"))
+print(chat("What project am I working on?"))
+```
+
+### OpenAI Agents SDK
+
+```python
+import json
+import os
+from agents import Agent, Runner
+
+agent = Agent(
+    name="Assistant",
+    instructions="You are a helpful assistant.",
+)
+
+MEMORY_DIR = "session_memory"
+os.makedirs(MEMORY_DIR, exist_ok=True)
+
+def get_session_path(session_id: str) -> str:
+    return os.path.join(MEMORY_DIR, f"{session_id}.json")
+
+def save_session(session_id: str, history: list):
+    with open(get_session_path(session_id), "w") as f:
+        json.dump(history, f, indent=2)
+
+def load_session(session_id: str) -> list:
+    path = get_session_path(session_id)
+    if not os.path.exists(path):
+        return []
+    with open(path, "r") as f:
+        return json.load(f)
+
+SESSION_ID = "user_jordan"
+
+print("=== Session 1 ===")
+history = load_session(SESSION_ID)
+
+def chat(user_input: str) -> str:
+    history.append({"role": "user", "content": user_input})
+    result = Runner.run_sync(agent, history)
+    response_text = result.final_output
+    history.append({"role": "assistant", "content": response_text})
+    save_session(SESSION_ID, history)
+    return response_text
+
+print(chat("My name is Jordan."))
+print(chat("I'm working on Project Phoenix."))
+print(chat("The deadline is March 15th."))
+
+# Simulate process restart — reload from disk
+history = load_session(SESSION_ID)
+
+print("\n=== Session 2 (after restart) ===")
+print(chat("What's my name?"))
+print(chat("What project am I working on?"))
+```
+
+## Why This Works
+
+JSON file persistence bridges the gap between in-memory state and durable storage. After each turn, the complete conversation history is serialized to disk. When the process restarts, `load_session()` reads the file and reconstructs the message list. The agent resumes with full context from the previous session, as if the restart never happened.
+
+The cold start handling is simple: if the persistence file does not exist, `load_session()` returns a default list with just the system message. No `FileNotFoundError`, no special initialization — the agent starts fresh and begins building history from scratch. The session ID keeps multiple users' data separate, so different users can have independent persistent conversations.
+
+## Key Takeaways
+
+- In-memory state is ephemeral — any important conversation context must be persisted to survive process restarts.
+- JSON is an ideal persistence format for conversation data: human-readable, easy to debug, and natively compatible with Python.
+- Always handle the cold-start case gracefully — the first session has no prior data, and the agent must start fresh without errors.

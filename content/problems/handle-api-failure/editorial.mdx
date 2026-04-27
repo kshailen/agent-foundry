@@ -1,0 +1,204 @@
+## Approach
+
+The stock price API fails 60% of the time, and the current code has zero error handling — one failed call crashes the entire agent. In production, unreliable downstream services are the norm, not the exception. The fix requires adding retry logic that attempts the API call up to 3 times before giving up, and a graceful fallback message when all retries are exhausted.
+
+For the LangChain solution, we wrap the tool function with a retry loop that catches `ConnectionError` and retries up to 3 times. If all attempts fail, the tool returns a user-friendly error message instead of raising an exception. For the LangGraph solution, we add a conditional edge that checks whether the fetch succeeded or failed, routing back to the fetch node (with an incremented retry counter) on failure, and only proceeding to the response node after success or exhausted retries.
+
+## Solution
+
+### LangChain
+
+```python
+import random
+from langchain_openai import ChatOpenAI
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+
+def _fetch_stock_price_raw(ticker: str) -> str:
+    """Simulated unreliable API - fails 60% of the time."""
+    if random.random() < 0.6:
+        raise ConnectionError(f"API timeout: Could not reach stock service for {ticker}")
+    return f"{ticker}: $142.50 (+2.3%)"
+
+@tool
+def fetch_stock_price(ticker: str) -> str:
+    """Fetch the current stock price for a given ticker symbol."""
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            return _fetch_stock_price_raw(ticker)
+        except ConnectionError:
+            if attempt == max_retries:
+                return (
+                    f"I was unable to retrieve the stock price for {ticker} after {max_retries} attempts. "
+                    "The stock service appears to be temporarily unavailable. "
+                    "Please try again in a few moments or check a financial website directly."
+                )
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a financial assistant. Help users check stock prices."),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}"),
+])
+
+agent = create_tool_calling_agent(llm, [fetch_stock_price], prompt)
+executor = AgentExecutor(agent=agent, tools=[fetch_stock_price])
+
+result = executor.invoke({"input": "What's the current price of AAPL?"})
+print(result["output"])
+```
+
+### LangGraph
+
+```python
+import random
+from typing import TypedDict
+from langgraph.graph import StateGraph, START, END
+from langchain_openai import ChatOpenAI
+
+class State(TypedDict):
+    query: str
+    result: str
+    error: str
+    retries: int
+
+def fetch_stock(state: State) -> State:
+    """Fetch stock price - simulated unreliable API."""
+    if random.random() < 0.6:
+        return {**state, "error": "API timeout", "result": "", "retries": state["retries"] + 1}
+    return {**state, "result": f"AAPL: $142.50 (+2.3%)", "error": "", "retries": state["retries"] + 1}
+
+def should_retry(state: State) -> str:
+    """Decide whether to retry or move to response."""
+    if state["result"]:
+        return "respond"
+    if state["retries"] >= 3:
+        return "respond"
+    return "fetch"
+
+def respond(state: State) -> State:
+    """Generate final response."""
+    if state["result"]:
+        return {**state, "result": f"Here's the latest: {state['result']}"}
+    return {
+        **state,
+        "result": (
+            "I'm sorry, the stock API is currently unavailable after multiple attempts. "
+            "Please try again later or check a financial website directly."
+        ),
+    }
+
+graph = StateGraph(State)
+graph.add_node("fetch", fetch_stock)
+graph.add_node("respond", respond)
+graph.add_edge(START, "fetch")
+graph.add_conditional_edges("fetch", should_retry, {"fetch": "fetch", "respond": "respond"})
+graph.add_edge("respond", END)
+
+app = graph.compile()
+result = app.invoke({"query": "AAPL", "result": "", "error": "", "retries": 0})
+print(result["result"])
+```
+
+### CrewAI
+
+```python
+import random
+from crewai import Agent, Task, Crew
+from crewai.tools import tool
+
+
+def _fetch_stock_price_raw(ticker: str) -> str:
+    """Simulated unreliable API - fails 60% of the time."""
+    if random.random() < 0.6:
+        raise ConnectionError(f"API timeout: Could not reach stock service for {ticker}")
+    return f"{ticker}: $142.50 (+2.3%)"
+
+
+@tool
+def fetch_stock_price(ticker: str) -> str:
+    """Fetch the current stock price for a given ticker symbol."""
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            return _fetch_stock_price_raw(ticker)
+        except ConnectionError:
+            if attempt == max_retries:
+                return (
+                    f"I was unable to retrieve the stock price for {ticker} after {max_retries} attempts. "
+                    "The stock service appears to be temporarily unavailable. "
+                    "Please try again in a few moments or check a financial website directly."
+                )
+
+
+assistant = Agent(
+    role="Financial Assistant",
+    goal="Help users check stock prices",
+    backstory="You are a financial assistant.",
+    tools=[fetch_stock_price],
+)
+
+task = Task(
+    description="What's the current price of AAPL?",
+    expected_output="The current stock price of AAPL",
+    agent=assistant,
+)
+
+crew = Crew(agents=[assistant], tasks=[task])
+result = crew.kickoff()
+print(result)
+```
+
+### OpenAI Agents SDK
+
+```python
+import random
+from agents import Agent, Runner
+from agents.tool import function_tool
+
+
+def _fetch_stock_price_raw(ticker: str) -> str:
+    """Simulated unreliable API - fails 60% of the time."""
+    if random.random() < 0.6:
+        raise ConnectionError(f"API timeout: Could not reach stock service for {ticker}")
+    return f"{ticker}: $142.50 (+2.3%)"
+
+
+@function_tool
+def fetch_stock_price(ticker: str) -> str:
+    """Fetch the current stock price for a given ticker symbol."""
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            return _fetch_stock_price_raw(ticker)
+        except ConnectionError:
+            if attempt == max_retries:
+                return (
+                    f"I was unable to retrieve the stock price for {ticker} after {max_retries} attempts. "
+                    "The stock service appears to be temporarily unavailable. "
+                    "Please try again in a few moments or check a financial website directly."
+                )
+
+
+agent = Agent(
+    name="Financial Assistant",
+    instructions="You are a financial assistant. Help users check stock prices.",
+    tools=[fetch_stock_price],
+)
+
+result = Runner.run_sync(agent, "What's the current price of AAPL?")
+print(result.final_output)
+```
+
+## Why This Works
+
+Retry logic is the standard pattern for unreliable external services. With a 60% failure rate, the probability of all 3 attempts failing is 0.6^3 = 21.6% — meaning the agent will succeed roughly 78% of the time instead of only 40%. The LangChain approach wraps retries inside the tool itself, keeping the agent executor unaware of transient failures. The LangGraph approach models retries as a graph cycle with a conditional edge, which is more explicit and easier to observe/debug. Both approaches ensure the user never sees a raw exception — they either get data or a clear explanation of why data is unavailable.
+
+## Key Takeaways
+
+- Always wrap unreliable external API calls with retry logic — transient failures are normal in production.
+- When all retries fail, return a helpful fallback message instead of crashing with an unhandled exception.
+- In LangGraph, conditional edges are the natural way to model retry loops — route back to the fetch node on failure, forward to response on success.

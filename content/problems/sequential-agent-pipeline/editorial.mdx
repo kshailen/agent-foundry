@@ -1,0 +1,121 @@
+## Approach
+
+The bug is that the researcher and writer run independently — the writer generates a summary from scratch without ever seeing the researcher's findings. Even though two separate agents exist, there is no data flow between them. The researcher's output is discarded, and the writer operates on the raw topic alone, producing a generic summary disconnected from the actual research.
+
+The fix requires wiring the two agents into a sequential pipeline where the researcher's output is explicitly passed as input context to the writer. In CrewAI, this means using a sequential `Process` and ensuring the tasks are ordered so that context automatically flows from the research task to the write task. In LangChain, you capture the research chain's output and inject it into the writer's prompt template as a variable.
+
+This is the most fundamental multi-agent orchestration pattern: a pipeline where each agent's output feeds the next agent's input, ensuring the final result is grounded in the work of all preceding stages.
+
+## Solution
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai import LLM
+
+llm = LLM(model="gpt-4o-mini")
+
+researcher = Agent(
+    role="Researcher",
+    goal="Gather key facts about a given topic",
+    backstory="You are a thorough research analyst.",
+    llm=llm,
+)
+
+writer = Agent(
+    role="Writer",
+    goal="Write a concise summary from research notes",
+    backstory="You are a skilled technical writer.",
+    llm=llm,
+)
+
+research_task = Task(
+    description="Research the latest trends in {topic}",
+    expected_output="A list of 5 key findings with brief explanations",
+    agent=researcher,
+)
+
+write_task = Task(
+    description="Using the research findings provided, write a 200-word summary about {topic}",
+    expected_output="A polished summary paragraph that references the research findings",
+    agent=writer,
+    context=[research_task],
+)
+
+crew = Crew(
+    agents=[researcher, writer],
+    tasks=[research_task, write_task],
+    process=Process.sequential,
+)
+
+result = crew.kickoff(inputs={"topic": "AI agents"})
+print(result)
+```
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+research_prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a thorough research analyst. Gather key facts about the given topic."),
+    ("human", "Research the latest trends in {topic}"),
+])
+
+write_prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a skilled technical writer. Write a concise summary based on the provided research findings."),
+    ("human", "Based on the following research findings, write a 200-word summary about {topic}.\n\nResearch findings:\n{research}"),
+])
+
+research_chain = research_prompt | llm
+write_chain = write_prompt | llm
+
+research_result = research_chain.invoke({"topic": "AI agents"})
+print("Research:", research_result.content)
+
+write_result = write_chain.invoke({"topic": "AI agents", "research": research_result.content})
+print("Summary:", write_result.content)
+```
+
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+
+researcher = Agent(
+    name="Researcher",
+    instructions="You are a thorough research analyst. Gather key facts about the given topic.",
+)
+
+writer = Agent(
+    name="Writer",
+    instructions="You are a skilled technical writer. Write a concise summary based on the provided research findings.",
+)
+
+research_result = Runner.run_sync(researcher, "Research the latest trends in AI agents")
+print("Research:", research_result.final_output)
+
+write_result = Runner.run_sync(
+    writer,
+    f"Based on the following research findings, write a 200-word summary about AI agents.\n\n"
+    f"Research findings:\n{research_result.final_output}",
+)
+print("Summary:", write_result.final_output)
+```
+
+## Why This Works
+
+The key change is establishing an explicit data dependency: the writer cannot run until it receives the researcher's output, and its prompt includes the actual research findings as context. In CrewAI, setting `context=[research_task]` on the write task tells the framework to pass the research output into the writer's context automatically. In LangChain, adding a `{research}` placeholder to the writer's prompt and populating it with the research chain's output creates the same data flow manually.
+
+This ensures the writer's summary is grounded in the specific findings the researcher produced, rather than generating content from scratch based only on the topic name.
+
+## Key Takeaways
+
+- A sequential pipeline requires explicit data flow — running agents in order is not enough if outputs are not passed forward.
+- In CrewAI, the `context` parameter on a `Task` is the primary mechanism for passing upstream outputs to downstream agents.
+- In LangChain, you must manually capture one chain's output and inject it into the next chain's prompt template as a variable.

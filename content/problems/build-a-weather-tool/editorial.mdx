@@ -1,0 +1,184 @@
+## Approach
+
+The weather tool is a skeleton that returns `None`. The agent has no way to look up weather data, so it either hallucinates or says it cannot help. The task is to implement the tool function with proper docstrings, type hints, a dictionary lookup, structured return data, and graceful error handling for unknown cities.
+
+The implementation is straightforward: normalize the city name to lowercase for case-insensitive matching, look it up in the provided `WEATHER_DATA` dictionary, and return a structured JSON string with city, temperature, condition, and humidity fields. When the city is not found, return a helpful error message that lists the available cities so the user knows what options exist.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+import json
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+WEATHER_DATA = {
+    "new york": {"temperature": "72°F", "condition": "Sunny", "humidity": "45%"},
+    "london": {"temperature": "58°F", "condition": "Cloudy", "humidity": "78%"},
+    "tokyo": {"temperature": "68°F", "condition": "Clear", "humidity": "55%"},
+    "paris": {"temperature": "64°F", "condition": "Rainy", "humidity": "82%"},
+    "sydney": {"temperature": "75°F", "condition": "Partly Cloudy", "humidity": "60%"},
+}
+
+@tool
+def get_weather(city: str) -> str:
+    """Get the current weather for a given city.
+
+    Args:
+        city: The name of the city to look up weather for (e.g., 'Tokyo', 'New York').
+
+    Returns:
+        A JSON string with the city's temperature, condition, and humidity,
+        or an error message if the city is not found.
+    """
+    normalized = city.strip().lower()
+    if normalized in WEATHER_DATA:
+        data = WEATHER_DATA[normalized]
+        return json.dumps({
+            "city": normalized,
+            "temperature": data["temperature"],
+            "condition": data["condition"],
+            "humidity": data["humidity"],
+        })
+    available = ", ".join(name.title() for name in WEATHER_DATA)
+    return f"Weather data not available for '{city}'. Available cities: {available}."
+
+tools = [get_weather]
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a weather assistant. Use the weather tool to answer questions about the weather."),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}"),
+])
+
+agent = create_tool_calling_agent(llm, tools, prompt)
+executor = AgentExecutor(agent=agent, tools=tools)
+
+result = executor.invoke({"input": "What's the weather in Tokyo?"})
+print(result["output"])
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from agents.tool import function_tool
+import json
+
+WEATHER_DATA = {
+    "new york": {"temperature": "72°F", "condition": "Sunny", "humidity": "45%"},
+    "london": {"temperature": "58°F", "condition": "Cloudy", "humidity": "78%"},
+    "tokyo": {"temperature": "68°F", "condition": "Clear", "humidity": "55%"},
+    "paris": {"temperature": "64°F", "condition": "Rainy", "humidity": "82%"},
+    "sydney": {"temperature": "75°F", "condition": "Partly Cloudy", "humidity": "60%"},
+}
+
+@function_tool
+def get_weather(city: str) -> str:
+    """Get the current weather for a given city.
+
+    Args:
+        city: The name of the city to look up weather for (e.g., 'Tokyo', 'New York').
+
+    Returns:
+        A JSON string with the city's temperature, condition, and humidity,
+        or an error message if the city is not found.
+    """
+    normalized = city.strip().lower()
+    if normalized in WEATHER_DATA:
+        data = WEATHER_DATA[normalized]
+        return json.dumps({
+            "city": normalized,
+            "temperature": data["temperature"],
+            "condition": data["condition"],
+            "humidity": data["humidity"],
+        })
+    available = ", ".join(name.title() for name in WEATHER_DATA)
+    return f"Weather data not available for '{city}'. Available cities: {available}."
+
+agent = Agent(
+    name="Weather Assistant",
+    instructions="You are a weather assistant. Use the weather tool to answer questions about the weather.",
+    tools=[get_weather],
+)
+
+result = Runner.run_sync(agent, "What's the weather in Tokyo?")
+print(result.final_output)
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai import LLM
+from crewai.tools import tool
+import json
+
+llm = LLM(model="gpt-4o-mini")
+
+WEATHER_DATA = {
+    "new york": {"temperature": "72°F", "condition": "Sunny", "humidity": "45%"},
+    "london": {"temperature": "58°F", "condition": "Cloudy", "humidity": "78%"},
+    "tokyo": {"temperature": "68°F", "condition": "Clear", "humidity": "55%"},
+    "paris": {"temperature": "64°F", "condition": "Rainy", "humidity": "82%"},
+    "sydney": {"temperature": "75°F", "condition": "Partly Cloudy", "humidity": "60%"},
+}
+
+
+@tool
+def get_weather(city: str) -> str:
+    """Get the current weather for a given city.
+
+    Args:
+        city: The name of the city to look up weather for (e.g., 'Tokyo', 'New York').
+
+    Returns:
+        A JSON string with the city's temperature, condition, and humidity,
+        or an error message if the city is not found.
+    """
+    normalized = city.strip().lower()
+    if normalized in WEATHER_DATA:
+        data = WEATHER_DATA[normalized]
+        return json.dumps({
+            "city": normalized,
+            "temperature": data["temperature"],
+            "condition": data["condition"],
+            "humidity": data["humidity"],
+        })
+    available = ", ".join(name.title() for name in WEATHER_DATA)
+    return f"Weather data not available for '{city}'. Available cities: {available}."
+
+
+agent = Agent(
+    role="Weather Assistant",
+    goal="Answer questions about the weather using the weather tool",
+    backstory="You are a weather assistant. Use the weather tool to answer questions about the weather.",
+    tools=[get_weather],
+    llm=llm,
+)
+
+task = Task(
+    description="What's the weather in Tokyo?",
+    expected_output="Weather information for the requested city",
+    agent=agent,
+)
+
+crew = Crew(agents=[agent], tasks=[task], process=Process.sequential)
+result = crew.kickoff()
+print(result)
+```
+
+## Why This Works
+
+A well-implemented tool needs three things: a clear schema (docstring + type hints) so the model knows how to call it, structured return data so the model can parse and present results, and graceful error handling so failures don't crash the agent. Case-insensitive matching ensures the tool works regardless of how the model capitalizes the city name. Listing available cities in the error message is a form of "actionable error" — it tells the user (and the model) exactly what valid inputs look like, which is far more useful than a generic "not found" message.
+
+## Key Takeaways
+
+- Tool docstrings are the LLM's documentation — they must clearly explain purpose, parameters, and return values.
+- Always normalize user-facing inputs (lowercasing, stripping whitespace) to handle natural variation in how the model formats arguments.
+- Error messages should be actionable — listing available options is more helpful than just saying "not found."

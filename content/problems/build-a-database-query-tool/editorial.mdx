@@ -1,0 +1,238 @@
+## Approach
+
+The database query tool has three critical bugs: it executes any SQL statement (including destructive ones like `DROP TABLE`), it returns raw Python tuples with no column headers, and it returns an empty list `[]` when no rows match. In a production agent, letting an LLM execute arbitrary SQL against a real database is a serious security vulnerability — the model might generate or be tricked into generating destructive queries.
+
+The fix addresses all three issues. First, we validate that the query starts with `SELECT` (case-insensitive) and reject any statement containing dangerous keywords like `DROP`, `DELETE`, `INSERT`, `UPDATE`, or `ALTER`. Second, we extract column names from the cursor description and format results as a readable table with headers. Third, we handle empty result sets with a clear "no results found" message instead of an empty list.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+import sqlite3
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+conn = sqlite3.connect(":memory:")
+cursor = conn.cursor()
+cursor.execute("CREATE TABLE employees (id INTEGER, name TEXT, department TEXT, salary INTEGER)")
+cursor.executemany("INSERT INTO employees VALUES (?, ?, ?, ?)", [
+    (1, "Alice", "Engineering", 95000),
+    (2, "Bob", "Marketing", 72000),
+    (3, "Charlie", "Engineering", 88000),
+    (4, "Diana", "Sales", 67000),
+    (5, "Eve", "Marketing", 78000),
+])
+conn.commit()
+
+BLOCKED_KEYWORDS = ["DROP", "DELETE", "INSERT", "UPDATE", "ALTER", "CREATE", "TRUNCATE", "REPLACE"]
+
+@tool
+def query_database(sql: str) -> str:
+    """Run a read-only SQL SELECT query against the employees database.
+
+    Args:
+        sql: A SELECT query to run. Only SELECT statements are allowed.
+             The employees table has columns: id, name, department, salary.
+
+    Returns:
+        Formatted query results with column headers, or an error message
+        if the query is not a valid SELECT statement.
+    """
+    normalized = sql.strip().upper()
+    if not normalized.startswith("SELECT"):
+        return "Error: Only SELECT queries are allowed. DROP, DELETE, INSERT, UPDATE, and ALTER statements are blocked."
+    for keyword in BLOCKED_KEYWORDS:
+        if keyword in normalized:
+            return f"Error: Only SELECT queries are allowed. {keyword} statements are blocked for security."
+
+    result = cursor.execute(sql)
+    columns = [desc[0] for desc in result.description]
+    rows = result.fetchall()
+
+    if not rows:
+        return "No results found. The query returned 0 rows."
+
+    col_widths = [max(len(str(col)), max(len(str(row[i])) for row in rows)) for i, col in enumerate(columns)]
+    header = " | ".join(col.ljust(col_widths[i]) for i, col in enumerate(columns))
+    separator = "-+-".join("-" * w for w in col_widths)
+    data_rows = "\n".join(
+        " | ".join(str(row[i]).ljust(col_widths[i]) for i in range(len(columns)))
+        for row in rows
+    )
+    return f"Results ({len(rows)} rows):\n{header}\n{separator}\n{data_rows}"
+
+tools = [query_database]
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a database assistant. Use the query tool to answer questions about employees."),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}"),
+])
+
+agent = create_tool_calling_agent(llm, tools, prompt)
+executor = AgentExecutor(agent=agent, tools=tools)
+
+result = executor.invoke({"input": "Show me all engineers and their salaries"})
+print(result["output"])
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from agents.tool import function_tool
+import sqlite3
+
+conn = sqlite3.connect(":memory:")
+cursor = conn.cursor()
+cursor.execute("CREATE TABLE employees (id INTEGER, name TEXT, department TEXT, salary INTEGER)")
+cursor.executemany("INSERT INTO employees VALUES (?, ?, ?, ?)", [
+    (1, "Alice", "Engineering", 95000),
+    (2, "Bob", "Marketing", 72000),
+    (3, "Charlie", "Engineering", 88000),
+    (4, "Diana", "Sales", 67000),
+    (5, "Eve", "Marketing", 78000),
+])
+conn.commit()
+
+BLOCKED_KEYWORDS = ["DROP", "DELETE", "INSERT", "UPDATE", "ALTER", "CREATE", "TRUNCATE", "REPLACE"]
+
+@function_tool
+def query_database(sql: str) -> str:
+    """Run a read-only SQL SELECT query against the employees database.
+
+    Args:
+        sql: A SELECT query to run. Only SELECT statements are allowed.
+             The employees table has columns: id, name, department, salary.
+
+    Returns:
+        Formatted query results with column headers, or an error message
+        if the query is not a valid SELECT statement.
+    """
+    normalized = sql.strip().upper()
+    if not normalized.startswith("SELECT"):
+        return "Error: Only SELECT queries are allowed. DROP, DELETE, INSERT, UPDATE, and ALTER statements are blocked."
+    for keyword in BLOCKED_KEYWORDS:
+        if keyword in normalized:
+            return f"Error: Only SELECT queries are allowed. {keyword} statements are blocked for security."
+
+    result = cursor.execute(sql)
+    columns = [desc[0] for desc in result.description]
+    rows = result.fetchall()
+
+    if not rows:
+        return "No results found. The query returned 0 rows."
+
+    col_widths = [max(len(str(col)), max(len(str(row[i])) for row in rows)) for i, col in enumerate(columns)]
+    header = " | ".join(col.ljust(col_widths[i]) for i, col in enumerate(columns))
+    separator = "-+-".join("-" * w for w in col_widths)
+    data_rows = "\n".join(
+        " | ".join(str(row[i]).ljust(col_widths[i]) for i in range(len(columns)))
+        for row in rows
+    )
+    return f"Results ({len(rows)} rows):\n{header}\n{separator}\n{data_rows}"
+
+agent = Agent(
+    name="Database Assistant",
+    instructions="You are a database assistant. Use the query tool to answer questions about employees.",
+    tools=[query_database],
+)
+
+result = Runner.run_sync(agent, "Show me all engineers and their salaries")
+print(result.final_output)
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai import LLM
+from crewai.tools import tool
+import sqlite3
+
+llm = LLM(model="gpt-4o-mini")
+
+conn = sqlite3.connect(":memory:")
+cursor = conn.cursor()
+cursor.execute("CREATE TABLE employees (id INTEGER, name TEXT, department TEXT, salary INTEGER)")
+cursor.executemany("INSERT INTO employees VALUES (?, ?, ?, ?)", [
+    (1, "Alice", "Engineering", 95000),
+    (2, "Bob", "Marketing", 72000),
+    (3, "Charlie", "Engineering", 88000),
+    (4, "Diana", "Sales", 67000),
+    (5, "Eve", "Marketing", 78000),
+])
+conn.commit()
+
+BLOCKED_KEYWORDS = ["DROP", "DELETE", "INSERT", "UPDATE", "ALTER", "CREATE", "TRUNCATE", "REPLACE"]
+
+
+@tool
+def query_database(sql: str) -> str:
+    """Run a read-only SQL SELECT query against the employees database.
+
+    Args:
+        sql: A SELECT query to run. Only SELECT statements are allowed.
+             The employees table has columns: id, name, department, salary.
+
+    Returns:
+        Formatted query results with column headers, or an error message
+        if the query is not a valid SELECT statement.
+    """
+    normalized = sql.strip().upper()
+    if not normalized.startswith("SELECT"):
+        return "Error: Only SELECT queries are allowed. DROP, DELETE, INSERT, UPDATE, and ALTER statements are blocked."
+    for keyword in BLOCKED_KEYWORDS:
+        if keyword in normalized:
+            return f"Error: Only SELECT queries are allowed. {keyword} statements are blocked for security."
+
+    result = cursor.execute(sql)
+    columns = [desc[0] for desc in result.description]
+    rows = result.fetchall()
+
+    if not rows:
+        return "No results found. The query returned 0 rows."
+
+    col_widths = [max(len(str(col)), max(len(str(row[i])) for row in rows)) for i, col in enumerate(columns)]
+    header = " | ".join(col.ljust(col_widths[i]) for i, col in enumerate(columns))
+    separator = "-+-".join("-" * w for w in col_widths)
+    data_rows = "\n".join(
+        " | ".join(str(row[i]).ljust(col_widths[i]) for i in range(len(columns)))
+        for row in rows
+    )
+    return f"Results ({len(rows)} rows):\n{header}\n{separator}\n{data_rows}"
+
+
+agent = Agent(
+    role="Database Assistant",
+    goal="Answer questions about employees using SQL queries",
+    backstory="You are a database assistant. Use the query tool to answer questions about employees.",
+    tools=[query_database],
+    llm=llm,
+)
+
+task = Task(
+    description="Show me all engineers and their salaries",
+    expected_output="Formatted query results",
+    agent=agent,
+)
+
+crew = Crew(agents=[agent], tasks=[task], process=Process.sequential)
+result = crew.kickoff()
+print(result)
+```
+
+## Why This Works
+
+The three fixes address three distinct failure modes. The `SELECT`-only validation prevents the most dangerous class of bugs — an LLM generating or being prompted to generate destructive SQL. The keyword blocklist provides defense-in-depth against compound statements like `SELECT 1; DROP TABLE employees`. Formatted output with column headers makes results interpretable by both the model and the end user, which leads to better final answers. The empty-result message prevents the model from hallucinating data when a query legitimately returns nothing. Together, these changes transform a dangerously naive tool into one that's safe and user-friendly.
+
+## Key Takeaways
+
+- Never let an LLM execute arbitrary SQL — always validate and restrict to read-only operations.
+- Format tool output for readability (column headers, aligned text) since both the LLM and the end user benefit from structured results.
+- Handle edge cases explicitly (empty results, invalid input) with clear messages rather than letting them produce confusing raw output.

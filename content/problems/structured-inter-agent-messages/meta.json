@@ -1,0 +1,51 @@
+{
+  "number": 82,
+  "title": "Structured Inter-Agent Messages",
+  "difficulty": "medium",
+  "categories": [
+    "multi-agent"
+  ],
+  "frameworks": [
+    "crewai",
+    "langgraph",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "Agents must communicate using structured data models, not free-text strings",
+    "Define explicit schemas (e.g., Pydantic models) for inter-agent messages",
+    "The receiving agent must parse the structured message, not treat it as raw text",
+    "All key information fields must be preserved across agent boundaries"
+  ],
+  "hints": [
+    "Use Pydantic models to define the schema for messages passed between agents",
+    "Have the sending agent output structured JSON that conforms to the schema",
+    "In LangGraph, store structured data in the state dict; in CrewAI, use output_json on tasks"
+  ],
+  "starterCode": {
+    "crewai": "from crewai import Agent, Task, Crew, Process\nfrom crewai import LLM\n\nllm = LLM(model=\"gpt-4o-mini\")\n\nextractor = Agent(\n    role=\"Data Extractor\",\n    goal=\"Extract key information from customer feedback\",\n    backstory=\"You parse customer reviews for actionable insights.\",\n    llm=llm,\n)\n\nanalyzer = Agent(\n    role=\"Sentiment Analyzer\",\n    goal=\"Analyze sentiment and priority from extracted data\",\n    backstory=\"You classify feedback by sentiment and urgency.\",\n    llm=llm,\n)\n\n# BUG: Extractor passes raw text — analyzer loses key fields\n# TODO: Use structured output so all fields are preserved\nextract_task = Task(\n    description=\"Extract the customer name, issue, and product from this feedback: '{feedback}'\",\n    expected_output=\"The extracted customer name, issue description, and product name\",\n    agent=extractor,\n)\n\nanalyze_task = Task(\n    description=\"Analyze the sentiment and assign a priority level\",\n    expected_output=\"Sentiment (positive/negative/neutral) and priority (low/medium/high)\",\n    agent=analyzer,\n)\n\ncrew = Crew(\n    agents=[extractor, analyzer],\n    tasks=[extract_task, analyze_task],\n    process=Process.sequential,\n)\n\nresult = crew.kickoff(inputs={\"feedback\": \"I'm John and my ProMax laptop screen flickered twice today. Very frustrated!\"})\nprint(result)",
+    "langgraph": "from langchain_openai import ChatOpenAI\nfrom langgraph.graph import StateGraph, START, END\nfrom typing import TypedDict\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\nclass State(TypedDict):\n    feedback: str\n    extracted: str\n    analysis: str\n\ndef extract(state: State) -> dict:\n    prompt = f\"Extract the customer name, issue, and product from: '{state['feedback']}'\"\n    response = llm.invoke(prompt)\n    # BUG: Passes raw text — downstream agent may misinterpret or lose fields\n    return {\"extracted\": response.content}\n\ndef analyze(state: State) -> dict:\n    # TODO: Parse structured data instead of raw text\n    prompt = f\"Analyze sentiment and priority for: {state['extracted']}\"\n    response = llm.invoke(prompt)\n    return {\"analysis\": response.content}\n\ngraph = StateGraph(State)\ngraph.add_node(\"extract\", extract)\ngraph.add_node(\"analyze\", analyze)\ngraph.add_edge(START, \"extract\")\ngraph.add_edge(\"extract\", \"analyze\")\ngraph.add_edge(\"analyze\", END)\n\napp = graph.compile()\nresult = app.invoke({\"feedback\": \"I'm John and my ProMax laptop screen flickered twice today. Very frustrated!\", \"extracted\": \"\", \"analysis\": \"\"})\nprint(result[\"analysis\"])",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\ndef extract_feedback(feedback: str) -> str:\n    extractor = Agent(\n        name=\"Data Extractor\",\n        instructions=\"Extract the customer name, issue, and product from customer feedback.\",\n    )\n    # BUG: Passes raw text — analyzer loses key fields\n    result = Runner.run_sync(extractor, f\"Extract the customer name, issue, and product from this feedback: '{feedback}'\")\n    return result.final_output\n\ndef analyze_feedback(extracted: str) -> str:\n    analyzer = Agent(\n        name=\"Sentiment Analyzer\",\n        instructions=\"Analyze sentiment and assign a priority level from feedback data.\",\n    )\n    # TODO: Parse structured data instead of raw text\n    result = Runner.run_sync(analyzer, f\"Analyze sentiment and priority for: {extracted}\")\n    return result.final_output\n\nfeedback = \"I'm John and my ProMax laptop screen flickered twice today. Very frustrated!\"\nextracted = extract_feedback(feedback)\nanalysis = analyze_feedback(extracted)\nprint(analysis)"
+  },
+  "colabUrls": {
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/structured-inter-agent-messages-crewai.ipynb",
+    "langgraph": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/structured-inter-agent-messages-langgraph.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/structured-inter-agent-messages-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "schema-defined",
+      "label": "Structured schema defined",
+      "description": "A Pydantic model or equivalent schema defines the inter-agent message format"
+    },
+    {
+      "id": "fields-preserved",
+      "label": "All fields preserved",
+      "description": "Key information (customer name, issue, product) is not lost between agents"
+    },
+    {
+      "id": "structured-parsing",
+      "label": "Receiver parses structured data",
+      "description": "The receiving agent parses the structured message rather than treating it as raw text"
+    }
+  ]
+}

@@ -1,0 +1,56 @@
+{
+  "number": 64,
+  "title": "Retry with Exponential Backoff",
+  "difficulty": "medium",
+  "categories": [
+    "error-recovery"
+  ],
+  "frameworks": [
+    "langchain",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "Retries must use exponential backoff: 1s, 2s, 4s",
+    "Maximum of 3 retry attempts before giving up",
+    "The agent must return a clear failure message after all retries are exhausted",
+    "Only transient errors (e.g. timeouts, 5xx) should trigger retries"
+  ],
+  "hints": [
+    "Use time.sleep() with a delay that doubles on each retry attempt",
+    "Catch specific exception types to distinguish transient failures from permanent ones",
+    "After the final retry, return a user-friendly message instead of raising the exception"
+  ],
+  "starterCode": {
+    "langchain": "import random\nfrom langchain_openai import ChatOpenAI\nfrom langchain.agents import AgentExecutor, create_tool_calling_agent\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom langchain_core.tools import tool\n\n@tool\ndef flaky_api_call(query: str) -> str:\n    \"\"\"Call an external API that frequently fails.\"\"\"\n    # BUG: This API fails ~70% of the time and there is no retry logic\n    if random.random() < 0.7:\n        raise ConnectionError(\"Service temporarily unavailable\")\n    return f\"API result for: {query}\"\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a helpful assistant. Use tools to answer questions.\"),\n    (\"human\", \"{input}\"),\n    (\"placeholder\", \"{agent_scratchpad}\"),\n])\n\nagent = create_tool_calling_agent(llm, [flaky_api_call], prompt)\nexecutor = AgentExecutor(agent=agent, tools=[flaky_api_call])\n\n# Test: This will likely crash on the first transient failure\nresult = executor.invoke({\"input\": \"Get the latest stock price for AAPL\"})\nprint(result[\"output\"])",
+    "crewai": "import random\nfrom crewai import Agent, Task, Crew\nfrom crewai.tools import tool\n\n@tool\ndef flaky_api_call(query: str) -> str:\n    \"\"\"Call an external API that frequently fails.\"\"\"\n    # BUG: This API fails ~70% of the time and there is no retry logic\n    if random.random() < 0.7:\n        raise ConnectionError(\"Service temporarily unavailable\")\n    return f\"API result for: {query}\"\n\nassistant = Agent(\n    role=\"Assistant\",\n    goal=\"Help users by calling external APIs\",\n    backstory=\"You are a helpful assistant. Use tools to answer questions.\",\n    tools=[flaky_api_call],\n)\n\ntask = Task(\n    description=\"Get the latest stock price for AAPL\",\n    expected_output=\"The stock price for AAPL\",\n    agent=assistant,\n)\n\ncrew = Crew(agents=[assistant], tasks=[task])\n# Test: This will likely crash on the first transient failure\nresult = crew.kickoff()\nprint(result)",
+    "openai-agents-sdk": "import random\nfrom agents import Agent, Runner\nfrom agents.tool import function_tool\n\n@function_tool\ndef flaky_api_call(query: str) -> str:\n    \"\"\"Call an external API that frequently fails.\"\"\"\n    # BUG: This API fails ~70% of the time and there is no retry logic\n    if random.random() < 0.7:\n        raise ConnectionError(\"Service temporarily unavailable\")\n    return f\"API result for: {query}\"\n\nagent = Agent(\n    name=\"Assistant\",\n    instructions=\"You are a helpful assistant. Use tools to answer questions.\",\n    tools=[flaky_api_call],\n)\n\n# Test: This will likely crash on the first transient failure\nresult = Runner.run_sync(agent, \"Get the latest stock price for AAPL\")\nprint(result.final_output)"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/retry-with-backoff-langchain.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/retry-with-backoff-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/retry-with-backoff-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "exponential-backoff",
+      "label": "Uses exponential backoff",
+      "description": "Retry delays follow the pattern 1s, 2s, 4s (doubling each time)"
+    },
+    {
+      "id": "max-retries",
+      "label": "Respects max retry limit",
+      "description": "The agent stops retrying after 3 failed attempts"
+    },
+    {
+      "id": "graceful-failure",
+      "label": "Fails gracefully",
+      "description": "After all retries are exhausted, the agent returns a clear message instead of crashing"
+    },
+    {
+      "id": "succeeds-on-recovery",
+      "label": "Succeeds when API recovers",
+      "description": "If the API succeeds on a retry attempt, the agent returns the result normally"
+    }
+  ]
+}

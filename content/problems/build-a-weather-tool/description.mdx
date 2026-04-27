@@ -1,0 +1,49 @@
+## The Problem
+
+Your weather assistant agent has a skeleton tool that does nothing — it just returns `None`. The agent needs a fully implemented weather lookup tool that the model can call to answer weather questions. The tool must have a proper docstring (so the model knows what it does), type hints, return structured data, and handle invalid city names gracefully. You're given a simulated weather database as a Python dictionary; your job is to **implement the tool function** so the agent can actually look up weather data.
+
+## Examples
+
+### Example 1
+
+**User input:** What's the weather in Tokyo?
+
+**Current (bad) output:** The tool returns `None`, so the agent either hallucinates weather data or says it can't help.
+
+**Expected (good) output:** The tool returns `{"city": "tokyo", "temperature": "68°F", "condition": "Clear", "humidity": "55%"}` and the agent responds: *The weather in Tokyo is currently 68°F and Clear with 55% humidity.*
+
+### Example 2
+
+**User input:** How's the weather in Berlin?
+
+**Current (bad) output:** The tool returns `None` or crashes.
+
+**Expected (good) output:** The tool returns a helpful message like `"Weather data not available for 'Berlin'. Available cities: New York, London, Tokyo, Paris, Sydney."` and the agent relays this to the user.
+
+### Example 3
+
+**User input:** Is it raining in Paris?
+
+**Current (bad) output:** Agent guesses or crashes.
+
+**Expected (good) output:** The tool returns `{"city": "paris", "temperature": "64°F", "condition": "Rainy", "humidity": "82%"}` and the agent responds: *Yes, it is currently rainy in Paris at 64°F with 82% humidity.*
+
+## Your Task
+
+Implement the `get_weather` tool function so that it:
+
+- Has a clear docstring explaining what it does and its `city` parameter.
+- Uses proper type hints (e.g., `city: str -> str`).
+- Looks up the city in the provided `WEATHER_DATA` dictionary (case-insensitive).
+- Returns a structured result with `city`, `temperature`, `condition`, and `humidity`.
+- Returns a helpful error message listing available cities when the city is not found.
+
+Do not change the agent setup, prompt, or model configuration.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Tool has proper schema:** The function has a descriptive docstring, type hints, and is properly decorated as a tool.
+- **Handles invalid cities:** Unrecognized city names produce a helpful error message, not a crash or `None`.
+- **Returns structured weather data:** Valid lookups return a structured object with all required weather fields.

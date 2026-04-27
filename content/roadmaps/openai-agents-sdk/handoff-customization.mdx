@@ -1,0 +1,238 @@
+# Handoff Customization
+
+The `handoff()` function gives you fine-grained control over how agents transfer control to each other. You can filter conversation history, require structured input, run callbacks on handoff, rename the handoff tool, and strip tool-related messages from history.
+
+## Basic handoff() Function
+
+Instead of passing agents directly to `handoffs=[]`, use the `handoff()` function for customization:
+
+```python
+from agents import Agent, handoff
+
+billing_agent = Agent(
+    name="Billing Agent",
+    instructions="You handle billing and payment questions.",
+)
+
+support_agent = Agent(
+    name="Support Agent",
+    instructions="You are front-line support. Hand off billing questions to the billing specialist.",
+    handoffs=[handoff(billing_agent)],
+)
+```
+
+This is equivalent to `handoffs=[billing_agent]`, but now you can add customization options.
+
+## Filtering History with input_filter
+
+By default, the receiving agent gets the full conversation history. Use `input_filter` to control what it sees:
+
+```python
+from agents import Agent, handoff, handoff_filters
+
+specialist = Agent(
+    name="Specialist",
+    instructions="You handle complex technical issues.",
+)
+
+triage = Agent(
+    name="Triage",
+    instructions="Route complex issues to the specialist.",
+    handoffs=[handoff(
+        specialist,
+        input_filter=handoff_filters.remove_all_tools,
+    )],
+)
+```
+
+### Built-in Filters
+
+| Filter | Description |
+|--------|-------------|
+| `handoff_filters.remove_all_tools` | Strips all tool call and tool output messages from history |
+
+### Custom Input Filters
+
+Write your own filter function to customize the handoff input:
+
+```python
+from agents import handoff
+
+def keep_last_n_messages(handoff_input):
+    handoff_input.history = handoff_input.history[-6:]
+    return handoff_input
+
+triage = Agent(
+    name="Triage",
+    instructions="Route to the specialist.",
+    handoffs=[handoff(
+        specialist,
+        input_filter=keep_last_n_messages,
+    )],
+)
+```
+
+## Structured Handoff Data with input_type
+
+Require the handing-off agent to provide structured data when initiating the handoff:
+
+```python
+from pydantic import BaseModel
+from agents import Agent, handoff
+
+class EscalationData(BaseModel):
+    reason: str
+    priority: str
+    customer_id: str
+
+escalation_agent = Agent(
+    name="Escalation Handler",
+    instructions="You handle escalated issues. Use the escalation context provided.",
+)
+
+support_agent = Agent(
+    name="Support Agent",
+    instructions=(
+        "You handle support requests. When escalating, provide the reason, "
+        "priority (low/medium/high), and customer ID."
+    ),
+    handoffs=[handoff(
+        escalation_agent,
+        input_type=EscalationData,
+    )],
+)
+```
+
+The model must fill in the `EscalationData` fields when performing the handoff.
+
+## Callbacks with on_handoff
+
+Run custom logic when a handoff occurs — useful for logging, analytics, or side effects:
+
+```python
+from agents import Agent, handoff
+
+async def log_handoff(ctx, handoff_input):
+    print(f"Handoff occurred at {handoff_input}")
+
+billing_agent = Agent(
+    name="Billing Agent",
+    instructions="You handle billing questions.",
+)
+
+support_agent = Agent(
+    name="Support Agent",
+    instructions="Route billing questions to billing.",
+    handoffs=[handoff(
+        billing_agent,
+        on_handoff=log_handoff,
+    )],
+)
+```
+
+When using `on_handoff` with `input_type`, the callback receives the parsed structured data:
+
+```python
+async def handle_escalation(ctx, data: EscalationData):
+    print(f"Escalation: {data.reason} (Priority: {data.priority})")
+
+support_agent = Agent(
+    name="Support Agent",
+    instructions="Escalate complex issues.",
+    handoffs=[handoff(
+        escalation_agent,
+        input_type=EscalationData,
+        on_handoff=handle_escalation,
+    )],
+)
+```
+
+## Renaming the Handoff Tool
+
+By default, the handoff tool is named `transfer_to_<agent_name>`. Override this with `tool_name_override`:
+
+```python
+support_agent = Agent(
+    name="Support Agent",
+    instructions="Use the escalate tool for urgent issues.",
+    handoffs=[handoff(
+        escalation_agent,
+        tool_name_override="escalate",
+    )],
+)
+```
+
+The model will see a tool called `escalate` instead of `transfer_to_escalation_handler`.
+
+## Removing Tool Messages with handoff_filters
+
+Tool call messages can confuse the receiving agent. Use `handoff_filters.remove_all_tools` to strip them:
+
+```python
+from agents import Agent, handoff, handoff_filters
+
+specialist = Agent(
+    name="Specialist",
+    instructions="You handle complex issues based on the conversation context.",
+)
+
+triage = Agent(
+    name="Triage",
+    instructions="Route to the specialist for complex issues.",
+    handoffs=[handoff(
+        specialist,
+        input_filter=handoff_filters.remove_all_tools,
+    )],
+)
+```
+
+This ensures the specialist only sees user messages and assistant text — no tool noise.
+
+## Combining Customizations
+
+All options can be combined for maximum control:
+
+```python
+from pydantic import BaseModel
+from agents import Agent, handoff, handoff_filters
+
+class HandoffData(BaseModel):
+    summary: str
+    urgency: str
+
+async def on_escalate(ctx, data: HandoffData):
+    print(f"Escalation: {data.summary} [{data.urgency}]")
+
+specialist = Agent(name="Specialist", instructions="Handle escalated issues.")
+
+triage = Agent(
+    name="Triage Agent",
+    instructions="Triage incoming requests. Escalate when needed with a summary and urgency level.",
+    handoffs=[handoff(
+        specialist,
+        tool_name_override="escalate",
+        input_type=HandoffData,
+        input_filter=handoff_filters.remove_all_tools,
+        on_handoff=on_escalate,
+    )],
+)
+```
+
+## handoff() Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `agent` | `Agent` | The agent to hand off to |
+| `input_filter` | `callable` | Function to filter/transform conversation history |
+| `input_type` | `BaseModel` | Pydantic model for structured handoff data |
+| `on_handoff` | `callable` | Async callback when handoff occurs |
+| `tool_name_override` | `str` | Custom name for the handoff tool |
+
+## Key Takeaways
+
+- `handoff()` provides fine-grained control over agent-to-agent transfers
+- `input_filter` controls what conversation history the receiving agent sees
+- `handoff_filters.remove_all_tools` strips tool messages to reduce noise
+- `input_type` requires structured data (Pydantic model) when initiating a handoff
+- `on_handoff` runs custom callbacks for logging or side effects
+- `tool_name_override` renames the handoff tool for clearer agent instructions

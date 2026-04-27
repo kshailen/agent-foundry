@@ -1,0 +1,51 @@
+{
+  "number": 50,
+  "title": "Multi-Document Synthesis",
+  "difficulty": "medium",
+  "categories": [
+    "rag"
+  ],
+  "frameworks": [
+    "langchain",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "The retriever must return multiple relevant documents, not just top-1",
+    "The LLM must synthesize information from all retrieved documents",
+    "The answer must combine facts that span multiple documents",
+    "No single document should contain the complete answer"
+  ],
+  "hints": [
+    "Increase the retriever's top-k parameter to return more than one document",
+    "Format all retrieved documents in the context so the LLM can see information from each",
+    "Add a prompt instruction telling the LLM to combine facts from multiple sources into a unified answer"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI, OpenAIEmbeddings\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom langchain_community.vectorstores import FAISS\nfrom langchain_core.documents import Document\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\nembeddings = OpenAIEmbeddings()\n\ndocuments = [\n    Document(page_content=\"Project Alpha started in January 2024 with a budget of $2M.\"),\n    Document(page_content=\"Project Alpha's team consists of 12 engineers and 3 designers.\"),\n    Document(page_content=\"Project Alpha delivered its MVP in June 2024, two weeks ahead of schedule.\"),\n    Document(page_content=\"Project Beta has a budget of $5M and started in March 2024.\"),\n    Document(page_content=\"Project Alpha received positive client feedback with a satisfaction score of 9.2/10.\"),\n]\n\nvectorstore = FAISS.from_documents(documents, embeddings)\n\n# BUG: Only retrieves top-1 document — misses facts spread across multiple docs\nretriever = vectorstore.as_retriever(search_kwargs={\"k\": 1})\n\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"Answer based on the context.\\n\\nContext: {context}\"),\n    (\"human\", \"{question}\"),\n])\n\ndef ask(question: str) -> str:\n    docs = retriever.invoke(question)\n    context = \"\\n\".join([doc.page_content for doc in docs])\n    chain = prompt | llm\n    result = chain.invoke({\"context\": context, \"question\": question})\n    return result.content\n\n# Requires info from 3 docs: budget, team size, and delivery timeline\nprint(ask(\"Give me a complete summary of Project Alpha.\"))",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai.tools import tool\nfrom langchain_openai import OpenAIEmbeddings\nfrom langchain_community.vectorstores import FAISS\nfrom langchain_core.documents import Document\n\nembeddings = OpenAIEmbeddings()\n\ndocuments = [\n    Document(page_content=\"Project Alpha started in January 2024 with a budget of $2M.\"),\n    Document(page_content=\"Project Alpha's team consists of 12 engineers and 3 designers.\"),\n    Document(page_content=\"Project Alpha delivered its MVP in June 2024, two weeks ahead of schedule.\"),\n    Document(page_content=\"Project Beta has a budget of $5M and started in March 2024.\"),\n    Document(page_content=\"Project Alpha received positive client feedback with a satisfaction score of 9.2/10.\"),\n]\n\nvectorstore = FAISS.from_documents(documents, embeddings)\n\n# BUG: Only retrieves top-1 document — misses facts spread across multiple docs\nretriever = vectorstore.as_retriever(search_kwargs={\"k\": 1})\n\n@tool\ndef search_projects(question: str) -> str:\n    \"\"\"Search project documentation to answer a question.\"\"\"\n    docs = retriever.invoke(question)\n    return \"\\n\".join([doc.page_content for doc in docs])\n\nanalyst = Agent(\n    role=\"Project Analyst\",\n    goal=\"Answer questions about projects accurately and completely\",\n    backstory=\"You are an expert project analyst.\",\n    tools=[search_projects],\n)\n\ntask = Task(\n    description=\"Give me a complete summary of Project Alpha.\",\n    expected_output=\"A comprehensive summary of Project Alpha\",\n    agent=analyst,\n)\n\ncrew = Crew(agents=[analyst], tasks=[task])\nprint(crew.kickoff())",
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom agents.tool import function_tool\nfrom langchain_openai import OpenAIEmbeddings\nfrom langchain_community.vectorstores import FAISS\nfrom langchain_core.documents import Document\n\nembeddings = OpenAIEmbeddings()\n\ndocuments = [\n    Document(page_content=\"Project Alpha started in January 2024 with a budget of $2M.\"),\n    Document(page_content=\"Project Alpha's team consists of 12 engineers and 3 designers.\"),\n    Document(page_content=\"Project Alpha delivered its MVP in June 2024, two weeks ahead of schedule.\"),\n    Document(page_content=\"Project Beta has a budget of $5M and started in March 2024.\"),\n    Document(page_content=\"Project Alpha received positive client feedback with a satisfaction score of 9.2/10.\"),\n]\n\nvectorstore = FAISS.from_documents(documents, embeddings)\n\n# BUG: Only retrieves top-1 document — misses facts spread across multiple docs\nretriever = vectorstore.as_retriever(search_kwargs={\"k\": 1})\n\n@function_tool\ndef search_projects(question: str) -> str:\n    \"\"\"Search project documentation to answer a question.\"\"\"\n    docs = retriever.invoke(question)\n    return \"\\n\".join([doc.page_content for doc in docs])\n\nagent = Agent(\n    name=\"Project Analyst\",\n    instructions=\"You are an expert project analyst. Answer questions about projects accurately.\",\n    tools=[search_projects],\n)\n\nresult = Runner.run_sync(agent, \"Give me a complete summary of Project Alpha.\")\nprint(result.final_output)"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/multi-document-synthesis-langchain.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/multi-document-synthesis-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/multi-document-synthesis-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "retrieves-multiple",
+      "label": "Retrieves multiple documents",
+      "description": "The retriever returns more than one relevant document for multi-fact queries"
+    },
+    {
+      "id": "synthesizes-facts",
+      "label": "Synthesizes across documents",
+      "description": "The answer combines information from multiple retrieved documents into a coherent response"
+    },
+    {
+      "id": "complete-answer",
+      "label": "Provides complete answers",
+      "description": "The answer includes all relevant facts spread across documents, not just partial information"
+    }
+  ]
+}

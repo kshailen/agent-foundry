@@ -1,0 +1,160 @@
+## Approach
+
+The research assistant has three tools — `search_articles`, `extract_entities`, and `summarize` — that should always be called in a strict pipeline: search first, then extract entities from the search results, then summarize everything. However, the agent's generic prompt gives no ordering guidance, so the LLM frequently takes shortcuts: jumping straight to `summarize` with the user's raw query (producing a hallucinated summary) or skipping entity extraction entirely (resulting in a summary without specific names and figures).
+
+The fix is to update the system prompt with explicit step-by-step instructions that enforce the pipeline ordering. The prompt should clearly state: (1) always call `search_articles` first, (2) pass those results to `extract_entities`, (3) pass both the search results and extracted entities to `summarize`. By being explicit about the required sequence and emphasizing that each tool's output feeds into the next, the LLM follows the chain reliably. No changes to the tools themselves are needed.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+
+@tool
+def search_articles(query: str) -> str:
+    """Search for articles on a topic."""
+    return f"Found 3 articles about {query}: Article A discusses market trends, Article B covers recent innovations, Article C analyzes industry impact."
+
+
+@tool
+def extract_entities(text: str) -> str:
+    """Extract key entities (people, companies, topics) from text."""
+    return "Entities: [TechCorp, AI industry, John Smith, market growth, 2024 forecast]"
+
+
+@tool
+def summarize(text: str) -> str:
+    """Summarize the given text into a concise brief."""
+    return "Summary: The AI industry is experiencing rapid growth driven by TechCorp and similar companies, with analysts like John Smith forecasting continued expansion through 2024."
+
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", (
+        "You are a research assistant. For every research request, you MUST follow this exact 3-step pipeline:\n\n"
+        "Step 1: Call search_articles with the user's topic to find relevant articles.\n"
+        "Step 2: Call extract_entities with the FULL search results from Step 1.\n"
+        "Step 3: Call summarize with BOTH the search results AND extracted entities combined.\n\n"
+        "NEVER skip a step. NEVER call summarize before searching and extracting entities. "
+        "Each tool's output must feed into the next tool as input."
+    )),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}"),
+])
+
+tools = [search_articles, extract_entities, summarize]
+agent = create_tool_calling_agent(llm, tools, prompt)
+executor = AgentExecutor(agent=agent, tools=tools)
+
+result = executor.invoke({"input": "Research the latest trends in AI and give me a brief"})
+print(result["output"])
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from agents.tool import function_tool
+
+
+@function_tool
+def search_articles(query: str) -> str:
+    """Search for articles on a topic."""
+    return f"Found 3 articles about {query}: Article A discusses market trends, Article B covers recent innovations, Article C analyzes industry impact."
+
+
+@function_tool
+def extract_entities(text: str) -> str:
+    """Extract key entities (people, companies, topics) from text."""
+    return "Entities: [TechCorp, AI industry, John Smith, market growth, 2024 forecast]"
+
+
+@function_tool
+def summarize(text: str) -> str:
+    """Summarize the given text into a concise brief."""
+    return "Summary: The AI industry is experiencing rapid growth driven by TechCorp and similar companies, with analysts like John Smith forecasting continued expansion through 2024."
+
+
+agent = Agent(
+    name="Research Assistant",
+    instructions=(
+        "You are a research assistant. For every research request, you MUST follow this exact 3-step pipeline:\n\n"
+        "Step 1: Call search_articles with the user's topic to find relevant articles.\n"
+        "Step 2: Call extract_entities with the FULL search results from Step 1.\n"
+        "Step 3: Call summarize with BOTH the search results AND extracted entities combined.\n\n"
+        "NEVER skip a step. NEVER call summarize before searching and extracting entities. "
+        "Each tool's output must feed into the next tool as input."
+    ),
+    tools=[search_articles, extract_entities, summarize],
+)
+
+result = Runner.run_sync(agent, "Research the latest trends in AI and give me a brief")
+print(result.final_output)
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from crewai.tools import tool
+
+
+@tool
+def search_articles(query: str) -> str:
+    """Search for articles on a topic."""
+    return f"Found 3 articles about {query}: Article A discusses market trends, Article B covers recent innovations, Article C analyzes industry impact."
+
+
+@tool
+def extract_entities(text: str) -> str:
+    """Extract key entities (people, companies, topics) from text."""
+    return "Entities: [TechCorp, AI industry, John Smith, market growth, 2024 forecast]"
+
+
+@tool
+def summarize(text: str) -> str:
+    """Summarize the given text into a concise brief."""
+    return "Summary: The AI industry is experiencing rapid growth driven by TechCorp and similar companies, with analysts like John Smith forecasting continued expansion through 2024."
+
+
+assistant = Agent(
+    role="Research Assistant",
+    goal="Research topics and provide concise briefs",
+    backstory=(
+        "You are a research assistant. For every research request, you MUST follow this exact 3-step pipeline:\n\n"
+        "Step 1: Call search_articles with the user's topic to find relevant articles.\n"
+        "Step 2: Call extract_entities with the FULL search results from Step 1.\n"
+        "Step 3: Call summarize with BOTH the search results AND extracted entities combined.\n\n"
+        "NEVER skip a step. NEVER call summarize before searching and extracting entities. "
+        "Each tool's output must feed into the next tool as input."
+    ),
+    tools=[search_articles, extract_entities, summarize],
+)
+
+task = Task(
+    description="Research the latest trends in AI and give me a brief",
+    expected_output="A research brief with entities and summary",
+    agent=assistant,
+)
+
+crew = Crew(agents=[assistant], tasks=[task])
+print(crew.kickoff())
+```
+
+## Why This Works
+
+LLMs are instruction-followers at their core, but they need explicit guidance about tool ordering. A generic prompt like "you have search, extraction, and summarization tools" gives the model freedom to pick whichever tool seems most directly relevant to the user's request — often `summarize`, since the user asked for "a brief." By rewriting the prompt to specify the exact sequence (search, then extract, then summarize) with the explicit rule that each step's output feeds into the next, the LLM has no ambiguity about what to do.
+
+The key design insight is that the tool chain is enforced through the prompt, not through code. The tools themselves remain unchanged and independently callable. This is a lightweight approach that works well when the ordering is always the same — for more complex conditional pipelines, a graph-based orchestration (like LangGraph) would be more appropriate.
+
+## Key Takeaways
+
+- When tools must be called in a specific order, state the exact sequence explicitly in the system prompt — LLMs won't infer ordering from tool descriptions alone.
+- Emphasize that each tool's output must feed into the next tool as input to prevent the agent from using its own knowledge as a shortcut.
+- For fixed pipelines, prompt engineering is sufficient; for conditional or branching workflows, consider graph-based orchestration.

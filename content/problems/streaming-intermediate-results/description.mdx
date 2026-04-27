@@ -1,0 +1,41 @@
+## The Problem
+
+Your research agent runs a three-step pipeline—outline, research, report—but the user stares at a blank screen for 10+ seconds until the final report appears. There is no indication that work is happening or which step is in progress. Your job is to **add streaming of intermediate results** so the user sees the outline as soon as it is ready, then the research findings, and finally the polished report—all progressively, not all at once.
+
+## Examples
+
+### Example 1
+
+**User input:** The impact of AI on healthcare
+
+**Current (bad) output:** Nothing for ~12 seconds, then the full final report appears.
+
+**Expected (good) output:**
+- Second 0–3: *"[Step 1: Outline] Key areas: 1) Diagnostics, 2) Drug discovery, 3) Patient care, 4) Ethics…"*
+- Second 3–8: *"[Step 2: Research] Diagnostics: AI imaging has shown 94% accuracy in detecting… Drug discovery: ML models reduce trial time by…"*
+- Second 8–12: *"[Step 3: Report] Introduction: Artificial intelligence is transforming healthcare across…"*
+
+### Example 2
+
+**User input:** History of space exploration
+
+**Current (bad) output:** User waits with no feedback until the complete report is printed.
+
+**Expected (good) output:** The outline streams first, letting the user see the research direction. Then detailed findings appear. Finally the polished report is delivered. Each step is clearly labeled.
+
+## Your Task
+
+Modify the starter code so that:
+
+- Each step **emits its result as soon as it completes**, before the next step begins.
+- Intermediate outputs are **visible in real time** to the user (not buffered until the end).
+- Each streamed update **identifies which step** produced it (e.g., "Step 1: Outline").
+- The workflow has **at least 3 sequential steps** with streaming between them.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Emits results per step:** Each workflow step emits its output as soon as it completes.
+- **Real-time visibility:** The user can see intermediate outputs before the final result is ready.
+- **Step identification:** Each streamed update identifies which step produced it.

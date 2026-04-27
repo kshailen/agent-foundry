@@ -1,0 +1,51 @@
+{
+  "number": 13,
+  "title": "Conversation Boundary Setter",
+  "difficulty": "medium",
+  "categories": [
+    "prompt-design",
+    "guardrails"
+  ],
+  "frameworks": [
+    "langchain",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "You may only modify the system prompt",
+    "The agent must still be excellent at answering coding questions",
+    "Declined topics must be handled politely, not ignored"
+  ],
+  "hints": [
+    "Define an explicit allow-list of topics the agent can discuss (programming, software, debugging, etc.)",
+    "Add a rule for off-topic queries: acknowledge, decline politely, and redirect to coding help",
+    "Handle edge cases where coding and other domains overlap (e.g., 'code a medical app' is coding, 'diagnose my symptoms' is not)"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain_core.prompts import ChatPromptTemplate\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# BUG: No topic restrictions \u2014 coding assistant answers medical, legal, and any other questions\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a helpful coding assistant. Answer the user's questions.\"),\n    (\"human\", \"{input}\"),\n])\n\nchain = prompt | llm\n\n# Test 1: Coding question \u2014 should answer\nresult1 = chain.invoke({\"input\": \"How do I reverse a linked list in Python?\"})\nprint(\"Coding query:\", result1.content)\n\n# Test 2: Medical question \u2014 should decline\nresult2 = chain.invoke({\"input\": \"I have a headache and fever. What medicine should I take?\"})\nprint(\"Medical query:\", result2.content)\n\n# Test 3: Legal question \u2014 should decline\nresult3 = chain.invoke({\"input\": \"Can I sue my landlord for not fixing the plumbing?\"})\nprint(\"Legal query:\", result3.content)\n\n# Test 4: Edge case \u2014 coding-adjacent, should answer\nresult4 = chain.invoke({\"input\": \"How do I build a REST API for a healthcare app?\"})\nprint(\"Edge case:\", result4.content)",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\n# BUG: No topic restrictions \u2014 coding assistant answers medical, legal, and any other questions\nagent = Agent(\n    name=\"Code Helper\",\n    instructions=\"You are a helpful coding assistant. Answer the user's questions.\",\n)\n\n# Test 1: Coding question \u2014 should answer\nresult1 = Runner.run_sync(agent, \"How do I reverse a linked list in Python?\")\nprint(\"Coding query:\", result1.final_output)\n\n# Test 2: Medical question \u2014 should decline\nresult2 = Runner.run_sync(agent, \"I have a headache and fever. What medicine should I take?\")\nprint(\"Medical query:\", result2.final_output)\n\n# Test 3: Legal question \u2014 should decline\nresult3 = Runner.run_sync(agent, \"Can I sue my landlord for not fixing the plumbing?\")\nprint(\"Legal query:\", result3.final_output)\n\n# Test 4: Edge case \u2014 coding-adjacent, should answer\nresult4 = Runner.run_sync(agent, \"How do I build a REST API for a healthcare app?\")\nprint(\"Edge case:\", result4.final_output)",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai import LLM\n\nllm = LLM(model=\"gpt-4o-mini\")\n\n# BUG: No topic restrictions \u2014 coding assistant answers medical, legal, and any other questions\nagent = Agent(\n    role=\"Code Helper\",\n    goal=\"Answer user questions\",\n    backstory=\"You are a helpful coding assistant. Answer the user's questions.\",\n    llm=llm,\n)\n\n# Test 1: Coding question \u2014 should answer\ntask1 = Task(description=\"How do I reverse a linked list in Python?\", expected_output=\"Answer\", agent=agent)\ncrew1 = Crew(agents=[agent], tasks=[task1])\nprint(\"Coding query:\", crew1.kickoff())\n\n# Test 2: Medical question \u2014 should decline\ntask2 = Task(description=\"I have a headache and fever. What medicine should I take?\", expected_output=\"Answer\", agent=agent)\ncrew2 = Crew(agents=[agent], tasks=[task2])\nprint(\"Medical query:\", crew2.kickoff())\n\n# Test 3: Legal question \u2014 should decline\ntask3 = Task(description=\"Can I sue my landlord for not fixing the plumbing?\", expected_output=\"Answer\", agent=agent)\ncrew3 = Crew(agents=[agent], tasks=[task3])\nprint(\"Legal query:\", crew3.kickoff())\n\n# Test 4: Edge case \u2014 coding-adjacent, should answer\ntask4 = Task(description=\"How do I build a REST API for a healthcare app?\", expected_output=\"Answer\", agent=agent)\ncrew4 = Crew(agents=[agent], tasks=[task4])\nprint(\"Edge case:\", crew4.kickoff())"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/conversation-boundary-setter-langchain.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/conversation-boundary-setter-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/conversation-boundary-setter-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "answers-coding",
+      "label": "Answers coding questions",
+      "description": "The agent provides helpful, detailed answers to programming and software questions"
+    },
+    {
+      "id": "declines-off-topic",
+      "label": "Politely declines off-topic",
+      "description": "Medical, legal, financial, and other non-coding questions are declined politely"
+    },
+    {
+      "id": "handles-edge-cases",
+      "label": "Handles edge cases",
+      "description": "Coding-adjacent questions (e.g., building a healthcare app) are correctly identified as in-scope"
+    }
+  ]
+}

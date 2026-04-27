@@ -1,0 +1,392 @@
+## Approach
+
+The universal assistant has 15 tools spanning web search, finance, weather, email, calendar, translation, and more. Every query sends all 15 tool schemas to the LLM, wasting tokens on irrelevant tools (e.g., `calculate_mortgage` when the user asks about weather) and occasionally confusing the model into picking the wrong one. The fix is to add a dynamic tool selection layer that picks only the 3-4 most relevant tools per query before passing them to the agent.
+
+The selection mechanism uses an LLM-based router: a lightweight LLM call evaluates the user's query against a catalog of tool descriptions and returns the names of the most relevant tools. This approach is more robust than keyword matching (which misses synonyms and intent) and more flexible than hardcoded category mappings. The selected subset is then used to construct the agent for that specific query, keeping the tool context small and focused.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+import json
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+
+@tool
+def search_web(query: str) -> str:
+    """Search the web for information."""
+    return f"Web results for: {query}"
+
+@tool
+def search_news(query: str) -> str:
+    """Search recent news articles."""
+    return f"News results for: {query}"
+
+@tool
+def get_stock_price(ticker: str) -> str:
+    """Get current stock price for a ticker symbol."""
+    return f"{ticker}: $150.25"
+
+@tool
+def get_exchange_rate(from_currency: str, to_currency: str) -> str:
+    """Get exchange rate between two currencies."""
+    return f"1 {from_currency} = 0.85 {to_currency}"
+
+@tool
+def get_weather(city: str) -> str:
+    """Get current weather for a city."""
+    return f"{city}: 72°F, Sunny"
+
+@tool
+def get_forecast(city: str, days: int) -> str:
+    """Get weather forecast for upcoming days."""
+    return f"{days}-day forecast for {city}: Sunny, Cloudy, Rain"
+
+@tool
+def calculate_mortgage(principal: float, rate: float, years: int) -> str:
+    """Calculate monthly mortgage payment."""
+    return f"Monthly payment: $1,200"
+
+@tool
+def calculate_tip(amount: float, percent: float) -> str:
+    """Calculate tip amount."""
+    return f"Tip: ${amount * percent / 100:.2f}"
+
+@tool
+def translate_text(text: str, target_lang: str) -> str:
+    """Translate text to target language."""
+    return f"Translated to {target_lang}: [translated text]"
+
+@tool
+def summarize_text(text: str) -> str:
+    """Summarize a long piece of text."""
+    return "Summary: [condensed version]"
+
+@tool
+def send_email(to: str, subject: str, body: str) -> str:
+    """Send an email."""
+    return f"Email sent to {to}"
+
+@tool
+def create_calendar_event(title: str, date: str) -> str:
+    """Create a calendar event."""
+    return f"Event '{title}' created for {date}"
+
+@tool
+def set_reminder(message: str, time: str) -> str:
+    """Set a reminder."""
+    return f"Reminder set: {message} at {time}"
+
+@tool
+def get_definition(word: str) -> str:
+    """Look up the definition of a word."""
+    return f"Definition of {word}: [definition]"
+
+@tool
+def convert_units(value: float, from_unit: str, to_unit: str) -> str:
+    """Convert between units of measurement."""
+    return f"{value} {from_unit} = {value * 2.54} {to_unit}"
+
+
+all_tools = [search_web, search_news, get_stock_price, get_exchange_rate, get_weather, get_forecast, calculate_mortgage, calculate_tip, translate_text, summarize_text, send_email, create_calendar_event, set_reminder, get_definition, convert_units]
+
+TOOL_CATALOG = "\n".join(f"- {t.name}: {t.description}" for t in all_tools)
+tool_map = {t.name: t for t in all_tools}
+
+
+def select_tools(query: str, max_tools: int = 4) -> list:
+    selection_prompt = (
+        f"Given this user query: \"{query}\"\n\n"
+        f"Select the {max_tools} most relevant tools from this catalog:\n{TOOL_CATALOG}\n\n"
+        f"Return ONLY a JSON list of tool names, e.g. [\"tool1\", \"tool2\"]. No explanation."
+    )
+    response = llm.invoke(selection_prompt)
+    selected_names = json.loads(response.content)
+    return [tool_map[name] for name in selected_names if name in tool_map]
+
+
+def run_with_dynamic_tools(query: str) -> str:
+    selected = select_tools(query)
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", "You are a helpful assistant. Use the provided tools to answer the user's question."),
+        ("human", "{input}"),
+        ("placeholder", "{agent_scratchpad}"),
+    ])
+    agent = create_tool_calling_agent(llm, selected, prompt)
+    executor = AgentExecutor(agent=agent, tools=selected)
+    result = executor.invoke({"input": query})
+    return result["output"]
+
+
+print(run_with_dynamic_tools("What's the weather in Paris?"))
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from agents.tool import function_tool
+import json
+from openai import OpenAI
+
+client = OpenAI()
+
+
+@function_tool
+def search_web(query: str) -> str:
+    """Search the web for information."""
+    return f"Web results for: {query}"
+
+@function_tool
+def search_news(query: str) -> str:
+    """Search recent news articles."""
+    return f"News results for: {query}"
+
+@function_tool
+def get_stock_price(ticker: str) -> str:
+    """Get current stock price for a ticker symbol."""
+    return f"{ticker}: $150.25"
+
+@function_tool
+def get_exchange_rate(from_currency: str, to_currency: str) -> str:
+    """Get exchange rate between two currencies."""
+    return f"1 {from_currency} = 0.85 {to_currency}"
+
+@function_tool
+def get_weather(city: str) -> str:
+    """Get current weather for a city."""
+    return f"{city}: 72°F, Sunny"
+
+@function_tool
+def get_forecast(city: str, days: int) -> str:
+    """Get weather forecast for upcoming days."""
+    return f"{days}-day forecast for {city}: Sunny, Cloudy, Rain"
+
+@function_tool
+def calculate_mortgage(principal: float, rate: float, years: int) -> str:
+    """Calculate monthly mortgage payment."""
+    return f"Monthly payment: $1,200"
+
+@function_tool
+def calculate_tip(amount: float, percent: float) -> str:
+    """Calculate tip amount."""
+    return f"Tip: ${amount * percent / 100:.2f}"
+
+@function_tool
+def translate_text(text: str, target_lang: str) -> str:
+    """Translate text to target language."""
+    return f"Translated to {target_lang}: [translated text]"
+
+@function_tool
+def summarize_text(text: str) -> str:
+    """Summarize a long piece of text."""
+    return "Summary: [condensed version]"
+
+@function_tool
+def send_email(to: str, subject: str, body: str) -> str:
+    """Send an email."""
+    return f"Email sent to {to}"
+
+@function_tool
+def create_calendar_event(title: str, date: str) -> str:
+    """Create a calendar event."""
+    return f"Event '{title}' created for {date}"
+
+@function_tool
+def set_reminder(message: str, time: str) -> str:
+    """Set a reminder."""
+    return f"Reminder set: {message} at {time}"
+
+@function_tool
+def get_definition(word: str) -> str:
+    """Look up the definition of a word."""
+    return f"Definition of {word}: [definition]"
+
+@function_tool
+def convert_units(value: float, from_unit: str, to_unit: str) -> str:
+    """Convert between units of measurement."""
+    return f"{value} {from_unit} = {value * 2.54} {to_unit}"
+
+
+all_tools = [search_web, search_news, get_stock_price, get_exchange_rate, get_weather, get_forecast, calculate_mortgage, calculate_tip, translate_text, summarize_text, send_email, create_calendar_event, set_reminder, get_definition, convert_units]
+
+TOOL_CATALOG = "\n".join(f"- {t.name}: {t.description}" for t in all_tools)
+tool_map = {t.name: t for t in all_tools}
+
+
+def select_tools(query: str, max_tools: int = 4) -> list:
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{
+            "role": "user",
+            "content": (
+                f"Given this user query: \"{query}\"\n\n"
+                f"Select the {max_tools} most relevant tools from this catalog:\n{TOOL_CATALOG}\n\n"
+                f"Return ONLY a JSON list of tool names, e.g. [\"tool1\", \"tool2\"]. No explanation."
+            ),
+        }],
+    )
+    selected_names = json.loads(response.choices[0].message.content)
+    return [tool_map[name] for name in selected_names if name in tool_map]
+
+
+def run_with_dynamic_tools(query: str) -> str:
+    selected = select_tools(query)
+    agent = Agent(
+        name="Universal Assistant",
+        instructions="You are a helpful assistant. Use the provided tools to answer the user's question.",
+        tools=selected,
+    )
+    result = Runner.run_sync(agent, query)
+    return result.final_output
+
+
+print(run_with_dynamic_tools("What's the weather in Paris?"))
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from crewai.tools import tool
+import json
+from openai import OpenAI
+
+client = OpenAI()
+
+
+@tool
+def search_web(query: str) -> str:
+    """Search the web for information."""
+    return f"Web results for: {query}"
+
+@tool
+def search_news(query: str) -> str:
+    """Search recent news articles."""
+    return f"News results for: {query}"
+
+@tool
+def get_stock_price(ticker: str) -> str:
+    """Get current stock price for a ticker symbol."""
+    return f"{ticker}: $150.25"
+
+@tool
+def get_exchange_rate(from_currency: str, to_currency: str) -> str:
+    """Get exchange rate between two currencies."""
+    return f"1 {from_currency} = 0.85 {to_currency}"
+
+@tool
+def get_weather(city: str) -> str:
+    """Get current weather for a city."""
+    return f"{city}: 72°F, Sunny"
+
+@tool
+def get_forecast(city: str, days: int) -> str:
+    """Get weather forecast for upcoming days."""
+    return f"{days}-day forecast for {city}: Sunny, Cloudy, Rain"
+
+@tool
+def calculate_mortgage(principal: float, rate: float, years: int) -> str:
+    """Calculate monthly mortgage payment."""
+    return f"Monthly payment: $1,200"
+
+@tool
+def calculate_tip(amount: float, percent: float) -> str:
+    """Calculate tip amount."""
+    return f"Tip: ${amount * percent / 100:.2f}"
+
+@tool
+def translate_text(text: str, target_lang: str) -> str:
+    """Translate text to target language."""
+    return f"Translated to {target_lang}: [translated text]"
+
+@tool
+def summarize_text(text: str) -> str:
+    """Summarize a long piece of text."""
+    return "Summary: [condensed version]"
+
+@tool
+def send_email(to: str, subject: str, body: str) -> str:
+    """Send an email."""
+    return f"Email sent to {to}"
+
+@tool
+def create_calendar_event(title: str, date: str) -> str:
+    """Create a calendar event."""
+    return f"Event '{title}' created for {date}"
+
+@tool
+def set_reminder(message: str, time: str) -> str:
+    """Set a reminder."""
+    return f"Reminder set: {message} at {time}"
+
+@tool
+def get_definition(word: str) -> str:
+    """Look up the definition of a word."""
+    return f"Definition of {word}: [definition]"
+
+@tool
+def convert_units(value: float, from_unit: str, to_unit: str) -> str:
+    """Convert between units of measurement."""
+    return f"{value} {from_unit} = {value * 2.54} {to_unit}"
+
+
+all_tools = [search_web, search_news, get_stock_price, get_exchange_rate, get_weather, get_forecast, calculate_mortgage, calculate_tip, translate_text, summarize_text, send_email, create_calendar_event, set_reminder, get_definition, convert_units]
+
+TOOL_CATALOG = "\n".join(f"- {t.name}: {t.description}" for t in all_tools)
+tool_map = {t.name: t for t in all_tools}
+
+
+def select_tools(query: str, max_tools: int = 4) -> list:
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{
+            "role": "user",
+            "content": (
+                f"Given this user query: \"{query}\"\n\n"
+                f"Select the {max_tools} most relevant tools from this catalog:\n{TOOL_CATALOG}\n\n"
+                f"Return ONLY a JSON list of tool names, e.g. [\"tool1\", \"tool2\"]. No explanation."
+            ),
+        }],
+    )
+    selected_names = json.loads(response.choices[0].message.content)
+    return [tool_map[name] for name in selected_names if name in tool_map]
+
+
+def run_with_dynamic_tools(query: str) -> str:
+    selected = select_tools(query)
+    assistant = Agent(
+        role="Universal Assistant",
+        goal="Help users by answering questions using the provided tools.",
+        backstory="You are a helpful assistant. Use the provided tools to answer the user's question.",
+        tools=selected,
+    )
+    task = Task(
+        description=f"Answer this question: {query}",
+        expected_output="A helpful answer using the appropriate tools",
+        agent=assistant,
+    )
+    crew = Crew(agents=[assistant], tasks=[task])
+    return str(crew.kickoff())
+
+
+print(run_with_dynamic_tools("What's the weather in Paris?"))
+```
+
+## Why This Works
+
+The LLM-based router acts as a lightweight classifier that reads the user's query and matches it against tool descriptions. Because it uses semantic understanding rather than keyword matching, it correctly maps "What's AAPL trading at?" to `get_stock_price` even though the word "stock" doesn't appear in the query. By reducing the tool set from 15 to 3-4 per query, the agent's context window is cleaner, tool selection is more accurate, and token costs drop significantly.
+
+The two-stage architecture — router LLM selects tools, then agent LLM uses them — adds one cheap LLM call but saves tokens on every subsequent tool-calling turn (fewer schemas in context) and improves accuracy by reducing tool confusion. For production systems with dozens or hundreds of tools, this pattern is essential.
+
+## Key Takeaways
+
+- Passing all tools to every query wastes tokens and confuses the LLM — dynamically select a relevant subset per query.
+- An LLM-based router is more robust than keyword matching for tool selection because it understands intent and synonyms.
+- The selection layer adds minimal latency (one cheap LLM call) but significantly improves accuracy and reduces cost for tool-heavy agents.

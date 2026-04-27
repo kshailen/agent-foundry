@@ -1,0 +1,56 @@
+{
+  "number": 53,
+  "title": "Hybrid Search",
+  "difficulty": "medium",
+  "categories": [
+    "rag"
+  ],
+  "frameworks": [
+    "langchain",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "The retriever must combine both keyword-based and vector-based search",
+    "Exact matches on product codes and IDs must be found reliably",
+    "Semantic search must still work for natural language queries",
+    "Results from both search methods must be merged and deduplicated"
+  ],
+  "hints": [
+    "Implement a keyword search (e.g., BM25) alongside the vector search to catch exact term matches",
+    "Use an ensemble retriever or reciprocal rank fusion to merge results from both methods",
+    "Test with both natural language queries and exact ID lookups to verify both paths work"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI, OpenAIEmbeddings\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom langchain_community.vectorstores import FAISS\nfrom langchain_core.documents import Document\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\nembeddings = OpenAIEmbeddings()\n\ndocuments = [\n    Document(page_content=\"Product SKU-7291: Industrial-grade widget. Price: $45.99. Weight: 2.3kg.\"),\n    Document(page_content=\"Product SKU-1148: Precision calibration tool. Price: $129.00. Accuracy: ±0.01mm.\"),\n    Document(page_content=\"Product SKU-3364: Heavy-duty mounting bracket. Price: $18.50. Material: Stainless steel.\"),\n    Document(page_content=\"All products come with a 2-year warranty and free shipping on orders over $100.\"),\n    Document(page_content=\"Product SKU-9902: Digital multimeter with auto-ranging. Price: $89.99. Display: LCD.\"),\n]\n\nvectorstore = FAISS.from_documents(documents, embeddings)\n\n# BUG: Vector-only search — misses exact keyword matches like product codes\nretriever = vectorstore.as_retriever()\n\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"Answer based on context.\\n\\nContext: {context}\"),\n    (\"human\", \"{question}\"),\n])\n\ndef ask(question: str) -> str:\n    docs = retriever.invoke(question)\n    context = \"\\n\".join([doc.page_content for doc in docs])\n    chain = prompt | llm\n    result = chain.invoke({\"context\": context, \"question\": question})\n    return result.content\n\n# Vector search may not find exact SKU match\nprint(ask(\"What is the price of SKU-1148?\"))",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai.tools import tool\nfrom langchain_openai import OpenAIEmbeddings\nfrom langchain_community.vectorstores import FAISS\nfrom langchain_core.documents import Document\n\nembeddings = OpenAIEmbeddings()\n\ndocuments = [\n    Document(page_content=\"Product SKU-7291: Industrial-grade widget. Price: $45.99. Weight: 2.3kg.\"),\n    Document(page_content=\"Product SKU-1148: Precision calibration tool. Price: $129.00. Accuracy: ±0.01mm.\"),\n    Document(page_content=\"Product SKU-3364: Heavy-duty mounting bracket. Price: $18.50. Material: Stainless steel.\"),\n    Document(page_content=\"All products come with a 2-year warranty and free shipping on orders over $100.\"),\n    Document(page_content=\"Product SKU-9902: Digital multimeter with auto-ranging. Price: $89.99. Display: LCD.\"),\n]\n\nvectorstore = FAISS.from_documents(documents, embeddings)\n\n# BUG: Vector-only search — misses exact keyword matches like product codes\nretriever = vectorstore.as_retriever()\n\n@tool\ndef search_products(query: str) -> str:\n    \"\"\"Search the product catalog.\"\"\"\n    docs = retriever.invoke(query)\n    return \"\\n\".join([doc.page_content for doc in docs])\n\nassistant = Agent(\n    role=\"Product Assistant\",\n    goal=\"Answer product questions based on catalog data\",\n    backstory=\"You are a helpful product assistant.\",\n    tools=[search_products],\n)\n\ntask = Task(\n    description=\"What is the price of SKU-1148?\",\n    expected_output=\"The price of the product\",\n    agent=assistant,\n)\n\ncrew = Crew(agents=[assistant], tasks=[task])\nprint(crew.kickoff())",
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom agents.tool import function_tool\nfrom langchain_openai import OpenAIEmbeddings\nfrom langchain_community.vectorstores import FAISS\nfrom langchain_core.documents import Document\n\nembeddings = OpenAIEmbeddings()\n\ndocuments = [\n    Document(page_content=\"Product SKU-7291: Industrial-grade widget. Price: $45.99. Weight: 2.3kg.\"),\n    Document(page_content=\"Product SKU-1148: Precision calibration tool. Price: $129.00. Accuracy: ±0.01mm.\"),\n    Document(page_content=\"Product SKU-3364: Heavy-duty mounting bracket. Price: $18.50. Material: Stainless steel.\"),\n    Document(page_content=\"All products come with a 2-year warranty and free shipping on orders over $100.\"),\n    Document(page_content=\"Product SKU-9902: Digital multimeter with auto-ranging. Price: $89.99. Display: LCD.\"),\n]\n\nvectorstore = FAISS.from_documents(documents, embeddings)\n\n# BUG: Vector-only search — misses exact keyword matches like product codes\nretriever = vectorstore.as_retriever()\n\n@function_tool\ndef search_products(query: str) -> str:\n    \"\"\"Search the product catalog.\"\"\"\n    docs = retriever.invoke(query)\n    return \"\\n\".join([doc.page_content for doc in docs])\n\nagent = Agent(\n    name=\"Product Assistant\",\n    instructions=\"Answer product questions based on catalog data.\",\n    tools=[search_products],\n)\n\nresult = Runner.run_sync(agent, \"What is the price of SKU-1148?\")\nprint(result.final_output)"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/hybrid-search-langchain.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/hybrid-search-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/hybrid-search-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "keyword-search",
+      "label": "Implements keyword search",
+      "description": "A keyword-based search method (e.g., BM25) is implemented alongside vector search"
+    },
+    {
+      "id": "finds-exact-matches",
+      "label": "Finds exact term matches",
+      "description": "Product codes, SKUs, and IDs are reliably found via keyword matching"
+    },
+    {
+      "id": "semantic-still-works",
+      "label": "Semantic search still works",
+      "description": "Natural language queries still return relevant results via vector similarity"
+    },
+    {
+      "id": "merged-results",
+      "label": "Merges results from both methods",
+      "description": "Results from keyword and vector search are combined and deduplicated"
+    }
+  ]
+}

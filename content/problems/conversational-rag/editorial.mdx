@@ -1,0 +1,285 @@
+## Approach
+
+The starter code treats every question as an independent, stateless query. When a user asks "Tell me about ProductX" and then follows up with "What about pricing?", the second query goes to the retriever as-is. The retriever has no idea that "pricing" refers to ProductX, so it may return pricing for a different product or generic results. The agent has no conversation memory.
+
+The fix requires two changes. First, maintain a conversation history that accumulates across turns. Second, before sending a follow-up question to the retriever, use the LLM to reformulate it into a standalone query that incorporates context from prior turns. "What about pricing?" becomes "What is the pricing for ProductX?" — a query the retriever can handle correctly. This is called query condensation or history-aware retrieval.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="ProductX is an enterprise CRM platform starting at $99/month."),
+    Document(page_content="ProductY is a project management tool priced at $49/month per team."),
+    Document(page_content="ProductX offers advanced analytics, custom dashboards, and API access."),
+    Document(page_content="ProductY includes Gantt charts, sprint planning, and time tracking."),
+    Document(page_content="ProductX has a 14-day free trial with full feature access."),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+retriever = vectorstore.as_retriever()
+
+condense_prompt = ChatPromptTemplate.from_messages([
+    ("system",
+     "Given the conversation history and a follow-up question, "
+     "reformulate the follow-up into a standalone question that includes "
+     "all necessary context. Return ONLY the reformulated question."),
+    ("human",
+     "Chat history:\n{history}\n\n"
+     "Follow-up question: {question}\n\n"
+     "Standalone question:"),
+])
+
+answer_prompt = ChatPromptTemplate.from_messages([
+    ("system",
+     "Answer the question based on the context below.\n\nContext:\n{context}"),
+    ("human", "{question}"),
+])
+
+chat_history = []
+
+def ask(question: str) -> str:
+    if chat_history:
+        history_str = "\n".join(
+            [f"User: {q}\nAssistant: {a}" for q, a in chat_history]
+        )
+        condense_chain = condense_prompt | llm
+        result = condense_chain.invoke({"history": history_str, "question": question})
+        standalone_question = result.content
+    else:
+        standalone_question = question
+
+    docs = retriever.invoke(standalone_question)
+    context = "\n".join([doc.page_content for doc in docs])
+    answer_chain = answer_prompt | llm
+    result = answer_chain.invoke({"context": context, "question": standalone_question})
+    answer = result.content
+
+    chat_history.append((question, answer))
+    return answer
+
+print(ask("Tell me about ProductX."))
+print(ask("What about pricing?"))
+```
+
+### LangGraph
+
+```python
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict, List, Tuple
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="ProductX is an enterprise CRM platform starting at $99/month."),
+    Document(page_content="ProductY is a project management tool priced at $49/month per team."),
+    Document(page_content="ProductX offers advanced analytics, custom dashboards, and API access."),
+    Document(page_content="ProductY includes Gantt charts, sprint planning, and time tracking."),
+    Document(page_content="ProductX has a 14-day free trial with full feature access."),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+retriever = vectorstore.as_retriever()
+
+class State(TypedDict):
+    question: str
+    chat_history: List[Tuple[str, str]]
+    standalone_question: str
+    context: str
+    answer: str
+
+def condense_question(state: State) -> State:
+    history = state.get("chat_history", [])
+    if history:
+        history_str = "\n".join([f"User: {q}\nAssistant: {a}" for q, a in history])
+        response = llm.invoke(
+            f"Given the conversation history and a follow-up question, "
+            f"reformulate the follow-up into a standalone question.\n\n"
+            f"Chat history:\n{history_str}\n\n"
+            f"Follow-up: {state['question']}\n\n"
+            f"Standalone question:"
+        )
+        return {"standalone_question": response.content}
+    return {"standalone_question": state["question"]}
+
+def retrieve(state: State) -> State:
+    docs = retriever.invoke(state["standalone_question"])
+    context = "\n".join([doc.page_content for doc in docs])
+    return {"context": context}
+
+def answer(state: State) -> State:
+    response = llm.invoke(
+        f"Answer the question based on the context below.\n\n"
+        f"Context:\n{state['context']}\n\n"
+        f"Question: {state['standalone_question']}"
+    )
+    new_history = state.get("chat_history", []) + [(state["question"], response.content)]
+    return {"answer": response.content, "chat_history": new_history}
+
+graph = StateGraph(State)
+graph.add_node("condense", condense_question)
+graph.add_node("retrieve", retrieve)
+graph.add_node("answer", answer)
+graph.add_edge(START, "condense")
+graph.add_edge("condense", "retrieve")
+graph.add_edge("retrieve", "answer")
+graph.add_edge("answer", END)
+
+app = graph.compile()
+
+result1 = app.invoke({"question": "Tell me about ProductX.", "chat_history": []})
+print(result1["answer"])
+
+result2 = app.invoke({
+    "question": "What about pricing?",
+    "chat_history": result1["chat_history"],
+})
+print(result2["answer"])
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from crewai import LLM
+from crewai.tools import tool
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+
+llm = LLM(model="gpt-4o-mini")
+condensing_llm = ChatOpenAI(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="ProductX is an enterprise CRM platform starting at $99/month."),
+    Document(page_content="ProductY is a project management tool priced at $49/month per team."),
+    Document(page_content="ProductX offers advanced analytics, custom dashboards, and API access."),
+    Document(page_content="ProductY includes Gantt charts, sprint planning, and time tracking."),
+    Document(page_content="ProductX has a 14-day free trial with full feature access."),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+retriever = vectorstore.as_retriever()
+
+chat_history = []
+
+@tool
+def search_products(query: str) -> str:
+    """Search product documentation for relevant information."""
+    if chat_history:
+        history_str = "\n".join([f"User: {q}\nAssistant: {a}" for q, a in chat_history])
+        result = condensing_llm.invoke(
+            f"Given the conversation history and a follow-up question, "
+            f"reformulate the follow-up into a standalone question.\n\n"
+            f"Chat history:\n{history_str}\n\n"
+            f"Follow-up: {query}\n\n"
+            f"Standalone question:"
+        )
+        standalone_query = result.content
+    else:
+        standalone_query = query
+    docs = retriever.invoke(standalone_query)
+    return "\n".join([doc.page_content for doc in docs])
+
+agent = Agent(
+    role="Product Q&A Specialist",
+    goal="Answer questions about products using search",
+    backstory="You are a product specialist. Always search for relevant information before answering.",
+    tools=[search_products],
+    llm=llm,
+)
+
+def ask(question: str) -> str:
+    task = Task(
+        description=question,
+        expected_output="An accurate answer based on product documentation",
+        agent=agent,
+    )
+    crew = Crew(agents=[agent], tasks=[task])
+    answer = str(crew.kickoff())
+    chat_history.append((question, answer))
+    return answer
+
+print(ask("Tell me about ProductX."))
+print(ask("What about pricing?"))
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from agents.tool import function_tool
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+
+condensing_llm = ChatOpenAI(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="ProductX is an enterprise CRM platform starting at $99/month."),
+    Document(page_content="ProductY is a project management tool priced at $49/month per team."),
+    Document(page_content="ProductX offers advanced analytics, custom dashboards, and API access."),
+    Document(page_content="ProductY includes Gantt charts, sprint planning, and time tracking."),
+    Document(page_content="ProductX has a 14-day free trial with full feature access."),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+retriever = vectorstore.as_retriever()
+
+chat_history = []
+
+@function_tool
+def search_products(query: str) -> str:
+    """Search product documentation for relevant information."""
+    if chat_history:
+        history_str = "\n".join([f"User: {q}\nAssistant: {a}" for q, a in chat_history])
+        result = condensing_llm.invoke(
+            f"Given the conversation history and a follow-up question, "
+            f"reformulate the follow-up into a standalone question.\n\n"
+            f"Chat history:\n{history_str}\n\n"
+            f"Follow-up: {query}\n\n"
+            f"Standalone question:"
+        )
+        return "\n".join([doc.page_content for doc in retriever.invoke(result.content)])
+    return "\n".join([doc.page_content for doc in retriever.invoke(query)])
+
+agent = Agent(
+    name="Product Q&A",
+    instructions="Answer questions about products. Always use the search tool to find relevant information before answering.",
+    tools=[search_products],
+)
+
+def ask(question: str) -> str:
+    result = Runner.run_sync(agent, question)
+    answer = result.final_output
+    chat_history.append((question, answer))
+    return answer
+
+print(ask("Tell me about ProductX."))
+print(ask("What about pricing?"))
+```
+
+## Why This Works
+
+The query condensation step transforms ambiguous follow-ups into standalone queries before they reach the retriever. "What about pricing?" becomes "What is the pricing for ProductX?" because the LLM incorporates the conversation history. This means the retriever searches for the right product, and the answer is contextually accurate. The conversation history accumulates across turns, enabling arbitrarily long multi-turn conversations.
+
+## Key Takeaways
+
+- Follow-up questions often contain pronouns or implicit references that only make sense with conversation history.
+- A query condensation step before retrieval is the standard pattern for conversational RAG.
+- Store conversation history externally (list, database) and pass it through the pipeline — the retriever and LLM are stateless by default.

@@ -1,0 +1,51 @@
+{
+  "number": 24,
+  "title": "Tool Output Parser",
+  "difficulty": "medium",
+  "categories": [
+    "tool-calling"
+  ],
+  "frameworks": [
+    "langchain",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "The raw HTML must be parsed into structured data before reaching the LLM",
+    "The parsed output must include product name, price, and rating at minimum",
+    "The parsing logic must live inside the tool, not in the system prompt",
+    "The agent must not receive raw HTML tags in the tool output"
+  ],
+  "hints": [
+    "Use an HTML parser like BeautifulSoup to extract specific elements from the raw HTML",
+    "Return a clean dictionary or formatted string with only the extracted fields",
+    "Consider defining a schema for the structured output so the agent gets consistent data"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain.agents import AgentExecutor, create_tool_calling_agent\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom langchain_core.tools import tool\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n@tool\ndef scrape_product(url: str) -> str:\n    \"\"\"Scrape product information from a URL.\"\"\"\n    # BUG: Returns raw HTML — the LLM wastes tokens parsing tags and often extracts wrong fields\n    # TODO: Parse the HTML and return clean structured data\n    raw_html = \"\"\"\n    <div class=\"product-page\">\n        <h1 class=\"product-title\">Wireless Noise-Cancelling Headphones</h1>\n        <span class=\"price\">$249.99</span>\n        <span class=\"original-price\">$349.99</span>\n        <div class=\"rating\"><span class=\"stars\">4.5</span> out of 5 (<span class=\"count\">2,847</span> reviews)</div>\n        <div class=\"availability in-stock\">In Stock</div>\n        <p class=\"description\">Premium wireless headphones with active noise cancellation, 30-hour battery life, and comfortable over-ear design.</p>\n        <div class=\"specs\"><ul><li>Bluetooth 5.2</li><li>Weight: 250g</li><li>Driver: 40mm</li></ul></div>\n        <div class=\"sidebar\"><div class=\"ad\">Buy now and save!</div><div class=\"related\">Related products...</div></div>\n    </div>\n    \"\"\"\n    return raw_html\n\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a shopping assistant. Help users find product information.\"),\n    (\"human\", \"{input}\"),\n    (\"placeholder\", \"{agent_scratchpad}\"),\n])\n\nagent = create_tool_calling_agent(llm, [scrape_product], prompt)\nexecutor = AgentExecutor(agent=agent, tools=[scrape_product])\n\nresult = executor.invoke({\"input\": \"Get me the details for the headphones at https://example.com/headphones\"})\nprint(result[\"output\"])",
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom agents.tool import function_tool\n\n@function_tool\ndef scrape_product(url: str) -> str:\n    \"\"\"Scrape product information from a URL.\"\"\"\n    # BUG: Returns raw HTML — the LLM wastes tokens parsing tags and often extracts wrong fields\n    # TODO: Parse the HTML and return clean structured data\n    raw_html = \"\"\"\n    <div class=\"product-page\">\n        <h1 class=\"product-title\">Wireless Noise-Cancelling Headphones</h1>\n        <span class=\"price\">$249.99</span>\n        <span class=\"original-price\">$349.99</span>\n        <div class=\"rating\"><span class=\"stars\">4.5</span> out of 5 (<span class=\"count\">2,847</span> reviews)</div>\n        <div class=\"availability in-stock\">In Stock</div>\n        <p class=\"description\">Premium wireless headphones with active noise cancellation, 30-hour battery life, and comfortable over-ear design.</p>\n        <div class=\"specs\"><ul><li>Bluetooth 5.2</li><li>Weight: 250g</li><li>Driver: 40mm</li></ul></div>\n        <div class=\"sidebar\"><div class=\"ad\">Buy now and save!</div><div class=\"related\">Related products...</div></div>\n    </div>\n    \"\"\"\n    return raw_html\n\nagent = Agent(\n    name=\"Shopping Assistant\",\n    instructions=\"You are a shopping assistant. Help users find product information.\",\n    tools=[scrape_product],\n)\n\nresult = Runner.run_sync(agent, \"Get me the details for the headphones at https://example.com/headphones\")\nprint(result.final_output)",
+    "crewai": "from crewai import Agent, Task, Crew, Process\nfrom crewai.tools import tool\n\n@tool\ndef scrape_product(url: str) -> str:\n    \"\"\"Scrape product information from a URL.\"\"\"\n    # BUG: Returns raw HTML — the LLM wastes tokens parsing tags and often extracts wrong fields\n    # TODO: Parse the HTML and return clean structured data\n    raw_html = \"\"\"\n    <div class=\"product-page\">\n        <h1 class=\"product-title\">Wireless Noise-Cancelling Headphones</h1>\n        <span class=\"price\">$249.99</span>\n        <span class=\"original-price\">$349.99</span>\n        <div class=\"rating\"><span class=\"stars\">4.5</span> out of 5 (<span class=\"count\">2,847</span> reviews)</div>\n        <div class=\"availability in-stock\">In Stock</div>\n        <p class=\"description\">Premium wireless headphones with active noise cancellation, 30-hour battery life, and comfortable over-ear design.</p>\n        <div class=\"specs\"><ul><li>Bluetooth 5.2</li><li>Weight: 250g</li><li>Driver: 40mm</li></ul></div>\n        <div class=\"sidebar\"><div class=\"ad\">Buy now and save!</div><div class=\"related\">Related products...</div></div>\n    </div>\n    \"\"\"\n    return raw_html\n\nshopping_agent = Agent(\n    role=\"Shopping Assistant\",\n    goal=\"Help users find product information by scraping and presenting product details clearly.\",\n    backstory=\"You are a shopping assistant that helps users find and compare products.\",\n    tools=[scrape_product],\n)\n\ntask = Task(\n    description=\"Get me the details for the headphones at https://example.com/headphones\",\n    expected_output=\"A clear summary of the product details including name, price, rating, and availability.\",\n    agent=shopping_agent,\n)\n\ncrew = Crew(agents=[shopping_agent], tasks=[task], process=Process.sequential)\nresult = crew.kickoff()\nprint(result)"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/tool-output-parser-langchain.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/tool-output-parser-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/tool-output-parser-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "no-raw-html",
+      "label": "No raw HTML in tool output",
+      "description": "The tool returns clean structured data, not HTML tags"
+    },
+    {
+      "id": "structured-fields",
+      "label": "Key fields are extracted",
+      "description": "The parsed output includes at least product name, price, and rating"
+    },
+    {
+      "id": "clean-response",
+      "label": "Agent response is accurate",
+      "description": "The agent presents correct product details without HTML artifacts"
+    }
+  ]
+}

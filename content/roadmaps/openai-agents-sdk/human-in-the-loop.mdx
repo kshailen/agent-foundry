@@ -1,0 +1,175 @@
+# Human-in-the-Loop & Approvals
+
+In production systems, certain agent actions — like sending emails, making payments, or modifying records — should require human approval before execution. The OpenAI Agents SDK provides a built-in approval workflow through `function_tool(needs_approval=True)`, letting you pause execution, inspect pending tool calls, and approve or reject them before the agent continues.
+
+## How Approval Works
+
+When a tool is marked with `needs_approval=True`, the agent loop pauses instead of executing the tool. The pending call is surfaced as an interruption, giving you the chance to review and decide:
+
+```
+User message → Agent decides to call tool → Interruption created
+                                              ↓
+                                    Inspect with result.interruptions
+                                              ↓
+                              Approve (state.approve) or Reject (state.reject)
+                                              ↓
+                                    Resume with Runner.run(agent, state)
+```
+
+## Defining a Tool That Needs Approval
+
+Pass `needs_approval=True` to `function_tool` to require human sign-off:
+
+```python
+from agents import Agent, Runner, function_tool
+
+@function_tool(needs_approval=True)
+def send_email(to: str, subject: str, body: str) -> str:
+    """Send an email to the specified recipient."""
+    return f"Email sent to {to} with subject '{subject}'"
+
+@function_tool(needs_approval=True)
+def delete_record(record_id: str) -> str:
+    """Permanently delete a record from the database."""
+    return f"Record {record_id} deleted"
+
+agent = Agent(
+    name="Assistant",
+    instructions="You help users manage their emails and records.",
+    tools=[send_email, delete_record],
+)
+```
+
+## Checking for Interruptions
+
+When the agent wants to call an approval-required tool, `Runner.run` returns with interruptions instead of a final output:
+
+```python
+result = await Runner.run(agent, "Send an email to alice@example.com about the meeting tomorrow")
+
+if result.interruptions:
+    for interruption in result.interruptions:
+        print(f"Tool: {interruption.tool_name}")
+        print(f"Arguments: {interruption.tool_arguments}")
+```
+
+## Converting to RunState
+
+To approve or reject pending calls, convert the result into a `RunState` — a serializable snapshot of the agent's progress:
+
+```python
+state = result.to_state()
+```
+
+`RunState` captures the full context of the run: which tools were called, what arguments were passed, and what still needs approval. You can serialize this to JSON for storage or transmission.
+
+## Approving a Tool Call
+
+Call `state.approve()` to authorize execution, then resume the agent:
+
+```python
+state.approve(interruption_id=result.interruptions[0].id)
+
+resumed_result = await Runner.run(agent, state)
+print(resumed_result.final_output)
+```
+
+## Rejecting a Tool Call
+
+Call `state.reject()` to deny the tool call. The agent receives an error message and can adjust:
+
+```python
+state.reject(
+    interruption_id=result.interruptions[0].id,
+    message="Not authorized to delete production records",
+)
+
+resumed_result = await Runner.run(agent, state)
+print(resumed_result.final_output)
+```
+
+## Handling Multiple Pending Approvals
+
+When the agent triggers multiple approval-required tools, you can approve or reject each independently:
+
+```python
+result = await Runner.run(agent, "Send the report to alice and delete the draft record DR-42")
+
+state = result.to_state()
+
+for interruption in result.interruptions:
+    if interruption.tool_name == "send_email":
+        state.approve(interruption_id=interruption.id)
+    elif interruption.tool_name == "delete_record":
+        state.reject(
+            interruption_id=interruption.id,
+            message="Deletion requires manager approval",
+        )
+
+resumed_result = await Runner.run(agent, state)
+print(resumed_result.final_output)
+```
+
+## Custom Rejection Messages with tool_error_formatter
+
+By default, rejected tool calls surface a generic error to the agent. Use `tool_error_formatter` to customize the message the agent sees:
+
+```python
+def format_rejection(tool_name: str, error: str) -> str:
+    return (
+        f"The tool '{tool_name}' was rejected by a human reviewer. "
+        f"Reason: {error}. Please inform the user and suggest alternatives."
+    )
+
+agent = Agent(
+    name="Careful Assistant",
+    instructions="You help users manage sensitive operations.",
+    tools=[send_email, delete_record],
+    tool_error_formatter=format_rejection,
+)
+```
+
+## Approval Workflow Summary
+
+| Step | Method | Description |
+|------|--------|-------------|
+| 1. Run agent | `Runner.run(agent, input)` | Agent processes input, may trigger approvals |
+| 2. Check interruptions | `result.interruptions` | List of pending tool calls needing approval |
+| 3. Convert to state | `result.to_state()` | Creates a serializable `RunState` |
+| 4. Approve/Reject | `state.approve()` / `state.reject()` | Authorize or deny each pending call |
+| 5. Resume | `Runner.run(agent, state)` | Continue execution with decisions applied |
+
+## Mixing Approved and Regular Tools
+
+You can combine tools that need approval with tools that execute immediately:
+
+```python
+@function_tool
+def lookup_contact(name: str) -> str:
+    """Look up a contact's email address."""
+    contacts = {"alice": "alice@example.com", "bob": "bob@example.com"}
+    return contacts.get(name.lower(), "Contact not found")
+
+@function_tool(needs_approval=True)
+def send_email(to: str, subject: str, body: str) -> str:
+    """Send an email to the specified recipient."""
+    return f"Email sent to {to}"
+
+agent = Agent(
+    name="Email Assistant",
+    instructions="Look up contacts and send emails on behalf of the user.",
+    tools=[lookup_contact, send_email],
+)
+```
+
+The agent calls `lookup_contact` immediately but pauses for approval before calling `send_email`.
+
+## Key Takeaways
+
+- Use `function_tool(needs_approval=True)` to require human sign-off before tool execution
+- Check `result.interruptions` for pending approval requests after a run
+- Convert results to a serializable `RunState` with `result.to_state()`
+- Use `state.approve()` and `state.reject()` to authorize or deny tool calls
+- Resume execution with `Runner.run(agent, state)` after making decisions
+- Customize rejection messages with `tool_error_formatter` so the agent can respond gracefully
+- Combine approval-required tools with regular tools in the same agent

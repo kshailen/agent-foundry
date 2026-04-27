@@ -1,0 +1,51 @@
+{
+  "number": 30,
+  "title": "Tool with Structured Input",
+  "difficulty": "medium",
+  "categories": [
+    "tool-calling"
+  ],
+  "frameworks": [
+    "langchain",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "The tool must accept a structured address with separate fields (street, city, state, zip)",
+    "The agent must correctly populate all address fields from natural language input",
+    "The tool must validate that required fields are present",
+    "No address components should be concatenated into a single string"
+  ],
+  "hints": [
+    "Use a Pydantic model or TypedDict to define the structured input schema with typed fields",
+    "Update the tool's parameter signature to use the structured type instead of a flat string",
+    "Include field descriptions in the schema so the LLM knows what format each field expects"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain.agents import AgentExecutor, create_tool_calling_agent\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom langchain_core.tools import tool\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# BUG: The tool takes a flat string for the address, which the agent formats inconsistently.\n# Sometimes it sends \"123 Main St, Springfield, IL 62701\", other times \"Springfield IL 123 Main\".\n# The downstream API expects structured fields and parsing a flat string is error-prone.\n# TODO: Replace the flat string with structured input (street, city, state, zip)\n\n@tool\ndef validate_address(address: str) -> str:\n    \"\"\"Validate a shipping address.\"\"\"\n    # This tries to parse a flat string — fragile and error-prone\n    parts = address.split(\",\")\n    if len(parts) < 3:\n        return f\"Invalid address format: '{address}'. Expected: street, city, state zip\"\n    return f\"Address validated: {address}\"\n\n@tool\ndef calculate_shipping(address: str, weight_lbs: float) -> str:\n    \"\"\"Calculate shipping cost to an address.\"\"\"\n    return f\"Shipping {weight_lbs}lbs to '{address}': $12.99 (parsed address may be wrong)\"\n\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a shipping assistant. Help users validate addresses and calculate shipping costs.\"),\n    (\"human\", \"{input}\"),\n    (\"placeholder\", \"{agent_scratchpad}\"),\n])\n\nagent = create_tool_calling_agent(llm, [validate_address, calculate_shipping], prompt)\nexecutor = AgentExecutor(agent=agent, tools=[validate_address, calculate_shipping])\n\nresult = executor.invoke({\"input\": \"Validate and get shipping cost for a 5lb package to 742 Evergreen Terrace, Springfield, IL 62704\"})\nprint(result[\"output\"])",
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom agents.tool import function_tool\n\n# BUG: The tool takes a flat string for the address, which the agent formats inconsistently.\n# Sometimes it sends \"123 Main St, Springfield, IL 62701\", other times \"Springfield IL 123 Main\".\n# The downstream API expects structured fields and parsing a flat string is error-prone.\n# TODO: Replace the flat string with structured input (street, city, state, zip)\n\n@function_tool\ndef validate_address(address: str) -> str:\n    \"\"\"Validate a shipping address.\"\"\"\n    parts = address.split(\",\")\n    if len(parts) < 3:\n        return f\"Invalid address format: '{address}'. Expected: street, city, state zip\"\n    return f\"Address validated: {address}\"\n\n@function_tool\ndef calculate_shipping(address: str, weight_lbs: float) -> str:\n    \"\"\"Calculate shipping cost to an address.\"\"\"\n    return f\"Shipping {weight_lbs}lbs to '{address}': $12.99 (parsed address may be wrong)\"\n\nagent = Agent(\n    name=\"Shipping Assistant\",\n    instructions=\"You are a shipping assistant. Help users validate addresses and calculate shipping costs.\",\n    tools=[validate_address, calculate_shipping],\n)\n\nresult = Runner.run_sync(agent, \"Validate and get shipping cost for a 5lb package to 742 Evergreen Terrace, Springfield, IL 62704\")\nprint(result.final_output)",
+    "crewai": "from crewai import Agent, Task, Crew, Process\nfrom crewai.tools import tool\n\n# BUG: The tool takes a flat string for the address, which the agent formats inconsistently.\n# Sometimes it sends \"123 Main St, Springfield, IL 62701\", other times \"Springfield IL 123 Main\".\n# The downstream API expects structured fields and parsing a flat string is error-prone.\n# TODO: Replace the flat string with structured input (street, city, state, zip)\n\n@tool\ndef validate_address(address: str) -> str:\n    \"\"\"Validate a shipping address.\"\"\"\n    parts = address.split(\",\")\n    if len(parts) < 3:\n        return f\"Invalid address format: '{address}'. Expected: street, city, state zip\"\n    return f\"Address validated: {address}\"\n\n@tool\ndef calculate_shipping(address: str, weight_lbs: float) -> str:\n    \"\"\"Calculate shipping cost to an address.\"\"\"\n    return f\"Shipping {weight_lbs}lbs to '{address}': $12.99 (parsed address may be wrong)\"\n\nshipping_agent = Agent(\n    role=\"Shipping Assistant\",\n    goal=\"Help users validate addresses and calculate shipping costs.\",\n    backstory=\"You are a shipping assistant that helps with address validation and shipping calculations.\",\n    tools=[validate_address, calculate_shipping],\n)\n\ntask = Task(\n    description=\"Validate and get shipping cost for a 5lb package to 742 Evergreen Terrace, Springfield, IL 62704\",\n    expected_output=\"Address validation result and shipping cost estimate.\",\n    agent=shipping_agent,\n)\n\ncrew = Crew(agents=[shipping_agent], tasks=[task], process=Process.sequential)\nresult = crew.kickoff()\nprint(result)"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/tool-with-structured-input-langchain.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/tool-with-structured-input-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/tool-with-structured-input-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "structured-schema",
+      "label": "Tool uses structured input",
+      "description": "The address parameter is a structured object with separate fields, not a flat string"
+    },
+    {
+      "id": "fields-populated",
+      "label": "All fields are correctly populated",
+      "description": "The agent fills in street, city, state, and zip as separate values from natural language"
+    },
+    {
+      "id": "validation-works",
+      "label": "Validation catches missing fields",
+      "description": "The tool validates that all required address components are present"
+    }
+  ]
+}

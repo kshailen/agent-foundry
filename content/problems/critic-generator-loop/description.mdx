@@ -1,0 +1,39 @@
+## The Problem
+
+You have a content-generation agent that produces product descriptions in a single pass. The output quality is inconsistent — sometimes great, sometimes mediocre. You need to add a **critic agent** that reviews each draft and provides actionable feedback, and a **loop** so the generator can revise until the critic is satisfied (or a maximum number of iterations is reached). The starter code only does one-shot generation with no review.
+
+## Examples
+
+### Example 1
+
+**User input:** Product: wireless noise-cancelling headphones
+
+**Current (bad) output:** A single draft that may be bland, too short, or miss key selling points — with no review or revision.
+
+**Expected (good) output:** The generator produces a first draft. The critic reviews it (e.g., "Missing mention of battery life; tone is too technical"). The generator revises incorporating that feedback. The critic approves the second draft, and the final polished description is returned.
+
+### Example 2
+
+**User input:** Product: ergonomic standing desk
+
+**Current (bad) output:** A one-shot description that undersells the product.
+
+**Expected (good) output:** After 1–2 rounds of critic feedback and generator revision, a polished description that highlights key features, benefits, and a compelling call to action.
+
+## Your Task
+
+Extend the starter code so that:
+
+- A **critic agent** reviews each generated draft and provides specific improvement suggestions.
+- The **generator** receives the critic's feedback and produces a revised draft.
+- This loop continues until the critic approves the draft or a maximum iteration count (e.g., 3) is reached.
+- Both agents remain separate with distinct roles.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Review loop implemented:** The generator and critic run in a loop where feedback leads to revision.
+- **Critic provides actionable feedback:** The critic agent reviews the draft and returns specific improvement suggestions.
+- **Generator incorporates feedback:** The generator uses the critic's feedback to produce an improved draft.
+- **Loop terminates correctly:** The loop stops when quality is met or a maximum iteration count is reached.

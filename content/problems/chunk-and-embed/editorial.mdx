@@ -1,0 +1,205 @@
+## Approach
+
+The starter code tries to stuff an entire 50-page document into the LLM prompt. This fails in multiple ways: it can exceed the model's context window, degrade answer quality because the model loses focus in a wall of text, and cost far more per query than necessary. The core problem is the absence of a chunking and embedding pipeline.
+
+The solution is to split the document into manageable chunks (500 characters or fewer, with some overlap to preserve context across boundaries), embed each chunk into a vector store, and retrieve only the most relevant chunks at query time. This way the LLM sees just the information it needs, stays within context limits, and produces focused answers.
+
+Overlap between chunks is important because a naive split might cut a sentence or paragraph in half. A small overlap (e.g., 50 characters) ensures that boundary content appears in at least one chunk in full, improving retrieval quality.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings()
+
+long_document = "CHAPTER 1: INTRODUCTION\n" + "\n".join(
+    [f"Section 1.{i}: This section covers topic {i} in great detail. " * 20 for i in range(1, 51)]
+)
+
+splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+chunks = splitter.split_text(long_document)
+docs = [Document(page_content=chunk) for chunk in chunks]
+
+vectorstore = FAISS.from_documents(docs, embeddings)
+retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system",
+     "Answer the user's question using ONLY the context below.\n\n"
+     "Context:\n{context}"),
+    ("human", "{question}"),
+])
+
+def ask(question: str) -> str:
+    retrieved = retriever.invoke(question)
+    context = "\n\n".join([doc.page_content for doc in retrieved])
+    chain = prompt | llm
+    result = chain.invoke({"context": context, "question": question})
+    return result.content
+
+print(ask("What does section 1.25 cover?"))
+```
+
+### LangGraph
+
+```python
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings()
+
+long_document = "CHAPTER 1: INTRODUCTION\n" + "\n".join(
+    [f"Section 1.{i}: This section covers topic {i} in great detail. " * 20 for i in range(1, 51)]
+)
+
+splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+chunks = splitter.split_text(long_document)
+docs = [Document(page_content=chunk) for chunk in chunks]
+
+vectorstore = FAISS.from_documents(docs, embeddings)
+retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+
+class State(TypedDict):
+    question: str
+    context: str
+    answer: str
+
+def retrieve(state: State) -> State:
+    retrieved = retriever.invoke(state["question"])
+    context = "\n\n".join([doc.page_content for doc in retrieved])
+    return {"context": context}
+
+def answer(state: State) -> State:
+    response = llm.invoke(
+        f"Answer the question using ONLY the context below.\n\n"
+        f"Context:\n{state['context']}\n\n"
+        f"Question: {state['question']}"
+    )
+    return {"answer": response.content}
+
+graph = StateGraph(State)
+graph.add_node("retrieve", retrieve)
+graph.add_node("answer", answer)
+graph.add_edge(START, "retrieve")
+graph.add_edge("retrieve", "answer")
+graph.add_edge("answer", END)
+
+app = graph.compile()
+result = app.invoke({"question": "What does section 1.25 cover?"})
+print(result["answer"])
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from crewai import LLM
+from crewai.tools import tool
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+
+llm = LLM(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings()
+
+long_document = "CHAPTER 1: INTRODUCTION\n" + "\n".join(
+    [f"Section 1.{i}: This section covers topic {i} in great detail. " * 20 for i in range(1, 51)]
+)
+
+splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+chunks = splitter.split_text(long_document)
+docs = [Document(page_content=chunk) for chunk in chunks]
+
+vectorstore = FAISS.from_documents(docs, embeddings)
+retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+
+@tool
+def search_document(query: str) -> str:
+    """Search the document for relevant sections based on a query."""
+    results = retriever.invoke(query)
+    return "\n\n".join([doc.page_content for doc in results])
+
+agent = Agent(
+    role="Document Q&A Specialist",
+    goal="Answer questions about the document by searching relevant sections",
+    backstory="You answer questions by searching a document's indexed chunks. Always use the search tool first.",
+    tools=[search_document],
+    llm=llm,
+)
+
+task = Task(
+    description="What does section 1.25 cover?",
+    expected_output="An accurate answer based on the retrieved document sections",
+    agent=agent,
+)
+
+crew = Crew(agents=[agent], tasks=[task])
+result = crew.kickoff()
+print(result)
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from agents.tool import function_tool
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+
+embeddings = OpenAIEmbeddings()
+
+long_document = "CHAPTER 1: INTRODUCTION\n" + "\n".join(
+    [f"Section 1.{i}: This section covers topic {i} in great detail. " * 20 for i in range(1, 51)]
+)
+
+splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+chunks = splitter.split_text(long_document)
+docs = [Document(page_content=chunk) for chunk in chunks]
+
+vectorstore = FAISS.from_documents(docs, embeddings)
+retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+
+@function_tool
+def search_document(query: str) -> str:
+    """Search the document for relevant sections based on a query."""
+    results = retriever.invoke(query)
+    return "\n\n".join([doc.page_content for doc in results])
+
+agent = Agent(
+    name="Document Q&A",
+    instructions=(
+        "Answer questions about a document by first searching for relevant sections. "
+        "Always use the search_document tool to find relevant content before answering."
+    ),
+    tools=[search_document],
+)
+
+result = Runner.run_sync(agent, "What does section 1.25 cover?")
+print(result.final_output)
+```
+
+## Why This Works
+
+Chunking the document into 500-character pieces with overlap ensures that each piece is small enough to embed meaningfully and that no content is lost at boundaries. Storing these chunks in a vector store enables fast similarity search, so only the relevant sections are retrieved. The LLM receives a focused, manageable context window instead of an overwhelming document dump, leading to accurate and cost-efficient answers.
+
+## Key Takeaways
+
+- Stuffing entire documents into the prompt wastes tokens, risks exceeding context limits, and degrades answer quality.
+- Use a `RecursiveCharacterTextSplitter` with chunk sizes under 500 characters and small overlaps to preserve boundary context.
+- Retrieve only the top-k most relevant chunks per query to keep the prompt lean and the answer focused.

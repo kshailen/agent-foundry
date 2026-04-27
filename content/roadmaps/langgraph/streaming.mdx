@@ -1,0 +1,133 @@
+# Streaming
+
+Waiting for a full graph run to complete before showing output creates a poor user experience. LangGraph supports **streaming** so you can deliver partial results, token-by-token LLM output, and custom status updates as the graph executes.
+
+## Stream Modes
+
+LangGraph provides seven stream modes, selectable via the `stream_mode` parameter:
+
+| Mode | Description |
+|------|-------------|
+| `values` | Emits the full state after each node completes |
+| `updates` | Emits only the state delta (the dict returned by each node) |
+| `messages` | Streams LLM tokens as `(message_chunk, metadata)` tuples |
+| `custom` | Emits custom data sent via `get_stream_writer()` |
+| `checkpoints` | Emits a checkpoint event after each step |
+| `tasks` | Emits task start/end events for each node |
+| `debug` | Emits detailed debug events including task and checkpoint info |
+
+You can pass a single mode or a list of modes:
+
+```python
+for event in app.stream(inputs, stream_mode="updates"):
+    print(event)
+
+for event in app.stream(inputs, stream_mode=["values", "messages"]):
+    mode, data = event
+    print(f"[{mode}] {data}")
+```
+
+## version="v2"
+
+When streaming multiple modes simultaneously, use `version="v2"` for a consistent event format. Each event becomes a `StreamEvent` with a `mode` field:
+
+```python
+for event in app.stream(inputs, stream_mode=["updates", "custom"], version="v2"):
+    print(f"Mode: {event.mode}, Data: {event.data}")
+```
+
+## Streaming Full State with "values"
+
+The `values` mode emits the complete state dict after each node:
+
+```python
+from langgraph.graph import StateGraph, START, END, MessagesState
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+def chatbot(state: MessagesState) -> dict:
+    return {"messages": [llm.invoke(state["messages"])]}
+
+graph = StateGraph(MessagesState)
+graph.add_node("chatbot", chatbot)
+graph.add_edge(START, "chatbot")
+graph.add_edge("chatbot", END)
+app = graph.compile()
+
+for state in app.stream({"messages": [("human", "Hi")]}, stream_mode="values"):
+    if state["messages"]:
+        print(state["messages"][-1].content)
+```
+
+## Streaming Updates with "updates"
+
+The `updates` mode emits only the dict each node returned:
+
+```python
+for update in app.stream({"messages": [("human", "Hi")]}, stream_mode="updates"):
+    for node_name, node_output in update.items():
+        print(f"{node_name}: {node_output}")
+```
+
+## Token-by-Token Output with "messages"
+
+The `messages` mode streams individual LLM tokens as they are generated:
+
+```python
+for chunk, metadata in app.stream(
+    {"messages": [("human", "Write a haiku about coding")]},
+    stream_mode="messages",
+):
+    if chunk.content:
+        print(chunk.content, end="", flush=True)
+```
+
+Each `chunk` is a message chunk with a `content` field. The `metadata` dict includes `langgraph_node` to identify which node produced the token.
+
+## Custom Streaming with get_stream_writer()
+
+For sending arbitrary data mid-execution, use `get_stream_writer()`:
+
+```python
+from langgraph.config import get_stream_writer
+
+def research_node(state):
+    writer = get_stream_writer()
+    writer({"status": "searching", "query": "LangGraph streaming"})
+    results = do_research(state)
+    writer({"status": "done", "results_count": len(results)})
+    return {"research": results}
+```
+
+The caller receives these custom events when streaming with `stream_mode="custom"`:
+
+```python
+for event in app.stream(inputs, stream_mode="custom"):
+    print(event)
+```
+
+## Combining Multiple Modes
+
+You can stream multiple modes at once to get both node updates and token-level output:
+
+```python
+for event in app.stream(
+    {"messages": [("human", "Explain recursion")]},
+    stream_mode=["updates", "messages"],
+    version="v2",
+):
+    if event.mode == "messages":
+        chunk, meta = event.data
+        print(chunk.content, end="")
+    elif event.mode == "updates":
+        print(f"\nNode finished: {list(event.data.keys())}")
+```
+
+## Key Takeaways
+
+- LangGraph supports 7 stream modes: `values`, `updates`, `messages`, `custom`, `checkpoints`, `tasks`, and `debug`
+- Use `stream_mode="messages"` for token-by-token LLM output in chat applications
+- `get_stream_writer()` lets you emit custom progress events from inside any node
+- Pass a list of modes and `version="v2"` to receive multiple event types in a single stream
+- Streaming makes long-running graphs feel responsive by delivering partial results immediately

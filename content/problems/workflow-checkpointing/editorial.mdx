@@ -1,0 +1,396 @@
+## Approach
+
+The starter code runs a 5-step pipeline where a simulated failure at step 4 causes the entire pipeline to restart from step 1 on retry. Steps 1-3 are re-executed unnecessarily, wasting both time and LLM tokens. The core problem is the absence of persistent state — when the pipeline fails, all completed work is lost.
+
+The fix adds checkpointing: after each successful step, the pipeline's state (all completed step results) is persisted to durable storage. When a failure occurs and the pipeline is retried, it loads the last checkpoint and resumes from the failed step rather than starting over. This means steps 1-3 are not re-executed on the second attempt — only steps 4 and 5 run, cutting wasted LLM calls to zero.
+
+In LangGraph, checkpointing is built in via the `SqliteSaver` (or `MemorySaver` for in-memory). When you compile a graph with a checkpointer and invoke it with a `thread_id`, every node's output is automatically persisted. Re-invoking with the same `thread_id` resumes from where it left off. In LangChain (without LangGraph), we implement manual checkpointing using SQLite to save step results and skip already-completed steps on retry.
+
+## Solution
+
+### LangGraph
+
+```python
+from langgraph.graph import StateGraph, START, END
+from langgraph.checkpoint.sqlite import SqliteSaver
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage
+from typing import TypedDict, Annotated
+import operator
+import sqlite3
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+
+class PipelineState(TypedDict):
+    data: str
+    results: Annotated[list[str], operator.add]
+    current_step: int
+
+
+STEPS = [
+    "Extract key entities from the data",
+    "Classify the document type",
+    "Summarize the main findings",
+    "Generate recommendations based on findings",
+    "Format the final report",
+]
+
+failure_tracker = {"failed_once": False}
+
+
+def make_step_node(step_index: int):
+    def step_node(state: PipelineState) -> dict:
+        instruction = STEPS[step_index]
+        print(f"  Running step {step_index + 1}: {instruction}")
+
+        if step_index == 3 and not failure_tracker["failed_once"]:
+            failure_tracker["failed_once"] = True
+            raise RuntimeError(f"Step {step_index + 1} failed: API timeout")
+
+        context = "\n".join(state["results"]) if state["results"] else state["data"]
+        response = llm.invoke([
+            SystemMessage(content=f"Step {step_index + 1}: {instruction}"),
+            HumanMessage(content=context),
+        ])
+        return {
+            "results": [f"Step {step_index + 1}: {response.content}"],
+            "current_step": step_index + 1,
+        }
+    step_node.__name__ = f"step_{step_index + 1}"
+    return step_node
+
+
+graph = StateGraph(PipelineState)
+for i in range(len(STEPS)):
+    graph.add_node(f"step_{i + 1}", make_step_node(i))
+
+graph.add_edge(START, "step_1")
+for i in range(len(STEPS) - 1):
+    graph.add_edge(f"step_{i + 1}", f"step_{i + 2}")
+graph.add_edge(f"step_{len(STEPS)}", END)
+
+conn = sqlite3.connect("checkpoints.db", check_same_thread=False)
+checkpointer = SqliteSaver(conn)
+app = graph.compile(checkpointer=checkpointer)
+
+config = {"configurable": {"thread_id": "pipeline-run-1"}}
+input_data = "Q3 2024 sales data shows 15% growth in APAC region with declining margins in Europe."
+
+for attempt in range(2):
+    print(f"\n=== Attempt {attempt + 1} ===")
+    try:
+        result = app.invoke(
+            {"data": input_data, "results": [], "current_step": 0},
+            config=config,
+        )
+        print(f"\nFinal Result:\n{chr(10).join(result['results'])}")
+        break
+    except RuntimeError as e:
+        print(f"  Failed: {e}")
+        print("  State checkpointed — will resume from last successful step.")
+
+conn.close()
+```
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage
+import sqlite3
+import json
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+STEPS = [
+    "Extract key entities from the data",
+    "Classify the document type",
+    "Summarize the main findings",
+    "Generate recommendations based on findings",
+    "Format the final report",
+]
+
+
+class CheckpointStore:
+    def __init__(self, db_path: str = "checkpoints.db"):
+        self.conn = sqlite3.connect(db_path)
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS checkpoints "
+            "(run_id TEXT, step_index INTEGER, result TEXT, "
+            "PRIMARY KEY (run_id, step_index))"
+        )
+        self.conn.commit()
+
+    def save(self, run_id: str, step_index: int, result: str):
+        self.conn.execute(
+            "INSERT OR REPLACE INTO checkpoints VALUES (?, ?, ?)",
+            (run_id, step_index, result),
+        )
+        self.conn.commit()
+
+    def load(self, run_id: str) -> list[tuple[int, str]]:
+        cursor = self.conn.execute(
+            "SELECT step_index, result FROM checkpoints WHERE run_id = ? ORDER BY step_index",
+            (run_id,),
+        )
+        return cursor.fetchall()
+
+    def close(self):
+        self.conn.close()
+
+
+failure_tracker = {"failed_once": False}
+
+
+def run_pipeline(data: str, run_id: str = "run-1") -> str:
+    store = CheckpointStore()
+    completed = store.load(run_id)
+    completed_indices = {idx for idx, _ in completed}
+    results = [result for _, result in completed]
+
+    if completed_indices:
+        print(f"  Restored {len(completed_indices)} steps from checkpoint.")
+
+    for i, step_instruction in enumerate(STEPS):
+        if i in completed_indices:
+            print(f"  Step {i + 1}: {step_instruction} [restored from checkpoint]")
+            continue
+
+        print(f"  Running step {i + 1}: {step_instruction}")
+
+        if i == 3 and not failure_tracker["failed_once"]:
+            failure_tracker["failed_once"] = True
+            store.close()
+            raise RuntimeError(f"Step {i + 1} failed: API timeout")
+
+        context = "\n".join(results) if results else data
+        response = llm.invoke([
+            SystemMessage(content=f"Step {i + 1}: {step_instruction}"),
+            HumanMessage(content=context),
+        ])
+        step_result = f"Step {i + 1}: {response.content}"
+        results.append(step_result)
+        store.save(run_id, i, step_result)
+
+    store.close()
+    return "\n\n".join(results)
+
+
+input_data = "Q3 2024 sales data shows 15% growth in APAC region with declining margins in Europe."
+for attempt in range(2):
+    print(f"\n=== Attempt {attempt + 1} ===")
+    try:
+        result = run_pipeline(input_data)
+        print(f"\nFinal Result:\n{result}")
+        break
+    except RuntimeError as e:
+        print(f"  Failed: {e}")
+        print("  State checkpointed — will resume from last successful step.")
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew, Process
+from langchain_openai import ChatOpenAI
+import sqlite3
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+STEPS = [
+    "Extract key entities from the data",
+    "Classify the document type",
+    "Summarize the main findings",
+    "Generate recommendations based on findings",
+    "Format the final report",
+]
+
+
+class CheckpointStore:
+    def __init__(self, db_path: str = "checkpoints.db"):
+        self.conn = sqlite3.connect(db_path)
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS checkpoints "
+            "(run_id TEXT, step_index INTEGER, result TEXT, "
+            "PRIMARY KEY (run_id, step_index))"
+        )
+        self.conn.commit()
+
+    def save(self, run_id: str, step_index: int, result: str):
+        self.conn.execute(
+            "INSERT OR REPLACE INTO checkpoints VALUES (?, ?, ?)",
+            (run_id, step_index, result),
+        )
+        self.conn.commit()
+
+    def load(self, run_id: str) -> list[tuple[int, str]]:
+        cursor = self.conn.execute(
+            "SELECT step_index, result FROM checkpoints WHERE run_id = ? ORDER BY step_index",
+            (run_id,),
+        )
+        return cursor.fetchall()
+
+    def close(self):
+        self.conn.close()
+
+
+failure_tracker = {"failed_once": False}
+
+
+def run_pipeline(data: str, run_id: str = "run-1") -> str:
+    store = CheckpointStore()
+    completed = store.load(run_id)
+    completed_indices = {idx for idx, _ in completed}
+    results = [result for _, result in completed]
+
+    if completed_indices:
+        print(f"  Restored {len(completed_indices)} steps from checkpoint.")
+
+    for i, step_instruction in enumerate(STEPS):
+        if i in completed_indices:
+            print(f"  Step {i + 1}: {step_instruction} [restored from checkpoint]")
+            continue
+
+        print(f"  Running step {i + 1}: {step_instruction}")
+
+        if i == 3 and not failure_tracker["failed_once"]:
+            failure_tracker["failed_once"] = True
+            store.close()
+            raise RuntimeError(f"Step {i + 1} failed: API timeout")
+
+        agent = Agent(
+            role=f"Step {i + 1} Processor",
+            goal=step_instruction,
+            backstory=f"You handle step {i + 1} of the data processing pipeline.",
+            llm=llm,
+        )
+        context = "\n".join(results) if results else data
+        task = Task(
+            description=f"Process the following data: {context}",
+            expected_output=f"Result of {step_instruction.lower()}",
+            agent=agent,
+        )
+        crew = Crew(agents=[agent], tasks=[task], process=Process.sequential)
+        step_result = f"Step {i + 1}: {str(crew.kickoff())}"
+        results.append(step_result)
+        store.save(run_id, i, step_result)
+
+    store.close()
+    return "\n\n".join(results)
+
+
+input_data = "Q3 2024 sales data shows 15% growth in APAC region with declining margins in Europe."
+for attempt in range(2):
+    print(f"\n=== Attempt {attempt + 1} ===")
+    try:
+        result = run_pipeline(input_data)
+        print(f"\nFinal Result:\n{result}")
+        break
+    except RuntimeError as e:
+        print(f"  Failed: {e}")
+        print("  State checkpointed — will resume from last successful step.")
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+import sqlite3
+
+STEPS = [
+    "Extract key entities from the data",
+    "Classify the document type",
+    "Summarize the main findings",
+    "Generate recommendations based on findings",
+    "Format the final report",
+]
+
+
+class CheckpointStore:
+    def __init__(self, db_path: str = "checkpoints.db"):
+        self.conn = sqlite3.connect(db_path)
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS checkpoints "
+            "(run_id TEXT, step_index INTEGER, result TEXT, "
+            "PRIMARY KEY (run_id, step_index))"
+        )
+        self.conn.commit()
+
+    def save(self, run_id: str, step_index: int, result: str):
+        self.conn.execute(
+            "INSERT OR REPLACE INTO checkpoints VALUES (?, ?, ?)",
+            (run_id, step_index, result),
+        )
+        self.conn.commit()
+
+    def load(self, run_id: str) -> list[tuple[int, str]]:
+        cursor = self.conn.execute(
+            "SELECT step_index, result FROM checkpoints WHERE run_id = ? ORDER BY step_index",
+            (run_id,),
+        )
+        return cursor.fetchall()
+
+    def close(self):
+        self.conn.close()
+
+
+failure_tracker = {"failed_once": False}
+
+
+def run_pipeline(data: str, run_id: str = "run-1") -> str:
+    store = CheckpointStore()
+    completed = store.load(run_id)
+    completed_indices = {idx for idx, _ in completed}
+    results = [result for _, result in completed]
+
+    if completed_indices:
+        print(f"  Restored {len(completed_indices)} steps from checkpoint.")
+
+    for i, step_instruction in enumerate(STEPS):
+        if i in completed_indices:
+            print(f"  Step {i + 1}: {step_instruction} [restored from checkpoint]")
+            continue
+
+        print(f"  Running step {i + 1}: {step_instruction}")
+
+        if i == 3 and not failure_tracker["failed_once"]:
+            failure_tracker["failed_once"] = True
+            store.close()
+            raise RuntimeError(f"Step {i + 1} failed: API timeout")
+
+        context = "\n".join(results) if results else data
+        agent = Agent(
+            name=f"Step {i + 1} Processor",
+            instructions=f"Step {i + 1}: {step_instruction}",
+        )
+        result = Runner.run_sync(agent, context)
+        step_result = f"Step {i + 1}: {result.final_output}"
+        results.append(step_result)
+        store.save(run_id, i, step_result)
+
+    store.close()
+    return "\n\n".join(results)
+
+
+input_data = "Q3 2024 sales data shows 15% growth in APAC region with declining margins in Europe."
+for attempt in range(2):
+    print(f"\n=== Attempt {attempt + 1} ===")
+    try:
+        result = run_pipeline(input_data)
+        print(f"\nFinal Result:\n{result}")
+        break
+    except RuntimeError as e:
+        print(f"  Failed: {e}")
+        print("  State checkpointed — will resume from last successful step.")
+```
+
+## Why This Works
+
+Checkpointing converts a fragile all-or-nothing pipeline into a resumable workflow. In the LangGraph solution, the `SqliteSaver` automatically persists the full graph state (including accumulated results) after each node completes. When the graph is re-invoked with the same `thread_id`, it detects the existing checkpoint and resumes from the last successful node rather than re-executing from the start. In the LangChain solution, the manual `CheckpointStore` achieves the same by recording each step's result in SQLite and skipping already-completed steps on retry. Both approaches use persistent storage (SQLite) rather than in-memory state, so checkpoints survive process restarts. The final output from a resumed run is identical to what an uninterrupted run would produce because each step uses the same accumulated context.
+
+## Key Takeaways
+
+- Any multi-step LLM pipeline that can fail mid-execution needs checkpointing — re-running completed steps wastes tokens and time.
+- Use persistent storage (SQLite, file system, cloud storage) for checkpoints, not in-memory state, so they survive process crashes and restarts.
+- LangGraph's built-in checkpointer (`SqliteSaver`) handles all of this automatically when you compile with a checkpointer and use consistent `thread_id` values.

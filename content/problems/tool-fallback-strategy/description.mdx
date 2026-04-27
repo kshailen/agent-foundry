@@ -1,0 +1,37 @@
+## The Problem
+
+Your research assistant agent uses a `primary_search` tool to find information. However, this tool is unreliable — it intermittently throws `ConnectionError` exceptions. When it fails, the agent crashes and the user gets no results. A `backup_search` tool exists in the codebase but is never used. Your job is to **implement a fallback strategy** so the agent automatically tries `backup_search` when `primary_search` fails, ensuring the user always gets results.
+
+## Examples
+
+### Example 1
+
+**User input:** Find recent research on transformer architectures
+
+**Current (bad) output:** Half the time, the agent crashes with `ConnectionError: Primary search service is temporarily unavailable` and returns nothing.
+
+**Expected (good) output:** If `primary_search` fails, the agent seamlessly falls back to `backup_search` and responds: *I found these results from the backup search: Blog post about transformer architectures, Wikipedia article on transformer architectures.*
+
+### Example 2
+
+**User input:** What are the latest developments in quantum computing?
+
+**Current (bad) output:** When the primary search works, results are fine. When it doesn't, the user sees an error traceback.
+
+**Expected (good) output:** The agent tries primary search first. If it succeeds, those results are used. If it fails, backup search results are returned instead — the user never sees an error.
+
+## Your Task
+
+- Add fallback logic so `backup_search` is called automatically when `primary_search` fails.
+- Ensure the primary search is always attempted first.
+- The fallback should only trigger on actual failures, not on every request.
+- The agent should never expose raw error messages to the user.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Primary search is tried first:** The agent always attempts the primary tool before falling back.
+- **Fallback triggers on failure:** When the primary search fails, the backup is automatically called.
+- **Agent never crashes:** Primary search failures are handled gracefully — the user always gets a result.
+- **No unnecessary double calls:** The backup is only invoked when the primary actually fails.

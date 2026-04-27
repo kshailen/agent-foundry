@@ -1,0 +1,266 @@
+# Project: Customer Support System
+
+Build a multi-agent customer support system where specialized subgraphs handle billing, shipping, and returns. A router directs customer queries to the right department using conditional edges, persistent state tracks conversation history across turns, and a human-in-the-loop approval gate protects high-value actions like refunds.
+
+## Architecture
+
+The system has four components:
+
+1. **Router** — classifies the customer query and routes to the appropriate department
+2. **Billing Subgraph** — handles invoices, payment issues, and subscription changes
+3. **Shipping Subgraph** — handles tracking, delivery updates, and address changes
+4. **Returns Subgraph** — handles return requests and refund approvals (with human-in-the-loop)
+
+## State Definitions
+
+```python
+from typing import TypedDict, Annotated, Literal
+from langgraph.graph import add_messages
+
+class SupportState(TypedDict):
+    messages: Annotated[list, add_messages]
+    department: str
+    customer_id: str
+    resolution: str
+    requires_approval: bool
+
+class BillingState(TypedDict):
+    messages: Annotated[list, add_messages]
+    customer_id: str
+    resolution: str
+
+class ShippingState(TypedDict):
+    messages: Annotated[list, add_messages]
+    customer_id: str
+    resolution: str
+
+class ReturnsState(TypedDict):
+    messages: Annotated[list, add_messages]
+    customer_id: str
+    resolution: str
+    refund_amount: float
+    requires_approval: bool
+```
+
+## Department Subgraphs
+
+### Billing Subgraph
+
+```python
+from langgraph.graph import StateGraph, START, END
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+def billing_agent(state: BillingState) -> dict:
+    response = llm.invoke([
+        ("system",
+         "You are a billing support agent. Help with invoices, payments, and subscriptions. "
+         "Provide a clear resolution."),
+        *state["messages"],
+    ])
+    return {
+        "messages": [response],
+        "resolution": response.content,
+    }
+
+billing_graph = StateGraph(BillingState)
+billing_graph.add_node("agent", billing_agent)
+billing_graph.add_edge(START, "agent")
+billing_graph.add_edge("agent", END)
+billing_app = billing_graph.compile()
+```
+
+### Shipping Subgraph
+
+```python
+def shipping_agent(state: ShippingState) -> dict:
+    response = llm.invoke([
+        ("system",
+         "You are a shipping support agent. Help with tracking, delivery status, "
+         "and address changes. Provide a clear resolution."),
+        *state["messages"],
+    ])
+    return {
+        "messages": [response],
+        "resolution": response.content,
+    }
+
+shipping_graph = StateGraph(ShippingState)
+shipping_graph.add_node("agent", shipping_agent)
+shipping_graph.add_edge(START, "agent")
+shipping_graph.add_edge("agent", END)
+shipping_app = shipping_graph.compile()
+```
+
+### Returns Subgraph with Human Approval
+
+```python
+from langgraph.graph import StateGraph, START, END
+
+def returns_agent(state: ReturnsState) -> dict:
+    response = llm.invoke([
+        ("system",
+         "You are a returns support agent. Process return requests. "
+         "If the customer requests a refund, set requires_approval to true "
+         "and estimate the refund amount. Provide a clear resolution."),
+        *state["messages"],
+    ])
+    needs_approval = any(
+        word in response.content.lower()
+        for word in ["refund", "credit", "reimburse"]
+    )
+    return {
+        "messages": [response],
+        "resolution": response.content,
+        "requires_approval": needs_approval,
+        "refund_amount": 50.00 if needs_approval else 0.0,
+    }
+
+def check_approval(state: ReturnsState) -> str:
+    if state.get("requires_approval"):
+        return "approval_gate"
+    return "end"
+
+def approval_gate(state: ReturnsState) -> dict:
+    return {
+        "resolution": (
+            f"PENDING HUMAN APPROVAL: Refund of ${state['refund_amount']:.2f} "
+            f"for customer {state['customer_id']}. "
+            f"Original resolution: {state['resolution']}"
+        ),
+    }
+
+returns_graph = StateGraph(ReturnsState)
+returns_graph.add_node("agent", returns_agent)
+returns_graph.add_node("approval_gate", approval_gate)
+returns_graph.add_edge(START, "agent")
+returns_graph.add_conditional_edges("agent", check_approval, {
+    "approval_gate": "approval_gate",
+    "end": END,
+})
+returns_graph.add_edge("approval_gate", END)
+returns_app = returns_graph.compile()
+```
+
+## Router
+
+The router classifies queries and dispatches to the correct department:
+
+```python
+def classify_department(state: SupportState) -> dict:
+    response = llm.invoke([
+        ("system",
+         "Classify the customer query into exactly one department: "
+         "billing, shipping, or returns. Respond with only the department name."),
+        *state["messages"],
+    ])
+    department = response.content.strip().lower()
+    if department not in ("billing", "shipping", "returns"):
+        department = "billing"
+    return {"department": department}
+
+def route_to_department(state: SupportState) -> str:
+    return state["department"]
+```
+
+## Invoking Subgraphs from Parent Nodes
+
+Each department node calls its subgraph and maps the result back:
+
+```python
+def handle_billing(state: SupportState) -> dict:
+    result = billing_app.invoke({
+        "messages": state["messages"],
+        "customer_id": state["customer_id"],
+    })
+    return {
+        "messages": result["messages"],
+        "resolution": result["resolution"],
+    }
+
+def handle_shipping(state: SupportState) -> dict:
+    result = shipping_app.invoke({
+        "messages": state["messages"],
+        "customer_id": state["customer_id"],
+    })
+    return {
+        "messages": result["messages"],
+        "resolution": result["resolution"],
+    }
+
+def handle_returns(state: SupportState) -> dict:
+    result = returns_app.invoke({
+        "messages": state["messages"],
+        "customer_id": state["customer_id"],
+    })
+    return {
+        "messages": result["messages"],
+        "resolution": result["resolution"],
+        "requires_approval": result.get("requires_approval", False),
+    }
+```
+
+## Assembling the Parent Graph
+
+```python
+from langgraph.checkpoint.memory import MemorySaver
+
+graph = StateGraph(SupportState)
+
+graph.add_node("classify", classify_department)
+graph.add_node("billing", handle_billing)
+graph.add_node("shipping", handle_shipping)
+graph.add_node("returns", handle_returns)
+
+graph.add_edge(START, "classify")
+graph.add_conditional_edges("classify", route_to_department, {
+    "billing": "billing",
+    "shipping": "shipping",
+    "returns": "returns",
+})
+graph.add_edge("billing", END)
+graph.add_edge("shipping", END)
+graph.add_edge("returns", END)
+
+checkpointer = MemorySaver()
+app = graph.compile(checkpointer=checkpointer)
+```
+
+## Running the System
+
+```python
+config = {"configurable": {"thread_id": "customer-001"}}
+
+result = app.invoke(
+    {
+        "messages": [("human", "I was charged twice for my subscription last month")],
+        "customer_id": "CUST-12345",
+    },
+    config=config,
+)
+
+print(f"Department: {result['department']}")
+print(f"Resolution: {result['resolution']}")
+
+result2 = app.invoke(
+    {
+        "messages": [("human", "I want to return a damaged item and get a refund")],
+        "customer_id": "CUST-12345",
+    },
+    config=config,
+)
+
+print(f"\nDepartment: {result2['department']}")
+print(f"Resolution: {result2['resolution']}")
+print(f"Requires approval: {result2.get('requires_approval')}")
+```
+
+## Key Takeaways
+
+- Each department is a self-contained subgraph with its own state schema and logic
+- The router classifies queries using an LLM and dispatches via conditional edges
+- Subgraphs are called inside parent nodes (Pattern 1) since they have different state schemas
+- Human-in-the-loop approval gates protect high-value actions like refunds
+- `MemorySaver` (or `PostgresSaver` in production) enables persistent conversation history across turns
+- The pattern scales by adding new department subgraphs without modifying existing ones

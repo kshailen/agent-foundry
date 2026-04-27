@@ -1,0 +1,335 @@
+## Approach
+
+The starter code has a functional RAG pipeline but no way to measure answer quality. Without evaluation metrics, every change to the retriever, prompt, or model is a guess. You cannot tell whether the retrieved documents are relevant, whether the answer is faithful to the context, or whether the answer fully addresses the question.
+
+The fix is to add an automated evaluation layer that measures three metrics using an LLM-as-judge approach. Retrieval relevance scores how well the retrieved documents match the question. Answer faithfulness scores whether every claim in the answer is supported by the retrieved context (catching hallucination). Answer completeness scores whether the answer addresses all parts of the question. Each metric produces a float between 0 and 1 for quantitative comparison across pipeline configurations.
+
+## Solution
+
+### LangChain
+
+```python
+import json
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="The platform supports Python, JavaScript, and Go SDKs."),
+    Document(page_content="Rate limits are 1000 req/min for free tier, 10000 req/min for enterprise."),
+    Document(page_content="Authentication requires an API key passed in the X-API-Key header."),
+    Document(page_content="Webhooks can be configured in the dashboard under Settings > Integrations."),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+retriever = vectorstore.as_retriever()
+
+answer_prompt = ChatPromptTemplate.from_messages([
+    ("system", "Answer the question based on the context.\n\nContext:\n{context}"),
+    ("human", "{question}"),
+])
+
+def evaluate_relevance(question: str, context: str) -> float:
+    response = llm.invoke(
+        f"Rate how relevant the following context is to the question on a scale of 0.0 to 1.0. "
+        f"Return ONLY a decimal number.\n\n"
+        f"Question: {question}\n\nContext:\n{context}"
+    )
+    return float(response.content.strip())
+
+def evaluate_faithfulness(answer: str, context: str) -> float:
+    response = llm.invoke(
+        f"Rate whether every claim in the answer is supported by the context, "
+        f"on a scale of 0.0 to 1.0. 1.0 means fully faithful with no hallucination. "
+        f"Return ONLY a decimal number.\n\n"
+        f"Context:\n{context}\n\nAnswer: {answer}"
+    )
+    return float(response.content.strip())
+
+def evaluate_completeness(question: str, answer: str) -> float:
+    response = llm.invoke(
+        f"Rate whether the answer addresses ALL parts of the question, "
+        f"on a scale of 0.0 to 1.0. 1.0 means completely addressed. "
+        f"Return ONLY a decimal number.\n\n"
+        f"Question: {question}\n\nAnswer: {answer}"
+    )
+    return float(response.content.strip())
+
+def ask_with_eval(question: str) -> dict:
+    docs = retriever.invoke(question)
+    context = "\n".join([doc.page_content for doc in docs])
+
+    answer_chain = answer_prompt | llm
+    result = answer_chain.invoke({"context": context, "question": question})
+    answer = result.content
+
+    relevance = evaluate_relevance(question, context)
+    faithfulness = evaluate_faithfulness(answer, context)
+    completeness = evaluate_completeness(question, answer)
+
+    return {
+        "answer": answer,
+        "evaluation": {
+            "retrieval_relevance": relevance,
+            "answer_faithfulness": faithfulness,
+            "answer_completeness": completeness,
+        },
+    }
+
+result = ask_with_eval("What SDKs are available and what are the rate limits?")
+print(f"Answer: {result['answer']}")
+print(f"Evaluation: {json.dumps(result['evaluation'], indent=2)}")
+```
+
+### LangGraph
+
+```python
+import json
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="The platform supports Python, JavaScript, and Go SDKs."),
+    Document(page_content="Rate limits are 1000 req/min for free tier, 10000 req/min for enterprise."),
+    Document(page_content="Authentication requires an API key passed in the X-API-Key header."),
+    Document(page_content="Webhooks can be configured in the dashboard under Settings > Integrations."),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+retriever = vectorstore.as_retriever()
+
+class State(TypedDict):
+    question: str
+    context: str
+    answer: str
+    retrieval_relevance: float
+    answer_faithfulness: float
+    answer_completeness: float
+
+def retrieve(state: State) -> State:
+    docs = retriever.invoke(state["question"])
+    context = "\n".join([doc.page_content for doc in docs])
+    return {"context": context}
+
+def answer(state: State) -> State:
+    response = llm.invoke(
+        f"Answer the question based on the context.\n\n"
+        f"Context:\n{state['context']}\n\nQuestion: {state['question']}"
+    )
+    return {"answer": response.content}
+
+def evaluate(state: State) -> State:
+    relevance_resp = llm.invoke(
+        f"Rate how relevant the context is to the question (0.0 to 1.0). "
+        f"Return ONLY a decimal number.\n\n"
+        f"Question: {state['question']}\n\nContext:\n{state['context']}"
+    )
+
+    faithfulness_resp = llm.invoke(
+        f"Rate whether every claim in the answer is supported by the context "
+        f"(0.0 to 1.0). Return ONLY a decimal number.\n\n"
+        f"Context:\n{state['context']}\n\nAnswer: {state['answer']}"
+    )
+
+    completeness_resp = llm.invoke(
+        f"Rate whether the answer addresses ALL parts of the question "
+        f"(0.0 to 1.0). Return ONLY a decimal number.\n\n"
+        f"Question: {state['question']}\n\nAnswer: {state['answer']}"
+    )
+
+    return {
+        "retrieval_relevance": float(relevance_resp.content.strip()),
+        "answer_faithfulness": float(faithfulness_resp.content.strip()),
+        "answer_completeness": float(completeness_resp.content.strip()),
+    }
+
+graph = StateGraph(State)
+graph.add_node("retrieve", retrieve)
+graph.add_node("answer", answer)
+graph.add_node("evaluate", evaluate)
+graph.add_edge(START, "retrieve")
+graph.add_edge("retrieve", "answer")
+graph.add_edge("answer", "evaluate")
+graph.add_edge("evaluate", END)
+
+app = graph.compile()
+result = app.invoke({"question": "What SDKs are available and what are the rate limits?"})
+print(f"Answer: {result['answer']}")
+print(f"Retrieval Relevance: {result['retrieval_relevance']}")
+print(f"Answer Faithfulness: {result['answer_faithfulness']}")
+print(f"Answer Completeness: {result['answer_completeness']}")
+```
+
+### CrewAI
+
+```python
+import json
+from crewai import Agent, Task, Crew
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="The platform supports Python, JavaScript, and Go SDKs."),
+    Document(page_content="Rate limits are 1000 req/min for free tier, 10000 req/min for enterprise."),
+    Document(page_content="Authentication requires an API key passed in the X-API-Key header."),
+    Document(page_content="Webhooks can be configured in the dashboard under Settings > Integrations."),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+retriever = vectorstore.as_retriever()
+
+answerer = Agent(
+    role="Q&A Assistant",
+    goal="Answer questions accurately based on provided context",
+    backstory="You answer questions using only the provided context.",
+)
+
+relevance_judge = Agent(
+    role="Relevance Judge",
+    goal="Rate retrieval relevance on a scale of 0.0 to 1.0",
+    backstory="You evaluate how relevant retrieved documents are to a question. Return ONLY a decimal number.",
+)
+
+faithfulness_judge = Agent(
+    role="Faithfulness Judge",
+    goal="Rate answer faithfulness on a scale of 0.0 to 1.0",
+    backstory="You evaluate whether every claim in an answer is supported by the context. Return ONLY a decimal number.",
+)
+
+completeness_judge = Agent(
+    role="Completeness Judge",
+    goal="Rate answer completeness on a scale of 0.0 to 1.0",
+    backstory="You evaluate whether an answer addresses all parts of a question. Return ONLY a decimal number.",
+)
+
+def ask_with_eval(question: str) -> dict:
+    docs = retriever.invoke(question)
+    context = "\n".join([doc.page_content for doc in docs])
+
+    answer_task = Task(
+        description=f"Answer this question based on the context.\n\nContext:\n{context}\n\nQuestion: {question}",
+        expected_output="A helpful answer based on the context",
+        agent=answerer,
+    )
+    answer_crew = Crew(agents=[answerer], tasks=[answer_task])
+    answer = str(answer_crew.kickoff())
+
+    rel_task = Task(
+        description=f"Rate how relevant the context is to the question (0.0 to 1.0). Return ONLY a decimal number.\n\nQuestion: {question}\n\nContext:\n{context}",
+        expected_output="A decimal number between 0.0 and 1.0",
+        agent=relevance_judge,
+    )
+    faith_task = Task(
+        description=f"Rate whether every claim in the answer is supported by the context (0.0 to 1.0). Return ONLY a decimal number.\n\nContext:\n{context}\n\nAnswer: {answer}",
+        expected_output="A decimal number between 0.0 and 1.0",
+        agent=faithfulness_judge,
+    )
+    comp_task = Task(
+        description=f"Rate whether the answer addresses ALL parts of the question (0.0 to 1.0). Return ONLY a decimal number.\n\nQuestion: {question}\n\nAnswer: {answer}",
+        expected_output="A decimal number between 0.0 and 1.0",
+        agent=completeness_judge,
+    )
+
+    eval_crew = Crew(agents=[relevance_judge, faithfulness_judge, completeness_judge], tasks=[rel_task, faith_task, comp_task])
+    eval_crew.kickoff()
+
+    return {
+        "answer": answer,
+        "evaluation": {
+            "retrieval_relevance": float(rel_task.output.raw.strip()),
+            "answer_faithfulness": float(faith_task.output.raw.strip()),
+            "answer_completeness": float(comp_task.output.raw.strip()),
+        },
+    }
+
+result = ask_with_eval("What SDKs are available and what are the rate limits?")
+print(f"Answer: {result['answer']}")
+print(f"Evaluation: {json.dumps(result['evaluation'], indent=2)}")
+```
+
+### OpenAI Agents SDK
+
+```python
+import json
+from agents import Agent, Runner
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="The platform supports Python, JavaScript, and Go SDKs."),
+    Document(page_content="Rate limits are 1000 req/min for free tier, 10000 req/min for enterprise."),
+    Document(page_content="Authentication requires an API key passed in the X-API-Key header."),
+    Document(page_content="Webhooks can be configured in the dashboard under Settings > Integrations."),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+retriever = vectorstore.as_retriever()
+
+def ask_with_eval(question: str) -> dict:
+    docs = retriever.invoke(question)
+    context = "\n".join([doc.page_content for doc in docs])
+
+    answer_agent = Agent(
+        name="Q&A Assistant",
+        instructions=f"Answer the question based on this context:\n{context}",
+    )
+    answer_result = Runner.run_sync(answer_agent, question)
+    answer = answer_result.final_output
+
+    relevance_agent = Agent(
+        name="Relevance Judge",
+        instructions="Rate how relevant the context is to the question on a scale of 0.0 to 1.0. Return ONLY a decimal number.",
+    )
+    relevance = Runner.run_sync(relevance_agent, f"Question: {question}\n\nContext:\n{context}")
+
+    faithfulness_agent = Agent(
+        name="Faithfulness Judge",
+        instructions="Rate whether every claim in the answer is supported by the context (0.0 to 1.0). 1.0 means fully faithful. Return ONLY a decimal number.",
+    )
+    faithfulness = Runner.run_sync(faithfulness_agent, f"Context:\n{context}\n\nAnswer: {answer}")
+
+    completeness_agent = Agent(
+        name="Completeness Judge",
+        instructions="Rate whether the answer addresses ALL parts of the question (0.0 to 1.0). Return ONLY a decimal number.",
+    )
+    completeness = Runner.run_sync(completeness_agent, f"Question: {question}\n\nAnswer: {answer}")
+
+    return {
+        "answer": answer,
+        "evaluation": {
+            "retrieval_relevance": float(relevance.final_output.strip()),
+            "answer_faithfulness": float(faithfulness.final_output.strip()),
+            "answer_completeness": float(completeness.final_output.strip()),
+        },
+    }
+
+result = ask_with_eval("What SDKs are available and what are the rate limits?")
+print(f"Answer: {result['answer']}")
+print(f"Evaluation: {json.dumps(result['evaluation'], indent=2)}")
+```
+
+## Why This Works
+
+The LLM-as-judge approach provides automated scoring without requiring labeled evaluation datasets. Each metric targets a different failure mode: retrieval relevance catches bad retriever behavior, faithfulness catches hallucination, and completeness catches partial answers. The numeric 0-1 scores enable quantitative comparison across different pipeline configurations, making it easy to measure the impact of changes to the retriever, prompt, or model.
+
+## Key Takeaways
+
+- Without evaluation metrics, RAG pipeline improvements are guesswork — you need automated scoring to measure impact.
+- Three key metrics cover the major failure modes: retrieval relevance, answer faithfulness, and answer completeness.
+- LLM-as-judge is a practical approach for automated evaluation when labeled test sets are unavailable.

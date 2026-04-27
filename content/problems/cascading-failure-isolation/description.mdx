@@ -1,0 +1,55 @@
+## The Problem
+
+You have a multi-agent pipeline for generating research reports: a researcher, an analyst, a visualization agent, and a report writer. They run in sequence, each building on the previous agent's output. When the analysis agent crashes (bad model load, OOM, API error), the entire pipeline dies — the user gets nothing, even though the research, visualization, and report agents are perfectly healthy. There is **no error isolation between agents**, so one crash cascades through the whole system. Your job is to isolate each agent in its own error boundary so that crashes are contained, surviving agents continue, and the user gets partial results.
+
+## Examples
+
+### Example 1
+
+**User input:** Generate a report on AI trends for 2025
+
+**Current (bad) output:** `RuntimeError: Analysis model failed to load` — the entire pipeline crashes. Research results are lost. No report is generated.
+
+**Expected (good) output:**
+```
+Report on AI trends for 2025:
+
+Research: [detailed findings on AI trends]
+Analysis: ⚠️ Unavailable (analysis agent encountered an error: Analysis model failed to load)
+Visualizations: Charts generated for AI trends
+Conclusion: Report compiled from available data. Note: analysis section is missing due to a processing error.
+```
+
+### Example 2
+
+**User input:** Analyze market trends for Q4
+
+**Current (bad) output:** Pipeline crash — no output at all.
+
+**Expected (good) output:** Research and visualization results are returned. The analysis failure is noted. The report agent compiles what's available.
+
+### Example 3
+
+**User input:** Summarize climate change data *(all agents healthy)*
+
+**Current (bad) output:** *(Works fine when no agent crashes.)*
+
+**Expected (good) output:** Full report with all four sections populated. No error notes needed.
+
+## Your Task
+
+Implement **cascading failure isolation** so the pipeline:
+
+- Wraps each agent in its own error boundary (try/except or equivalent).
+- Allows healthy agents to continue running even when one crashes.
+- Aggregates results from all successful agents into the final output.
+- Clearly reports which agent(s) failed and what error occurred.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Failure is isolated to one agent:** A crash in one agent doesn't take down others.
+- **Other agents continue running:** Healthy agents execute and produce output normally.
+- **Partial results returned:** The final output includes everything that succeeded.
+- **Failed agent is reported:** The output notes which agent failed and why.

@@ -1,0 +1,46 @@
+## The Problem
+
+You have two agents: a **general assistant** and a **translator**. They were built independently and currently run in isolation. When a user asks the assistant to translate something, it attempts the translation itself (often poorly) instead of delegating to the specialized translator agent. Your task is to **wire the translator agent as a tool** that the main agent can call whenever it detects a translation request, while still answering non-translation questions directly.
+
+## Examples
+
+### Example 1
+
+**User input:** Translate "Hello, how are you?" to French.
+
+**Current (bad) output:** The main agent attempts the translation on its own, producing inconsistent or lower-quality results because it is not specialized for translation.
+
+**Expected (good) output:** The main agent recognizes a translation request, calls the translator agent-tool with the text and target language, and returns the translator's high-quality output: *Bonjour, comment allez-vous ?*
+
+### Example 2
+
+**User input:** What is the capital of Japan?
+
+**Current (bad) output:** Same as expected — the main agent answers directly. (This should continue to work correctly.)
+
+**Expected (good) output:** The main agent answers *Tokyo* directly without involving the translator.
+
+### Example 3
+
+**User input:** How do you say "thank you" in German?
+
+**Current (bad) output:** The main agent guesses without using the translator.
+
+**Expected (good) output:** The main agent calls the translator tool and returns the accurate translation: *Danke*.
+
+## Your Task
+
+Refactor the starter code so that:
+
+- The **translator agent** is wrapped as a **tool** available to the main agent.
+- The **main agent** can decide when to call the translator tool based on the user's request.
+- Non-translation queries are handled directly by the main agent without invoking the translator.
+- The translator remains a standalone agent (not reduced to a simple function).
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Translator wired as a tool:** The translator agent is callable as a tool from within the main agent.
+- **Main agent delegates translation:** The main agent recognizes translation requests and invokes the translator tool.
+- **Non-translation queries still work:** Regular questions are answered directly without invoking the translator.

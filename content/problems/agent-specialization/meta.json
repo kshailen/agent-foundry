@@ -1,0 +1,51 @@
+{
+  "number": 81,
+  "title": "Agent Specialization",
+  "difficulty": "medium",
+  "categories": [
+    "multi-agent"
+  ],
+  "frameworks": [
+    "crewai",
+    "openai-agents-sdk",
+    "langgraph"
+  ],
+  "constraints": [
+    "You must have exactly three specialist agents: data, code, and writing",
+    "A router must classify each query and send it to the correct specialist",
+    "Each specialist must only handle queries in its domain",
+    "The generalist agent must be removed or replaced by the router"
+  ],
+  "hints": [
+    "Give each specialist a tightly scoped system prompt that rejects out-of-domain queries",
+    "The router can be a lightweight agent or a classification function",
+    "In OpenAI Agents SDK, use handoffs to route between specialists"
+  ],
+  "starterCode": {
+    "crewai": "from crewai import Agent, Task, Crew, Process\nfrom crewai import LLM\n\nllm = LLM(model=\"gpt-4o-mini\")\n\n# BUG: One generalist agent handles all query types poorly\n# TODO: Replace with 3 specialists (data, code, writing) and a router\ngeneralist = Agent(\n    role=\"General Assistant\",\n    goal=\"Help with any task including data analysis, coding, and writing\",\n    backstory=\"You are a jack-of-all-trades assistant.\",\n    llm=llm,\n)\n\ntask = Task(\n    description=\"{query}\",\n    expected_output=\"A helpful response\",\n    agent=generalist,\n)\n\ncrew = Crew(\n    agents=[generalist],\n    tasks=[task],\n    process=Process.sequential,\n)\n\n# Test different query types\nresult = crew.kickoff(inputs={\"query\": \"Analyze the correlation between columns A and B in my dataset\"})\nprint(result)\n\nresult = crew.kickoff(inputs={\"query\": \"Write a Python function to merge two sorted lists\"})\nprint(result)\n\nresult = crew.kickoff(inputs={\"query\": \"Draft a professional email declining a meeting invitation\"})\nprint(result)",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\n# BUG: One generalist agent handles all query types poorly\n# TODO: Replace with 3 specialists (data, code, writing) and a router\ngeneralist = Agent(\n    name=\"General Assistant\",\n    instructions=\"You are a jack-of-all-trades assistant. Help with data analysis, coding, and writing tasks.\",\n)\n\n# Test different query types\nresult = Runner.run_sync(generalist, \"Analyze the correlation between columns A and B in my dataset\")\nprint(result.final_output)\n\nresult = Runner.run_sync(generalist, \"Write a Python function to merge two sorted lists\")\nprint(result.final_output)\n\nresult = Runner.run_sync(generalist, \"Draft a professional email declining a meeting invitation\")\nprint(result.final_output)",
+    "langgraph": "from typing import TypedDict, Literal\nfrom langgraph.graph import StateGraph, START, END\nfrom langchain_openai import ChatOpenAI\nfrom langchain_core.messages import SystemMessage, HumanMessage\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\nclass State(TypedDict):\n    query: str\n    category: str\n    response: str\n\n# BUG: One generalist node handles all query types poorly\n# TODO: Replace with 3 specialist nodes and a router\ndef generalist(state: State) -> State:\n    messages = [\n        SystemMessage(content=\"You are a jack-of-all-trades assistant.\"),\n        HumanMessage(content=state[\"query\"]),\n    ]\n    result = llm.invoke(messages)\n    return {\"response\": result.content}\n\ngraph = StateGraph(State)\ngraph.add_node(\"generalist\", generalist)\ngraph.add_edge(START, \"generalist\")\ngraph.add_edge(\"generalist\", END)\napp = graph.compile()\n\nresult = app.invoke({\"query\": \"Analyze the correlation between columns A and B\"})\nprint(result[\"response\"])\n\nresult = app.invoke({\"query\": \"Write a Python function to merge two sorted lists\"})\nprint(result[\"response\"])\n\nresult = app.invoke({\"query\": \"Draft a professional email declining a meeting\"})\nprint(result[\"response\"])"
+  },
+  "colabUrls": {
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/agent-specialization-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/agent-specialization-openai.ipynb",
+    "langgraph": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/agent-specialization-langgraph.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "three-specialists",
+      "label": "Three specialist agents exist",
+      "description": "There are exactly three specialist agents for data analysis, coding, and writing"
+    },
+    {
+      "id": "router-classifies",
+      "label": "Router classifies queries",
+      "description": "A router correctly identifies the query type and directs it to the right specialist"
+    },
+    {
+      "id": "domain-isolation",
+      "label": "Specialists stay in domain",
+      "description": "Each specialist only handles queries within its area of expertise"
+    }
+  ]
+}

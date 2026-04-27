@@ -1,0 +1,249 @@
+## Approach
+
+The bug is that all agents share a single global memory list. The Researcher's private internal notes — including sensitive data like PII — are visible to the Writer. The Writer's editing notes clutter the Researcher's context. There is no boundary between what is private to an agent and what is shared for collaboration.
+
+The fix introduces scoped memory with three namespaces: a private scope per agent and a shared scope for cross-agent communication. Each agent reads only from its own private scope and the shared scope. To share information with other agents, an agent must explicitly publish to the shared scope. Private notes, internal working data, and sensitive information stay in the private scope and are never leaked.
+
+The implementation uses a `ScopedMemory` class backed by a dictionary of lists, keyed by namespace (e.g., `"researcher_private"`, `"writer_private"`, `"shared"`). Helper methods `write_private()`, `write_shared()`, and `read_context()` enforce the scope boundaries. Each entry is tagged with the agent name that wrote it.
+
+## Solution
+
+### LangGraph
+
+```python
+from langchain_openai import ChatOpenAI
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict
+from langchain_core.messages import HumanMessage, SystemMessage
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+class ScopedMemory:
+    def __init__(self):
+        self._scopes = {}
+
+    def write_private(self, agent_name: str, entry: str):
+        key = f"{agent_name}_private"
+        self._scopes.setdefault(key, []).append(f"[{agent_name}] {entry}")
+
+    def write_shared(self, agent_name: str, entry: str):
+        self._scopes.setdefault("shared", []).append(f"[{agent_name}] {entry}")
+
+    def read_context(self, agent_name: str) -> str:
+        private_key = f"{agent_name}_private"
+        private = self._scopes.get(private_key, [])
+        shared = self._scopes.get("shared", [])
+        lines = []
+        if private:
+            lines.append("=== Your Private Notes ===")
+            lines.extend(private)
+        if shared:
+            lines.append("=== Shared Notes ===")
+            lines.extend(shared)
+        return "\n".join(lines)
+
+memory = ScopedMemory()
+
+class State(TypedDict):
+    task: str
+    result: str
+
+def researcher(state: State) -> State:
+    memory.write_private("Researcher", "Raw data contains PII: user SSN 123-45-6789")
+    memory.write_shared("Researcher", "Found 3 relevant articles about AI safety.")
+    context = memory.read_context("Researcher")
+    messages = [
+        SystemMessage(content=f"You are a researcher. Memory:\n{context}"),
+        HumanMessage(content=state["task"]),
+    ]
+    response = llm.invoke(messages)
+    return {"result": response.content}
+
+def writer(state: State) -> State:
+    memory.write_private("Writer", "Draft has grammatical issues, fixing...")
+    memory.write_shared("Writer", "Completed first draft of the report.")
+    context = memory.read_context("Writer")
+    messages = [
+        SystemMessage(content=f"You are a writer. Memory:\n{context}"),
+        HumanMessage(content=f"Write a report based on: {state['result']}"),
+    ]
+    response = llm.invoke(messages)
+    return {"result": response.content}
+
+graph = StateGraph(State)
+graph.add_node("researcher", researcher)
+graph.add_node("writer", writer)
+graph.add_edge(START, "researcher")
+graph.add_edge("researcher", "writer")
+graph.add_edge("writer", END)
+app = graph.compile()
+
+result = app.invoke({"task": "Research AI safety trends and write a summary."})
+print(result["result"])
+
+print("\n--- Researcher sees ---")
+print(memory.read_context("Researcher"))
+print("\n--- Writer sees ---")
+print(memory.read_context("Writer"))
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+
+class ScopedMemory:
+    def __init__(self):
+        self._scopes = {}
+
+    def write_private(self, agent_name: str, entry: str):
+        key = f"{agent_name}_private"
+        self._scopes.setdefault(key, []).append(f"[{agent_name}] {entry}")
+
+    def write_shared(self, agent_name: str, entry: str):
+        self._scopes.setdefault("shared", []).append(f"[{agent_name}] {entry}")
+
+    def read_context(self, agent_name: str) -> str:
+        private_key = f"{agent_name}_private"
+        private = self._scopes.get(private_key, [])
+        shared = self._scopes.get("shared", [])
+        lines = []
+        if private:
+            lines.append("=== Your Private Notes ===")
+            lines.extend(private)
+        if shared:
+            lines.append("=== Shared Notes ===")
+            lines.extend(shared)
+        return "\n".join(lines)
+
+memory = ScopedMemory()
+
+def run_researcher(task: str) -> str:
+    memory.write_private("Researcher", "Raw data contains PII: user SSN 123-45-6789")
+    memory.write_shared("Researcher", "Found 3 relevant articles about AI safety.")
+    context = memory.read_context("Researcher")
+    agent = Agent(
+        name="Researcher",
+        instructions=f"You are a researcher. Memory:\n{context}",
+    )
+    result = Runner.run_sync(agent, task)
+    return result.final_output
+
+def run_writer(research: str) -> str:
+    memory.write_private("Writer", "Draft has grammatical issues, fixing...")
+    memory.write_shared("Writer", "Completed first draft of the report.")
+    context = memory.read_context("Writer")
+    agent = Agent(
+        name="Writer",
+        instructions=f"You are a writer. Memory:\n{context}",
+    )
+    result = Runner.run_sync(agent, f"Write a report based on: {research}")
+    return result.final_output
+
+research_output = run_researcher("Research AI safety trends.")
+final_report = run_writer(research_output)
+print(final_report)
+
+print("\n--- Researcher sees ---")
+print(memory.read_context("Researcher"))
+print("\n--- Writer sees ---")
+print(memory.read_context("Writer"))
+```
+
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai import LLM
+
+llm = LLM(model="gpt-4o-mini")
+
+
+class ScopedMemory:
+    def __init__(self):
+        self._scopes = {}
+
+    def write_private(self, agent_name: str, entry: str):
+        key = f"{agent_name}_private"
+        self._scopes.setdefault(key, []).append(f"[{agent_name}] {entry}")
+
+    def write_shared(self, agent_name: str, entry: str):
+        self._scopes.setdefault("shared", []).append(f"[{agent_name}] {entry}")
+
+    def read_context(self, agent_name: str) -> str:
+        private_key = f"{agent_name}_private"
+        private = self._scopes.get(private_key, [])
+        shared = self._scopes.get("shared", [])
+        lines = []
+        if private:
+            lines.append("=== Your Private Notes ===")
+            lines.extend(private)
+        if shared:
+            lines.append("=== Shared Notes ===")
+            lines.extend(shared)
+        return "\n".join(lines)
+
+
+memory = ScopedMemory()
+
+memory.write_private("Researcher", "Raw data contains PII: user SSN 123-45-6789")
+memory.write_shared("Researcher", "Found 3 relevant articles about AI safety.")
+
+researcher = Agent(
+    role="Researcher",
+    goal="Research AI safety trends",
+    backstory="You are a thorough researcher.",
+    llm=llm,
+)
+
+research_context = memory.read_context("Researcher")
+research_task = Task(
+    description=f"Research AI safety trends. Memory:\n{research_context}",
+    expected_output="Research findings on AI safety",
+    agent=researcher,
+)
+
+memory.write_private("Writer", "Draft has grammatical issues, fixing...")
+memory.write_shared("Writer", "Completed first draft of the report.")
+
+writer = Agent(
+    role="Writer",
+    goal="Write a report from research findings",
+    backstory="You are a skilled writer.",
+    llm=llm,
+)
+
+writer_context = memory.read_context("Writer")
+write_task = Task(
+    description=f"Write a report based on research. Memory:\n{writer_context}",
+    expected_output="A polished report",
+    agent=writer,
+)
+
+crew = Crew(
+    agents=[researcher, writer],
+    tasks=[research_task, write_task],
+    process=Process.sequential,
+)
+
+result = crew.kickoff()
+print(result)
+
+print("\n--- Researcher sees ---")
+print(memory.read_context("Researcher"))
+print("\n--- Writer sees ---")
+print(memory.read_context("Writer"))
+```
+
+## Why This Works
+
+The `ScopedMemory` class enforces a clear boundary: `write_private()` stores entries in an agent-specific namespace, `write_shared()` stores entries in the common namespace, and `read_context()` only returns the agent's own private entries plus the shared entries. The Researcher's PII note is stored under `"Researcher_private"` and is never included when the Writer calls `read_context("Writer")`.
+
+This pattern mirrors real-world access control: each agent has its own workspace (private scope) and a shared whiteboard (shared scope). Agents must explicitly choose to publish to the shared scope — nothing leaks automatically. The append-only shared scope also ensures that agents cannot overwrite each other's contributions.
+
+## Key Takeaways
+
+- Global shared memory is a security and correctness hazard in multi-agent systems — private data leaks and irrelevant context clutters prompts.
+- Scoped memory with explicit publish/subscribe boundaries prevents PII leaks and keeps each agent's context focused.
+- The pattern is simple to implement: a dictionary of lists keyed by namespace, with helper methods enforcing read/write boundaries.

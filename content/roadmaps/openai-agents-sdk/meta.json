@@ -1,0 +1,173 @@
+{
+  "title": "OpenAI Agents SDK",
+  "description": "Build AI agents using the official OpenAI Agents SDK. Learn function tools, handoffs, guardrails, sessions, and production patterns.",
+  "icon": "sparkles",
+  "sections": [
+    {
+      "title": "Getting Started",
+      "topics": [
+        {
+          "slug": "introduction",
+          "title": "What is the OpenAI Agents SDK?",
+          "difficulty": "beginner"
+        },
+        {
+          "slug": "installation",
+          "title": "Installation & Hello Agent",
+          "difficulty": "beginner",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/openai-agents-sdk/installation.ipynb"
+        }
+      ]
+    },
+    {
+      "title": "Beginner: Core Concepts",
+      "topics": [
+        {
+          "slug": "agents-and-runner",
+          "title": "Agents & the Runner Loop",
+          "difficulty": "beginner",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/openai-agents-sdk/agents-and-runner.ipynb"
+        },
+        {
+          "slug": "function-tools",
+          "title": "Function Tools",
+          "difficulty": "beginner",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/openai-agents-sdk/function-tools.ipynb"
+        },
+        {
+          "slug": "structured-output",
+          "title": "Structured Outputs",
+          "difficulty": "beginner",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/openai-agents-sdk/structured-output.ipynb"
+        },
+        {
+          "slug": "handoffs-basics",
+          "title": "Simple Handoffs",
+          "difficulty": "beginner",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/openai-agents-sdk/handoffs-basics.ipynb"
+        }
+      ]
+    },
+    {
+      "title": "Beginner: Project",
+      "topics": [
+        {
+          "slug": "project-homework-tutor",
+          "title": "Project: Homework Tutor",
+          "difficulty": "beginner",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/openai-agents-sdk/project-homework-tutor.ipynb"
+        }
+      ]
+    },
+    {
+      "title": "Intermediate: Features",
+      "topics": [
+        {
+          "slug": "sessions",
+          "title": "Sessions & Memory",
+          "difficulty": "intermediate",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/openai-agents-sdk/sessions.ipynb"
+        },
+        {
+          "slug": "context",
+          "title": "Context & Dependency Injection",
+          "difficulty": "intermediate",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/openai-agents-sdk/context.ipynb"
+        },
+        {
+          "slug": "streaming",
+          "title": "Streaming Events",
+          "difficulty": "intermediate",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/openai-agents-sdk/streaming.ipynb"
+        },
+        {
+          "slug": "hosted-tools",
+          "title": "Hosted Tools",
+          "difficulty": "intermediate",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/openai-agents-sdk/hosted-tools.ipynb"
+        },
+        {
+          "slug": "guardrails",
+          "title": "Input & Output Guardrails",
+          "difficulty": "intermediate",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/openai-agents-sdk/guardrails.ipynb"
+        },
+        {
+          "slug": "agents-as-tools",
+          "title": "Agents as Tools",
+          "difficulty": "intermediate",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/openai-agents-sdk/agents-as-tools.ipynb"
+        },
+        {
+          "slug": "handoff-customization",
+          "title": "Handoff Customization",
+          "difficulty": "intermediate",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/openai-agents-sdk/handoff-customization.ipynb"
+        }
+      ]
+    },
+    {
+      "title": "Intermediate: Projects",
+      "topics": [
+        {
+          "slug": "project-customer-support",
+          "title": "Project: Customer Support Bot",
+          "difficulty": "intermediate",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/openai-agents-sdk/project-customer-support.ipynb"
+        },
+        {
+          "slug": "project-research-assistant",
+          "title": "Project: Research Assistant",
+          "difficulty": "intermediate",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/openai-agents-sdk/project-research-assistant.ipynb"
+        }
+      ]
+    },
+    {
+      "title": "Advanced: Features",
+      "topics": [
+        {
+          "slug": "human-in-the-loop",
+          "title": "Human-in-the-Loop & Approvals",
+          "difficulty": "advanced",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/openai-agents-sdk/human-in-the-loop.ipynb"
+        },
+        {
+          "slug": "model-configuration",
+          "title": "Model Configuration & Providers",
+          "difficulty": "advanced",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/openai-agents-sdk/model-configuration.ipynb"
+        },
+        {
+          "slug": "tool-guardrails",
+          "title": "Tool Guardrails & Advanced Patterns",
+          "difficulty": "advanced",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/openai-agents-sdk/tool-guardrails.ipynb"
+        },
+        {
+          "slug": "tracing-advanced",
+          "title": "Advanced Tracing & RunConfig",
+          "difficulty": "advanced",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/openai-agents-sdk/tracing-advanced.ipynb"
+        }
+      ]
+    },
+    {
+      "title": "Advanced: Projects",
+      "topics": [
+        {
+          "slug": "project-enterprise-agent",
+          "title": "Project: Enterprise Agent with Tool Search",
+          "difficulty": "advanced",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/openai-agents-sdk/project-enterprise-agent.ipynb"
+        },
+        {
+          "slug": "project-production-chat",
+          "title": "Project: Production Chat System",
+          "difficulty": "advanced",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/openai-agents-sdk/project-production-chat.ipynb"
+        }
+      ]
+    }
+  ]
+}

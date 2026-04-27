@@ -1,0 +1,231 @@
+# Multi-Agent Patterns
+
+Multi-agent systems use multiple LLM-powered agents that collaborate to solve problems. LangGraph provides the primitives — subgraphs, conditional edges, `Send`, and `Command` — to implement various multi-agent architectures. Each pattern has different trade-offs around autonomy, control, and complexity.
+
+## Five Multi-Agent Patterns
+
+| Pattern | Description | Agent Autonomy | When to Use |
+|---------|-------------|----------------|-------------|
+| **Subagents** | Parent agent invokes child agents as tools | Low — parent controls flow | Well-defined subtasks, parent needs to orchestrate |
+| **Handoffs** | Agent transfers control to another agent via tool call | Medium — agents decide when to hand off | Specialized domains, conversation routing |
+| **Skills** | Agents share tools and state, selected by router | Low — router picks the right skill | Tool-centric workflows, similar agent capabilities |
+| **Router** | Central router dispatches to specialist agents in parallel | Low — router controls dispatch | Independent subtasks, parallel execution |
+| **Custom Workflow** | Hardcoded graph topology with agents at nodes | None — flow is predetermined | Predictable pipelines, compliance requirements |
+
+## Subagents Pattern
+
+Each agent is a compiled subgraph invoked as a tool by the parent agent:
+
+```python
+from typing import TypedDict, Annotated
+from langgraph.graph import StateGraph, START, END, add_messages
+from langchain_openai import ChatOpenAI
+from langchain_core.tools import tool
+
+class AgentState(TypedDict):
+    messages: Annotated[list, add_messages]
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+# Child agent as a tool
+@tool
+def research_agent(query: str) -> str:
+    """Research a topic and return findings."""
+    response = llm.invoke([
+        ("system", "You are a research assistant. Provide concise findings."),
+        ("human", query),
+    ])
+    return response.content
+
+@tool
+def math_agent(expression: str) -> str:
+    """Evaluate a math expression."""
+    response = llm.invoke([
+        ("system", "You are a math expert. Solve the expression step by step."),
+        ("human", expression),
+    ])
+    return response.content
+
+tools = [research_agent, math_agent]
+llm_with_tools = llm.bind_tools(tools)
+
+def parent_agent(state: AgentState) -> dict:
+    response = llm_with_tools.invoke(state["messages"])
+    return {"messages": [response]}
+```
+
+## Handoff Pattern
+
+Agents transfer control to each other using tool calls. The receiving agent picks up the conversation:
+
+```python
+from typing import TypedDict, Annotated
+from langgraph.graph import StateGraph, START, END, add_messages
+from langgraph.prebuilt import create_react_agent
+from langgraph.types import Command
+from langchain_openai import ChatOpenAI
+from langchain_core.tools import tool
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+class State(TypedDict):
+    messages: Annotated[list, add_messages]
+
+# Each agent can hand off to another via a tool
+def make_handoff_tool(target_agent: str):
+    @tool
+    def handoff() -> Command:
+        f"""Transfer to {target_agent} agent."""
+        return Command(goto=target_agent)
+    handoff.__name__ = f"transfer_to_{target_agent}"
+    handoff.__doc__ = f"Transfer to {target_agent} agent."
+    return handoff
+
+# Build specialized agents
+sales_agent = create_react_agent(
+    llm,
+    tools=[make_handoff_tool("support")],
+    prompt="You are a sales agent. Hand off to support for technical issues.",
+)
+
+support_agent = create_react_agent(
+    llm,
+    tools=[make_handoff_tool("sales")],
+    prompt="You are a support agent. Hand off to sales for pricing questions.",
+)
+
+# Router decides the initial agent
+def router(state: State) -> Command:
+    response = llm.invoke([
+        ("system", "Route to 'sales' for pricing/purchase or 'support' for technical help."),
+        *state["messages"],
+    ])
+    destination = "sales" if "sales" in response.content.lower() else "support"
+    return Command(goto=destination)
+
+graph = StateGraph(State)
+graph.add_node("router", router)
+graph.add_node("sales", sales_agent)
+graph.add_node("support", support_agent)
+graph.add_edge(START, "router")
+```
+
+The `Command(goto=...)` primitive lets agents dynamically route control flow without conditional edges.
+
+## Router with Parallel Execution
+
+A central router dispatches independent subtasks to specialist agents simultaneously:
+
+```python
+import operator
+from typing import TypedDict, Annotated
+from langgraph.graph import StateGraph, START, END
+from langgraph.types import Send
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+class RouterState(TypedDict):
+    query: str
+    results: Annotated[list[str], operator.add]
+
+class AgentInput(TypedDict):
+    query: str
+    agent_type: str
+
+def router(state: RouterState) -> dict:
+    return {}
+
+def dispatch(state: RouterState) -> list[Send]:
+    return [
+        Send("specialist", {"query": state["query"], "agent_type": "researcher"}),
+        Send("specialist", {"query": state["query"], "agent_type": "analyst"}),
+        Send("specialist", {"query": state["query"], "agent_type": "writer"}),
+    ]
+
+def specialist(state: AgentInput) -> dict:
+    response = llm.invoke([
+        ("system", f"You are a {state['agent_type']}. Respond to the query."),
+        ("human", state["query"]),
+    ])
+    return {"results": [f"[{state['agent_type']}]: {response.content}"]}
+
+graph = StateGraph(RouterState)
+graph.add_node("router", router)
+graph.add_node("specialist", specialist)
+graph.add_conditional_edges("router", dispatch, path_map=["specialist"])
+graph.add_edge(START, "router")
+graph.add_edge("specialist", END)
+
+app = graph.compile()
+```
+
+## Custom Workflow Pattern
+
+For predictable pipelines, hardcode the graph topology with agents at each node:
+
+```python
+from typing import TypedDict, Annotated
+from langgraph.graph import StateGraph, START, END, add_messages
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+class PipelineState(TypedDict):
+    messages: Annotated[list, add_messages]
+    draft: str
+    review: str
+    final: str
+
+def drafter(state: PipelineState) -> dict:
+    response = llm.invoke([
+        ("system", "Write a first draft based on the request."),
+        *state["messages"],
+    ])
+    return {"draft": response.content}
+
+def reviewer(state: PipelineState) -> dict:
+    response = llm.invoke([
+        ("system", "Review this draft and suggest improvements."),
+        ("human", state["draft"]),
+    ])
+    return {"review": response.content}
+
+def editor(state: PipelineState) -> dict:
+    response = llm.invoke([
+        ("system", "Produce the final version incorporating the review feedback."),
+        ("human", f"Draft:\n{state['draft']}\n\nReview:\n{state['review']}"),
+    ])
+    return {"final": response.content}
+
+graph = StateGraph(PipelineState)
+graph.add_node("drafter", drafter)
+graph.add_node("reviewer", reviewer)
+graph.add_node("editor", editor)
+graph.add_edge(START, "drafter")
+graph.add_edge("drafter", "reviewer")
+graph.add_edge("reviewer", "editor")
+graph.add_edge("editor", END)
+
+app = graph.compile()
+```
+
+## Choosing the Right Pattern
+
+| Consideration | Best Pattern |
+|--------------|-------------|
+| Need central control over subtasks | Subagents or Router |
+| Agents need to decide who handles what | Handoffs |
+| Tasks are independent and parallelizable | Router with `Send` |
+| Flow must be predictable and auditable | Custom Workflow |
+| Agents have distinct specializations | Handoffs or Subagents |
+| Combining tools from different domains | Skills |
+
+## Key Takeaways
+
+- LangGraph supports five multi-agent patterns: Subagents, Handoffs, Skills, Router, and Custom Workflow
+- **Subagents** give the parent agent full control, invoking child agents as tools
+- **Handoffs** let agents transfer control dynamically using `Command(goto=...)`
+- **Router** patterns use `Send` to dispatch to specialists in parallel
+- **Custom Workflows** hardcode the agent topology for predictable, auditable pipelines
+- Choose based on how much autonomy agents need and whether tasks are independent

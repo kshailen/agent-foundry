@@ -1,0 +1,51 @@
+{
+  "number": 34,
+  "title": "Remember User Preferences",
+  "difficulty": "medium",
+  "categories": [
+    "memory"
+  ],
+  "frameworks": [
+    "langchain",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "Preferences must persist across turns within the same session",
+    "The agent must detect preference-setting statements without explicit commands",
+    "Stored preferences must be injected into the prompt context automatically",
+    "You may not ask the user to repeat their preferences"
+  ],
+  "hints": [
+    "Maintain a separate dictionary for user preferences alongside conversation history",
+    "Use the LLM itself to extract preference key-value pairs from user messages",
+    "Inject the current preference dictionary into the system prompt so the agent always has access to it"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain_core.messages import HumanMessage, AIMessage, SystemMessage\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# BUG: No preference storage — the agent forgets user preferences by next turn\nhistory = [SystemMessage(content=\"You are a helpful assistant.\")]\n\ndef chat(user_input: str) -> str:\n    history.append(HumanMessage(content=user_input))\n    response = llm.invoke(history)\n    history.append(response)\n    return response.content\n\n# Turn 1: User sets preferences\nprint(chat(\"Call me Alex. I prefer metric units and dark mode.\"))\n\n# Turn 2: Test if preferences are remembered\nprint(chat(\"What's the distance from NYC to LA?\"))\n\n# Turn 3: Ask directly\nprint(chat(\"What name should you call me?\"))",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\n# BUG: No preference storage — the agent forgets user preferences by next turn\nagent = Agent(\n    name=\"Assistant\",\n    instructions=\"You are a helpful assistant.\",\n)\n\nhistory = []\n\ndef chat(user_input: str) -> str:\n    history.append({\"role\": \"user\", \"content\": user_input})\n    result = Runner.run_sync(agent, history)\n    response_text = result.final_output\n    history.append({\"role\": \"assistant\", \"content\": response_text})\n    return response_text\n\n# Turn 1: User sets preferences\nprint(chat(\"Call me Alex. I prefer metric units and dark mode.\"))\n\n# Turn 2: Test if preferences are remembered\nprint(chat(\"What's the distance from NYC to LA?\"))\n\n# Turn 3: Ask directly\nprint(chat(\"What name should you call me?\"))",
+    "crewai": "from crewai import Agent, Task, Crew\n\n# BUG: No preference storage \u2014 the agent forgets user preferences by next turn\nassistant = Agent(\n    role=\"Assistant\",\n    goal=\"Help the user with their requests\",\n    backstory=\"You are a helpful assistant.\",\n)\n\ndef chat(user_input: str) -> str:\n    task = Task(\n        description=user_input,\n        expected_output=\"A helpful response\",\n        agent=assistant,\n    )\n    crew = Crew(agents=[assistant], tasks=[task])\n    return str(crew.kickoff())\n\n# Turn 1: User sets preferences\nprint(chat(\"Call me Alex. I prefer metric units and dark mode.\"))\n\n# Turn 2: Test if preferences are remembered\nprint(chat(\"What's the distance from NYC to LA?\"))\n\n# Turn 3: Ask directly\nprint(chat(\"What name should you call me?\"))"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/remember-user-preferences-langchain.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/remember-user-preferences-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/remember-user-preferences-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "extracts-preferences",
+      "label": "Extracts preferences from conversation",
+      "description": "The agent detects and stores preference statements like 'call me Alex' or 'I prefer metric'"
+    },
+    {
+      "id": "applies-preferences",
+      "label": "Applies preferences in responses",
+      "description": "The agent uses stored preferences (e.g., metric units, preferred name) in subsequent answers"
+    },
+    {
+      "id": "persists-across-turns",
+      "label": "Preferences persist across turns",
+      "description": "Preferences set in an early turn are still applied many turns later"
+    }
+  ]
+}

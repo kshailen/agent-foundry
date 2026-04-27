@@ -1,0 +1,153 @@
+## Approach
+
+The travel booking assistant fabricates booking details when the user's request is vague. "Book a flight" triggers a response with invented destinations, dates, and prices because the system prompt says "always provide a complete answer" — forcing the model to fill in gaps with guesses rather than asking for clarification. Conversely, when a user provides every detail, the agent should proceed immediately rather than stalling with redundant questions.
+
+The fix redefines the system prompt to make the agent aware of required booking fields (origin, destination, dates, passengers, class) and instructs it to check which fields are present before responding. If fields are missing, ask about them. If all fields are present, proceed. The key insight is defining explicit criteria for what constitutes a "complete" request, so the model has a checklist to evaluate against rather than relying on subjective judgment.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", (
+        "You are a travel booking assistant. Help users book flights and hotels.\n\n"
+        "REQUIRED INFORMATION FOR FLIGHT BOOKINGS:\n"
+        "1. Origin (departure city/airport)\n"
+        "2. Destination (arrival city/airport)\n"
+        "3. Travel date(s)\n"
+        "4. Number of passengers\n"
+        "5. Class preference (economy, business, first)\n"
+        "6. One-way or round-trip\n\n"
+        "RULES:\n"
+        "- Before processing a booking, check which required fields are present in the user's message.\n"
+        "- If ANY required fields are missing, ask clarifying questions ONLY for the missing fields.\n"
+        "- Acknowledge the information the user already provided — do not re-ask for it.\n"
+        "- If ALL required fields are present, proceed immediately with the booking.\n"
+        "- NEVER fabricate, assume, or guess missing details (dates, destinations, prices, etc.).\n"
+        "- NEVER ask about information the user has already provided.\n\n"
+        "EXAMPLE:\n"
+        "User: 'I need a flight from San Francisco to Tokyo next week'\n"
+        "Provided: origin (San Francisco), destination (Tokyo), approximate dates (next week)\n"
+        "Missing: specific date, number of passengers, class, one-way or round-trip\n"
+        "Response: Acknowledge the provided info, then ask only about the missing fields."
+    )),
+    ("human", "{input}"),
+])
+
+chain = prompt | llm
+
+result1 = chain.invoke({"input": "Book a flight"})
+print("Vague query:", result1.content)
+
+result2 = chain.invoke({"input": "Book a one-way flight from New York JFK to London Heathrow on March 15, 2025, economy class, for 1 adult"})
+print("Specific query:", result2.content)
+
+result3 = chain.invoke({"input": "I need a flight from San Francisco to Tokyo next week"})
+print("Partial query:", result3.content)
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+
+agent = Agent(
+    name="Travel Assistant",
+    instructions=(
+        "You are a travel booking assistant. Help users book flights and hotels.\n\n"
+        "REQUIRED INFORMATION FOR FLIGHT BOOKINGS:\n"
+        "1. Origin (departure city/airport)\n"
+        "2. Destination (arrival city/airport)\n"
+        "3. Travel date(s)\n"
+        "4. Number of passengers\n"
+        "5. Class preference (economy, business, first)\n"
+        "6. One-way or round-trip\n\n"
+        "RULES:\n"
+        "- Before processing a booking, check which required fields are present in the user's message.\n"
+        "- If ANY required fields are missing, ask clarifying questions ONLY for the missing fields.\n"
+        "- Acknowledge the information the user already provided — do not re-ask for it.\n"
+        "- If ALL required fields are present, proceed immediately with the booking.\n"
+        "- NEVER fabricate, assume, or guess missing details (dates, destinations, prices, etc.).\n"
+        "- NEVER ask about information the user has already provided.\n\n"
+        "EXAMPLE:\n"
+        "User: 'I need a flight from San Francisco to Tokyo next week'\n"
+        "Provided: origin (San Francisco), destination (Tokyo), approximate dates (next week)\n"
+        "Missing: specific date, number of passengers, class, one-way or round-trip\n"
+        "Response: Acknowledge the provided info, then ask only about the missing fields."
+    ),
+)
+
+result1 = Runner.run_sync(agent, "Book a flight")
+print("Vague query:", result1.final_output)
+
+result2 = Runner.run_sync(agent, "Book a one-way flight from New York JFK to London Heathrow on March 15, 2025, economy class, for 1 adult")
+print("Specific query:", result2.final_output)
+
+result3 = Runner.run_sync(agent, "I need a flight from San Francisco to Tokyo next week")
+print("Partial query:", result3.final_output)
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai import LLM
+
+llm = LLM(model="gpt-4o-mini")
+
+assistant = Agent(
+    role="Travel Assistant",
+    goal="Help users book flights and hotels by gathering all required information before proceeding",
+    backstory=(
+        "You are a travel booking assistant. Help users book flights and hotels.\n\n"
+        "REQUIRED INFORMATION FOR FLIGHT BOOKINGS:\n"
+        "1. Origin (departure city/airport)\n"
+        "2. Destination (arrival city/airport)\n"
+        "3. Travel date(s)\n"
+        "4. Number of passengers\n"
+        "5. Class preference (economy, business, first)\n"
+        "6. One-way or round-trip\n\n"
+        "RULES:\n"
+        "- Before processing a booking, check which required fields are present in the user's message.\n"
+        "- If ANY required fields are missing, ask clarifying questions ONLY for the missing fields.\n"
+        "- Acknowledge the information the user already provided — do not re-ask for it.\n"
+        "- If ALL required fields are present, proceed immediately with the booking.\n"
+        "- NEVER fabricate, assume, or guess missing details (dates, destinations, prices, etc.).\n"
+        "- NEVER ask about information the user has already provided.\n\n"
+        "EXAMPLE:\n"
+        "User: 'I need a flight from San Francisco to Tokyo next week'\n"
+        "Provided: origin (San Francisco), destination (Tokyo), approximate dates (next week)\n"
+        "Missing: specific date, number of passengers, class, one-way or round-trip\n"
+        "Response: Acknowledge the provided info, then ask only about the missing fields."
+    ),
+    llm=llm,
+)
+
+queries = [
+    "Book a flight",
+    "Book a one-way flight from New York JFK to London Heathrow on March 15, 2025, economy class, for 1 adult",
+    "I need a flight from San Francisco to Tokyo next week",
+]
+
+for q in queries:
+    task = Task(description=q, expected_output="A booking response or clarifying questions", agent=assistant)
+    crew = Crew(agents=[assistant], tasks=[task], process=Process.sequential)
+    result = crew.kickoff()
+    print(f"Query: {q}\nResponse: {result}\n")
+```
+
+## Why This Works
+
+The checklist-based approach converts an ambiguous decision ("is this request complete enough?") into a structured evaluation ("which of these 6 fields are present?"). This removes subjectivity from the model's decision-making. The explicit instruction to "never fabricate missing details" directly counteracts the original "always provide a complete answer" behavior. The example showing the mental model of "provided vs. missing" fields teaches the model the exact reasoning pattern to follow. The result is an agent that adapts its behavior to the completeness of each request — asking more questions for vague requests and fewer for complete ones.
+
+## Key Takeaways
+
+- Define required fields explicitly in the prompt so the model has a concrete checklist rather than a subjective judgment call.
+- Instruct the agent to acknowledge what the user provided and only ask about what is missing — this prevents both over-asking and under-asking.
+- The instruction "never fabricate missing details" must be paired with "ask clarifying questions" — otherwise the model has no alternative action to take.

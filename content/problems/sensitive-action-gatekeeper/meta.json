@@ -1,0 +1,57 @@
+{
+  "number": 68,
+  "title": "Sensitive Action Gatekeeper",
+  "difficulty": "medium",
+  "categories": [
+    "guardrails",
+    "tool-calling"
+  ],
+  "frameworks": [
+    "openai-agents-sdk",
+    "langchain",
+    "crewai"
+  ],
+  "constraints": [
+    "Sensitive tools (delete, send) must require user confirmation before execution",
+    "Non-sensitive tools (read, search) should execute immediately without confirmation",
+    "The confirmation step must clearly describe what action will be taken",
+    "If the user declines, the action must not execute"
+  ],
+  "hints": [
+    "Tag tools as 'sensitive' or 'safe' and check the tag before execution",
+    "Insert a confirmation prompt (input() or callback) between the agent's decision to call a tool and the actual execution",
+    "Use a wrapper function that intercepts sensitive tool calls and gates them on user approval"
+  ],
+  "starterCode": {
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom agents.tool import function_tool\n\n@function_tool\ndef read_file(filename: str) -> str:\n    \"\"\"Read a file from the filesystem.\"\"\"\n    return f\"Contents of {filename}: [file data]\"\n\n@function_tool\ndef delete_file(filename: str) -> str:\n    \"\"\"Delete a file from the filesystem.\"\"\"\n    # BUG: This destructive action executes immediately with no confirmation\n    return f\"Deleted {filename} successfully\"\n\n@function_tool\ndef send_email(to: str, subject: str, body: str) -> str:\n    \"\"\"Send an email to a recipient.\"\"\"\n    # BUG: This sensitive action executes immediately with no confirmation\n    return f\"Email sent to {to}: {subject}\"\n\nagent = Agent(\n    name=\"File Manager\",\n    instructions=\"You are a file management assistant. Help users read, delete, and send files.\",\n    tools=[read_file, delete_file, send_email],\n)\n\n# Test: The agent deletes a file without asking for confirmation\nresult = Runner.run_sync(agent, \"Delete the file report.pdf\")\nprint(result.final_output)",
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain.agents import AgentExecutor, create_tool_calling_agent\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom langchain_core.tools import tool\n\n@tool\ndef read_file(filename: str) -> str:\n    \"\"\"Read a file from the filesystem.\"\"\"\n    return f\"Contents of {filename}: [file data]\"\n\n@tool\ndef delete_file(filename: str) -> str:\n    \"\"\"Delete a file from the filesystem.\"\"\"\n    # BUG: This destructive action executes immediately with no confirmation\n    return f\"Deleted {filename} successfully\"\n\n@tool\ndef send_email(to: str, subject: str, body: str) -> str:\n    \"\"\"Send an email to a recipient.\"\"\"\n    # BUG: This sensitive action executes immediately with no confirmation\n    return f\"Email sent to {to}: {subject}\"\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a file management assistant. Help users read, delete, and send files.\"),\n    (\"human\", \"{input}\"),\n    (\"placeholder\", \"{agent_scratchpad}\"),\n])\n\nagent = create_tool_calling_agent(llm, [read_file, delete_file, send_email], prompt)\nexecutor = AgentExecutor(agent=agent, tools=[read_file, delete_file, send_email])\n\n# Test: The agent deletes a file without asking for confirmation\nresult = executor.invoke({\"input\": \"Delete the file report.pdf\"})\nprint(result[\"output\"])",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai import LLM\nfrom crewai.tools import tool\n\nllm = LLM(model=\"gpt-4o-mini\")\n\n@tool\ndef read_file(filename: str) -> str:\n    \"\"\"Read a file from the filesystem.\"\"\"\n    return f\"Contents of {filename}: [file data]\"\n\n@tool\ndef delete_file(filename: str) -> str:\n    \"\"\"Delete a file from the filesystem.\"\"\"\n    # BUG: This destructive action executes immediately with no confirmation\n    return f\"Deleted {filename} successfully\"\n\n@tool\ndef send_email(to: str, subject: str, body: str) -> str:\n    \"\"\"Send an email to a recipient.\"\"\"\n    # BUG: This sensitive action executes immediately with no confirmation\n    return f\"Email sent to {to}: {subject}\"\n\nagent = Agent(\n    role=\"File Manager\",\n    goal=\"Help users read, delete, and send files\",\n    backstory=\"You are a file management assistant.\",\n    tools=[read_file, delete_file, send_email],\n    llm=llm,\n)\n\ntask = Task(\n    description=\"Delete the file report.pdf\",\n    expected_output=\"Confirmation of action taken\",\n    agent=agent,\n)\n\ncrew = Crew(agents=[agent], tasks=[task])\nresult = crew.kickoff()\nprint(result)"
+  },
+  "colabUrls": {
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/sensitive-action-gatekeeper-openai.ipynb",
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/sensitive-action-gatekeeper-langchain.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/sensitive-action-gatekeeper-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "confirmation-required",
+      "label": "Sensitive actions require confirmation",
+      "description": "Destructive tools like delete and send prompt the user before executing"
+    },
+    {
+      "id": "safe-tools-immediate",
+      "label": "Safe tools execute immediately",
+      "description": "Non-destructive tools like read and search run without a confirmation step"
+    },
+    {
+      "id": "clear-description",
+      "label": "Confirmation describes the action",
+      "description": "The confirmation prompt clearly states what action will be performed"
+    },
+    {
+      "id": "decline-honored",
+      "label": "Declined actions are not executed",
+      "description": "If the user declines confirmation, the sensitive action does not run"
+    }
+  ]
+}

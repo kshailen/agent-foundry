@@ -1,0 +1,69 @@
+## The Problem
+
+Your team built a Q&A agent that answers user questions. Downstream systems expect the agent's response to be a **JSON object** with three keys — `answer`, `confidence`, and `sources` — but the current prompt just says "answer the question," so the model returns free-text paragraphs. Every consumer that tries to `JSON.parse()` the response crashes. The model is capable of producing JSON; the issue is the **system prompt** never asks for it. Your job is to **fix only the system prompt** so every response is a valid JSON object with the required keys.
+
+## Examples
+
+### Example 1
+
+**User input:** What is the capital of France?
+
+**Current (bad) output:** The capital of France is Paris. It's been the capital since the 10th century and is known for the Eiffel Tower, the Louvre, and its café culture.
+
+**Expected (good) output:**
+```json
+{
+  "answer": "The capital of France is Paris.",
+  "confidence": 0.99,
+  "sources": ["general knowledge"]
+}
+```
+
+### Example 2
+
+**User input:** Who wrote the novel 1984?
+
+**Current (bad) output:** George Orwell wrote 1984, published in 1949. It's a dystopian novel about totalitarianism.
+
+**Expected (good) output:**
+```json
+{
+  "answer": "George Orwell wrote the novel 1984, published in 1949.",
+  "confidence": 0.98,
+  "sources": ["general knowledge"]
+}
+```
+
+### Example 3
+
+**User input:** What is the half-life of Carbon-14?
+
+**Current (bad) output:** The half-life of Carbon-14 is approximately 5,730 years. This property makes it useful for radiocarbon dating.
+
+**Expected (good) output:**
+```json
+{
+  "answer": "The half-life of Carbon-14 is approximately 5,730 years.",
+  "confidence": 0.95,
+  "sources": ["general knowledge", "nuclear physics"]
+}
+```
+
+## Your Task
+
+Update the **system prompt** (and only that) so the agent:
+
+- Always returns a valid JSON object as its entire response.
+- Includes exactly three keys: `answer` (string), `confidence` (number between 0 and 1), and `sources` (array of strings).
+- Produces meaningful values — not empty strings or placeholders.
+- Never wraps the JSON in markdown code fences or adds text outside the JSON.
+
+Do not add tools, change model parameters, or add post-processing code.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Valid JSON output:** The agent's full response is parseable JSON with no extra text.
+- **Correct keys present:** The JSON object contains `answer`, `confidence`, and `sources`.
+- **Values are meaningful:** Each field has a substantive, relevant value — not empty or boilerplate.

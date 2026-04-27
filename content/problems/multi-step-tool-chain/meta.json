@@ -1,0 +1,52 @@
+{
+  "number": 20,
+  "title": "Multi-Step Tool Chain",
+  "difficulty": "medium",
+  "categories": [
+    "tool-calling",
+    "orchestration"
+  ],
+  "frameworks": [
+    "langchain",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "All three tools (search, extract_entities, summarize) must be called in sequence",
+    "The agent must not skip any step or jump directly to summarization",
+    "Each tool's output must feed into the next tool as input",
+    "No changes to the individual tool implementations"
+  ],
+  "hints": [
+    "Update the system prompt to explicitly instruct the agent to follow a step-by-step workflow: first search, then extract, then summarize",
+    "Consider enforcing ordering by making each tool check that the previous step's output exists before proceeding",
+    "Use few-shot examples in the prompt showing the correct three-step sequence"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain.agents import AgentExecutor, create_tool_calling_agent\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom langchain_core.tools import tool\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n@tool\ndef search_articles(query: str) -> str:\n    \"\"\"Search for articles on a topic.\"\"\"\n    return f\"Found 3 articles about {query}: Article A discusses market trends, Article B covers recent innovations, Article C analyzes industry impact.\"\n\n@tool\ndef extract_entities(text: str) -> str:\n    \"\"\"Extract key entities (people, companies, topics) from text.\"\"\"\n    return \"Entities: [TechCorp, AI industry, John Smith, market growth, 2024 forecast]\"\n\n@tool\ndef summarize(text: str) -> str:\n    \"\"\"Summarize the given text into a concise brief.\"\"\"\n    return \"Summary: The AI industry is experiencing rapid growth driven by TechCorp and similar companies, with analysts like John Smith forecasting continued expansion through 2024.\"\n\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a research assistant with access to search, entity extraction, and summarization tools.\"),\n    (\"human\", \"{input}\"),\n    (\"placeholder\", \"{agent_scratchpad}\"),\n])\n\n# BUG: The agent has all 3 tools but often skips steps — it jumps straight to summarize\n# or calls tools out of order. It should always follow: search -> extract_entities -> summarize\ntools = [search_articles, extract_entities, summarize]\nagent = create_tool_calling_agent(llm, tools, prompt)\nexecutor = AgentExecutor(agent=agent, tools=tools)\n\nresult = executor.invoke({\"input\": \"Research the latest trends in AI and give me a brief\"})\nprint(result[\"output\"])",
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom agents.tool import function_tool\n\n@function_tool\ndef search_articles(query: str) -> str:\n    \"\"\"Search for articles on a topic.\"\"\"\n    return f\"Found 3 articles about {query}: Article A discusses market trends, Article B covers recent innovations, Article C analyzes industry impact.\"\n\n@function_tool\ndef extract_entities(text: str) -> str:\n    \"\"\"Extract key entities (people, companies, topics) from text.\"\"\"\n    return \"Entities: [TechCorp, AI industry, John Smith, market growth, 2024 forecast]\"\n\n@function_tool\ndef summarize(text: str) -> str:\n    \"\"\"Summarize the given text into a concise brief.\"\"\"\n    return \"Summary: The AI industry is experiencing rapid growth driven by TechCorp and similar companies, with analysts like John Smith forecasting continued expansion through 2024.\"\n\n# BUG: The agent has all 3 tools but often skips steps — it jumps straight to summarize\n# or calls tools out of order. It should always follow: search -> extract_entities -> summarize\nagent = Agent(\n    name=\"Research Assistant\",\n    instructions=\"You are a research assistant with access to search, entity extraction, and summarization tools.\",\n    tools=[search_articles, extract_entities, summarize],\n)\n\nresult = Runner.run_sync(agent, \"Research the latest trends in AI and give me a brief\")\nprint(result.final_output)",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai.tools import tool\n\n@tool\ndef search_articles(query: str) -> str:\n    \"\"\"Search for articles on a topic.\"\"\"\n    return f\"Found 3 articles about {query}: Article A discusses market trends, Article B covers recent innovations, Article C analyzes industry impact.\"\n\n@tool\ndef extract_entities(text: str) -> str:\n    \"\"\"Extract key entities (people, companies, topics) from text.\"\"\"\n    return \"Entities: [TechCorp, AI industry, John Smith, market growth, 2024 forecast]\"\n\n@tool\ndef summarize(text: str) -> str:\n    \"\"\"Summarize the given text into a concise brief.\"\"\"\n    return \"Summary: The AI industry is experiencing rapid growth driven by TechCorp and similar companies, with analysts like John Smith forecasting continued expansion through 2024.\"\n\n# BUG: The agent has all 3 tools but often skips steps — it jumps straight to summarize\n# or calls tools out of order. It should always follow: search -> extract_entities -> summarize\nassistant = Agent(\n    role=\"Research Assistant\",\n    goal=\"Research topics and provide concise briefs\",\n    backstory=\"You are a research assistant with access to search, entity extraction, and summarization tools.\",\n    tools=[search_articles, extract_entities, summarize],\n)\n\ntask = Task(\n    description=\"Research the latest trends in AI and give me a brief\",\n    expected_output=\"A research brief with entities and summary\",\n    agent=assistant,\n)\n\ncrew = Crew(agents=[assistant], tasks=[task])\nprint(crew.kickoff())"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/multi-step-tool-chain-langchain.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/multi-step-tool-chain-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/multi-step-tool-chain-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "all-steps-called",
+      "label": "All three tools are called",
+      "description": "The agent invokes search, extract_entities, and summarize — none are skipped"
+    },
+    {
+      "id": "correct-order",
+      "label": "Tools called in correct order",
+      "description": "The sequence is always search → extract_entities → summarize"
+    },
+    {
+      "id": "output-chaining",
+      "label": "Outputs are chained between steps",
+      "description": "Each tool receives the output of the previous tool as its input"
+    }
+  ]
+}

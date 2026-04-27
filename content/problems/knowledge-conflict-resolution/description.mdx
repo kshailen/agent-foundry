@@ -1,0 +1,55 @@
+## The Problem
+
+Your knowledge base contains documents from different sources that sometimes **contradict each other**. The investor report says 2024 revenue was $150M; the audited financials say $142M. The company overview says 500 employees; the HR report says 480. When the agent retrieves both conflicting documents, it silently picks one version (usually whatever appears first) and presents it as fact. The user has no idea that another document disagrees. In regulated industries—finance, healthcare, legal—this can be dangerous. Your job is to make the agent **detect contradictions** between retrieved documents and **flag them explicitly**, presenting both versions with their sources.
+
+## Examples
+
+### Example 1
+
+**User input:** What was the company's 2024 revenue?
+
+**Current (bad) output:** The company's annual revenue for 2024 was $150M. *(Silently picks the investor report, ignoring the audited financials that say $142M.)*
+
+**Expected (good) output:** I found conflicting information about 2024 revenue:
+- **$150M** (20% increase) — [Source: investor_report_q4.pdf]
+- **$142M** (audited figure) — [Source: audited_financials_2024.pdf]
+
+These sources disagree. The audited financial statements may be more authoritative, but please verify with your finance team.
+
+### Example 2
+
+**User input:** How many employees does the company have?
+
+**Current (bad) output:** The company has 500 employees. *(Ignores the HR report showing 480.)*
+
+**Expected (good) output:** I found conflicting information about employee count:
+- **500 employees** across 5 global offices — [Source: company_overview.pdf]
+- **480 full-time employees** — [Source: hr_report_dec2024.pdf]
+
+The difference may be due to how contractors or part-time employees are counted. Please check with HR for the exact figure.
+
+### Example 3
+
+**User input:** How many offices does the company have?
+
+**Current (bad) output:** *(This one works fine — only one document mentions offices.)*
+
+**Expected (good) output:** The company has 5 global offices. [Source: company_overview.pdf] *(No conflict — answers normally.)*
+
+## Your Task
+
+Modify the pipeline so the agent:
+
+- Detects when retrieved documents contain contradictory information on the same topic.
+- Flags contradictions explicitly in the response rather than silently choosing one version.
+- Cites both conflicting sources with their document names.
+- Handles non-conflicting queries normally without unnecessary warnings.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Detects contradictions:** The agent identifies when retrieved documents contain conflicting information.
+- **Flags conflicts explicitly:** The response explicitly states that a conflict exists rather than silently choosing one version.
+- **Cites both conflicting sources:** Both contradicting documents and their sources are presented to the user.
+- **Handles agreeing documents normally:** When documents agree, the agent answers normally without unnecessary conflict warnings.

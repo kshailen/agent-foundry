@@ -1,0 +1,173 @@
+{
+  "title": "LangGraph",
+  "description": "Build stateful, multi-step AI agent workflows with LangGraph. Learn graph-based orchestration with nodes, edges, state management, and persistence.",
+  "icon": "git-branch",
+  "sections": [
+    {
+      "title": "Getting Started",
+      "topics": [
+        {
+          "slug": "introduction",
+          "title": "What is LangGraph?",
+          "difficulty": "beginner"
+        },
+        {
+          "slug": "installation",
+          "title": "Installation & First Graph",
+          "difficulty": "beginner",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langgraph/installation.ipynb"
+        }
+      ]
+    },
+    {
+      "title": "Beginner: Core Concepts",
+      "topics": [
+        {
+          "slug": "state-and-nodes",
+          "title": "State, Nodes & Edges",
+          "difficulty": "beginner",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langgraph/state-and-nodes.ipynb"
+        },
+        {
+          "slug": "reducers",
+          "title": "Reducers & Annotated State",
+          "difficulty": "beginner",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langgraph/reducers.ipynb"
+        },
+        {
+          "slug": "tool-calling-agent",
+          "title": "Building a Tool-Calling Agent",
+          "difficulty": "beginner",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langgraph/tool-calling-agent.ipynb"
+        },
+        {
+          "slug": "functional-api",
+          "title": "Functional API",
+          "difficulty": "beginner",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langgraph/functional-api.ipynb"
+        }
+      ]
+    },
+    {
+      "title": "Beginner: Project",
+      "topics": [
+        {
+          "slug": "project-calculator-agent",
+          "title": "Project: Calculator Agent",
+          "difficulty": "beginner",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langgraph/project-calculator-agent.ipynb"
+        }
+      ]
+    },
+    {
+      "title": "Intermediate: Features",
+      "topics": [
+        {
+          "slug": "conditional-routing",
+          "title": "Conditional Edges & Routing",
+          "difficulty": "intermediate",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langgraph/conditional-routing.ipynb"
+        },
+        {
+          "slug": "persistence",
+          "title": "Checkpointing & Persistence",
+          "difficulty": "intermediate",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langgraph/persistence.ipynb"
+        },
+        {
+          "slug": "human-in-the-loop",
+          "title": "Human-in-the-Loop",
+          "difficulty": "intermediate",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langgraph/human-in-the-loop.ipynb"
+        },
+        {
+          "slug": "streaming",
+          "title": "Streaming",
+          "difficulty": "intermediate",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langgraph/streaming.ipynb"
+        },
+        {
+          "slug": "command-primitive",
+          "title": "Command Primitive",
+          "difficulty": "intermediate",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langgraph/command-primitive.ipynb"
+        },
+        {
+          "slug": "multiple-schemas",
+          "title": "Multiple State Schemas",
+          "difficulty": "intermediate",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langgraph/multiple-schemas.ipynb"
+        },
+        {
+          "slug": "memory-store",
+          "title": "Memory Store",
+          "difficulty": "intermediate",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langgraph/memory-store.ipynb"
+        }
+      ]
+    },
+    {
+      "title": "Intermediate: Projects",
+      "topics": [
+        {
+          "slug": "project-content-router",
+          "title": "Project: Content Router",
+          "difficulty": "intermediate",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langgraph/project-content-router.ipynb"
+        },
+        {
+          "slug": "project-document-reviewer",
+          "title": "Project: Document Reviewer",
+          "difficulty": "intermediate",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langgraph/project-document-reviewer.ipynb"
+        }
+      ]
+    },
+    {
+      "title": "Advanced: Features",
+      "topics": [
+        {
+          "slug": "subgraphs",
+          "title": "Subgraphs",
+          "difficulty": "advanced",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langgraph/subgraphs.ipynb"
+        },
+        {
+          "slug": "map-reduce",
+          "title": "Map-Reduce with Send API",
+          "difficulty": "advanced",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langgraph/map-reduce.ipynb"
+        },
+        {
+          "slug": "multi-agent",
+          "title": "Multi-Agent Patterns",
+          "difficulty": "advanced",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langgraph/multi-agent.ipynb"
+        },
+        {
+          "slug": "production",
+          "title": "Production Deployment",
+          "difficulty": "advanced",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langgraph/production.ipynb"
+        }
+      ]
+    },
+    {
+      "title": "Advanced: Projects",
+      "topics": [
+        {
+          "slug": "project-report-generator",
+          "title": "Project: Parallel Report Generator",
+          "difficulty": "advanced",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langgraph/project-report-generator.ipynb"
+        },
+        {
+          "slug": "project-customer-support",
+          "title": "Project: Customer Support System",
+          "difficulty": "advanced",
+          "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langgraph/project-customer-support.ipynb"
+        }
+      ]
+    }
+  ]
+}

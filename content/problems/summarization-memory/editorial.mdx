@@ -1,0 +1,360 @@
+## Approach
+
+The bug is that the agent keeps every single message in history, causing the prompt to grow linearly with conversation length. For a 15-turn conversation about European history, each response can be hundreds of tokens — the total quickly balloons past token limits. A simple sliding window (Problem 33) would drop older messages entirely, losing important context. Summarization memory is a hybrid approach: condense older turns into a compact summary while keeping recent turns verbatim.
+
+The strategy splits history into two zones. The "summary zone" contains older turns that have been condensed into a running summary paragraph. The "recent zone" keeps the last N turns (e.g., 5) word-for-word. Whenever the summary zone accumulates enough new messages (past a threshold), a separate LLM call condenses them into an updated summary. The final prompt sent to the model contains: the system message, the running summary (as context), and the recent verbatim turns. This keeps prompt size sub-linear while preserving key facts from the entire conversation.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+RECENT_WINDOW = 5
+running_summary = ""
+history = [SystemMessage(content="You are a helpful assistant.")]
+
+def summarize_messages(messages: list, existing_summary: str) -> str:
+    msgs_text = "\n".join(
+        f"{'User' if isinstance(m, HumanMessage) else 'Assistant'}: {m.content}"
+        for m in messages
+    )
+    prompt = f"""Condense the following conversation into a brief summary paragraph.
+Preserve all key facts, names, dates, and important details.
+
+{"Existing summary to incorporate: " + existing_summary if existing_summary else ""}
+
+New messages to summarize:
+{msgs_text}
+
+Summary:"""
+    response = llm.invoke([HumanMessage(content=prompt)])
+    return response.content
+
+def chat(user_input: str) -> str:
+    global running_summary
+    history.append(HumanMessage(content=user_input))
+
+    conversation = history[1:]
+    recent_count = RECENT_WINDOW * 2
+
+    if len(conversation) > recent_count:
+        to_summarize = conversation[:-recent_count]
+        recent = conversation[-recent_count:]
+        running_summary = summarize_messages(to_summarize, running_summary)
+        history.clear()
+        history.append(SystemMessage(content="You are a helpful assistant."))
+        history.extend(recent)
+
+    messages_for_llm = []
+    system_content = "You are a helpful assistant."
+    if running_summary:
+        system_content += f"\n\nSummary of earlier conversation:\n{running_summary}"
+    messages_for_llm.append(SystemMessage(content=system_content))
+    messages_for_llm.extend(history[1:])
+
+    response = llm.invoke(messages_for_llm)
+    history.append(response)
+    return response.content
+
+topics = [
+    "Tell me about the history of Rome.",
+    "What were the main causes of its fall?",
+    "How did the Byzantine Empire continue?",
+    "Explain the role of the Catholic Church in medieval Europe.",
+    "What was the Renaissance?",
+    "Who were the key figures of the Renaissance?",
+    "How did the printing press change society?",
+    "What led to the Protestant Reformation?",
+    "Describe the Age of Exploration.",
+    "How did colonialism affect indigenous peoples?",
+    "What sparked the French Revolution?",
+    "Explain the Industrial Revolution.",
+    "How did World War I start?",
+    "What were the consequences of World War II?",
+    "Summarize everything we've discussed so far.",
+]
+
+for i, topic in enumerate(topics):
+    reply = chat(topic)
+    print(f"Turn {i + 1}: {reply[:100]}...")
+
+print(f"\nTotal messages in history: {len(history)}")
+print(f"Summary length: {len(running_summary)} chars")
+```
+
+### LangGraph
+
+```python
+from langchain_openai import ChatOpenAI
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict, Annotated
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+import operator
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+RECENT_WINDOW = 5
+
+class State(TypedDict):
+    messages: Annotated[list, operator.add]
+    summary: str
+
+def summarize_messages(messages: list, existing_summary: str) -> str:
+    msgs_text = "\n".join(
+        f"{'User' if isinstance(m, HumanMessage) else 'Assistant'}: {m.content}"
+        for m in messages
+    )
+    prompt = f"""Condense the following conversation into a brief summary paragraph.
+Preserve all key facts, names, dates, and important details.
+
+{"Existing summary to incorporate: " + existing_summary if existing_summary else ""}
+
+New messages to summarize:
+{msgs_text}
+
+Summary:"""
+    response = llm.invoke([HumanMessage(content=prompt)])
+    return response.content
+
+def chatbot(state: State) -> State:
+    messages = state["messages"]
+    summary = state.get("summary", "")
+
+    system_msg = messages[0]
+    conversation = messages[1:]
+    recent_count = RECENT_WINDOW * 2
+
+    if len(conversation) > recent_count:
+        to_summarize = conversation[:-recent_count]
+        recent = conversation[-recent_count:]
+        summary = summarize_messages(to_summarize, summary)
+        messages = [system_msg] + recent
+
+    messages_for_llm = []
+    system_content = system_msg.content
+    if summary:
+        system_content += f"\n\nSummary of earlier conversation:\n{summary}"
+    messages_for_llm.append(SystemMessage(content=system_content))
+    messages_for_llm.extend(messages[1:])
+
+    response = llm.invoke(messages_for_llm)
+    return {"messages": [response], "summary": summary}
+
+graph = StateGraph(State)
+graph.add_node("chatbot", chatbot)
+graph.add_edge(START, "chatbot")
+graph.add_edge("chatbot", END)
+app = graph.compile()
+
+all_messages = [SystemMessage(content="You are a helpful assistant.")]
+summary = ""
+topics = [
+    "Tell me about the history of Rome.",
+    "What were the main causes of its fall?",
+    "How did the Byzantine Empire continue?",
+    "Explain the role of the Catholic Church in medieval Europe.",
+    "What was the Renaissance?",
+    "Who were the key figures of the Renaissance?",
+    "How did the printing press change society?",
+    "What led to the Protestant Reformation?",
+    "Describe the Age of Exploration.",
+    "How did colonialism affect indigenous peoples?",
+    "What sparked the French Revolution?",
+    "Explain the Industrial Revolution.",
+    "How did World War I start?",
+    "What were the consequences of World War II?",
+    "Summarize everything we've discussed so far.",
+]
+
+for i, topic in enumerate(topics):
+    all_messages.append(HumanMessage(content=topic))
+    result = app.invoke({"messages": all_messages, "summary": summary})
+    all_messages = result["messages"]
+    summary = result.get("summary", summary)
+    print(f"Turn {i + 1}: {all_messages[-1].content[:100]}...")
+
+print(f"\nTotal messages in history: {len(all_messages)}")
+print(f"Summary length: {len(summary)} chars")
+```
+
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from crewai import LLM
+
+llm = LLM(model="gpt-4o-mini")
+
+RECENT_WINDOW = 5
+running_summary = ""
+history = []
+
+
+def summarize_messages(messages: list[str], existing_summary: str) -> str:
+    msgs_text = "\n".join(messages)
+    summarizer = Agent(
+        role="Summarizer",
+        goal="Condense conversation history into a brief summary",
+        backstory="You condense conversations into brief summary paragraphs, preserving all key facts, names, dates, and important details.",
+        llm=llm,
+    )
+    prompt = f"Condense the following conversation into a brief summary paragraph.\nPreserve all key facts, names, dates, and important details."
+    if existing_summary:
+        prompt += f"\n\nExisting summary to incorporate: {existing_summary}"
+    prompt += f"\n\nNew messages to summarize:\n{msgs_text}"
+    task = Task(description=prompt, expected_output="A brief summary paragraph", agent=summarizer)
+    crew = Crew(agents=[summarizer], tasks=[task])
+    return str(crew.kickoff())
+
+
+def chat(user_input: str) -> str:
+    global running_summary
+    history.append(f"User: {user_input}")
+
+    recent_count = RECENT_WINDOW * 2
+    if len(history) > recent_count:
+        to_summarize = history[:-recent_count]
+        recent = history[-recent_count:]
+        running_summary = summarize_messages(to_summarize, running_summary)
+        history.clear()
+        history.extend(recent)
+
+    context = ""
+    if running_summary:
+        context = f"Summary of earlier conversation:\n{running_summary}\n\n"
+    context += "Recent conversation:\n" + "\n".join(history)
+
+    agent = Agent(
+        role="Helpful Assistant",
+        goal="Answer user questions with conversation context",
+        backstory=f"You are a helpful assistant.\n\n{context}",
+        llm=llm,
+    )
+    task = Task(description=user_input, expected_output="A helpful response", agent=agent)
+    crew = Crew(agents=[agent], tasks=[task])
+    result = crew.kickoff()
+    reply = str(result)
+    history.append(f"Assistant: {reply}")
+    return reply
+
+
+topics = [
+    "Tell me about the history of Rome.",
+    "What were the main causes of its fall?",
+    "How did the Byzantine Empire continue?",
+    "Explain the role of the Catholic Church in medieval Europe.",
+    "What was the Renaissance?",
+    "Who were the key figures of the Renaissance?",
+    "How did the printing press change society?",
+    "What led to the Protestant Reformation?",
+    "Describe the Age of Exploration.",
+    "How did colonialism affect indigenous peoples?",
+    "What sparked the French Revolution?",
+    "Explain the Industrial Revolution.",
+    "How did World War I start?",
+    "What were the consequences of World War II?",
+    "Summarize everything we've discussed so far.",
+]
+
+for i, topic in enumerate(topics):
+    reply = chat(topic)
+    print(f"Turn {i + 1}: {reply[:100]}...")
+
+print(f"\nTotal messages in history: {len(history)}")
+print(f"Summary length: {len(running_summary)} chars")
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+
+RECENT_WINDOW = 5
+running_summary = ""
+history = []
+
+
+def summarize_messages(messages: list[str], existing_summary: str) -> str:
+    msgs_text = "\n".join(messages)
+    prompt = "Condense the following conversation into a brief summary paragraph.\nPreserve all key facts, names, dates, and important details."
+    if existing_summary:
+        prompt += f"\n\nExisting summary to incorporate: {existing_summary}"
+    prompt += f"\n\nNew messages to summarize:\n{msgs_text}"
+    summarizer = Agent(
+        name="Summarizer",
+        instructions="You condense conversations into brief summary paragraphs, preserving all key facts.",
+    )
+    result = Runner.run_sync(summarizer, prompt)
+    return result.final_output
+
+
+def chat(user_input: str) -> str:
+    global running_summary
+    history.append(f"User: {user_input}")
+
+    recent_count = RECENT_WINDOW * 2
+    if len(history) > recent_count:
+        to_summarize = history[:-recent_count]
+        recent = history[-recent_count:]
+        running_summary = summarize_messages(to_summarize, running_summary)
+        history.clear()
+        history.extend(recent)
+
+    context = ""
+    if running_summary:
+        context = f"Summary of earlier conversation:\n{running_summary}\n\n"
+    context += "Recent conversation:\n" + "\n".join(history)
+
+    agent = Agent(
+        name="Assistant",
+        instructions=f"You are a helpful assistant.\n\n{context}",
+    )
+    result = Runner.run_sync(agent, user_input)
+    reply = result.final_output
+    history.append(f"Assistant: {reply}")
+    return reply
+
+
+topics = [
+    "Tell me about the history of Rome.",
+    "What were the main causes of its fall?",
+    "How did the Byzantine Empire continue?",
+    "Explain the role of the Catholic Church in medieval Europe.",
+    "What was the Renaissance?",
+    "Who were the key figures of the Renaissance?",
+    "How did the printing press change society?",
+    "What led to the Protestant Reformation?",
+    "Describe the Age of Exploration.",
+    "How did colonialism affect indigenous peoples?",
+    "What sparked the French Revolution?",
+    "Explain the Industrial Revolution.",
+    "How did World War I start?",
+    "What were the consequences of World War II?",
+    "Summarize everything we've discussed so far.",
+]
+
+for i, topic in enumerate(topics):
+    reply = chat(topic)
+    print(f"Turn {i + 1}: {reply[:100]}...")
+
+print(f"\nTotal messages in history: {len(history)}")
+print(f"Summary length: {len(running_summary)} chars")
+```
+
+## Why This Works
+
+Summarization memory combines the best of both worlds: the cost efficiency of truncation and the context retention of full history. Older turns are not simply dropped — they are condensed into a summary that preserves key facts (names, dates, decisions, topics discussed). The LLM itself generates the summary, so it captures semantic meaning rather than just truncating at a token boundary.
+
+The recent window ensures that the last few turns are preserved verbatim, giving the model full fidelity on the current thread of conversation. The running summary provides compressed context from everything before that. As the conversation grows, the summary grows slowly (sub-linearly), while the recent window stays fixed. This keeps total prompt size bounded while retaining much more context than a simple sliding window.
+
+## Key Takeaways
+
+- Summarization memory is a hybrid between full history retention and sliding window truncation — it compresses rather than drops old context.
+- The LLM-generated summary captures semantic meaning, preserving key facts that a simple truncation would lose.
+- Splitting history into a "summary zone" and a "recent zone" keeps prompt size sub-linear while maintaining coherence.

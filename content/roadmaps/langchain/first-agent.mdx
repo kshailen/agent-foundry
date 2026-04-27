@@ -1,0 +1,131 @@
+# Creating Your First Agent
+
+An agent is an LLM that can decide which tools to call and when. Unlike chains, which follow a fixed sequence, agents dynamically choose actions based on the user's input and intermediate results.
+
+## What is an Agent?
+
+An agent combines three things:
+
+1. **A chat model** — the LLM that reasons and decides actions
+2. **Tools** — functions the agent can call
+3. **A system prompt** — instructions that guide the agent's behavior
+
+LangChain's `create_react_agent` (from LangGraph) builds an agent that follows the ReAct pattern: Reason, Act, Observe, Repeat.
+
+## Defining a Tool
+
+Before creating an agent, you need at least one tool. Here's a simple weather tool:
+
+```python
+from langchain_core.tools import tool
+
+@tool
+def get_weather(city: str) -> str:
+    """Get the current weather for a given city."""
+    return f"The weather in {city} is 72°F and sunny."
+```
+
+The `@tool` decorator turns a Python function into a LangChain tool. The docstring becomes the tool description that the LLM reads to understand when to use it.
+
+## Creating the Agent
+
+Use `create_react_agent` to assemble the agent:
+
+```python
+from langchain.chat_models import init_chat_model
+from langgraph.prebuilt import create_react_agent
+
+model = init_chat_model("gpt-4o-mini", model_provider="openai")
+
+agent = create_react_agent(
+    model=model,
+    tools=[get_weather],
+    prompt="You are a helpful weather assistant. Use the get_weather tool to answer weather questions.",
+)
+```
+
+## Invoking the Agent
+
+Call the agent with a dictionary containing a `messages` key:
+
+```python
+from langchain_core.messages import HumanMessage
+
+result = agent.invoke({"messages": [HumanMessage(content="What's the weather in Tokyo?")]})
+
+for message in result["messages"]:
+    print(f"{message.type}: {message.content}")
+```
+
+## The Agent Loop
+
+When you invoke an agent, it follows this loop:
+
+```
+┌──────────────────────────────┐
+│   Receive user message       │
+└──────────┬───────────────────┘
+           ▼
+┌──────────────────────────────┐
+│   LLM decides next action    │◄─────────┐
+│   (respond or call a tool)   │          │
+└──────────┬───────────────────┘          │
+           ▼                              │
+     ┌───────────┐                        │
+     │ Tool call? │──── No ──► Final response
+     └─────┬─────┘
+           │ Yes
+           ▼
+┌──────────────────────────────┐
+│   Execute the tool           │
+│   Return ToolMessage         │──────────┘
+└──────────────────────────────┘
+```
+
+1. The LLM receives the conversation and decides what to do
+2. If it wants to call a tool, it emits a tool call in its response
+3. The agent framework executes the tool and appends a `ToolMessage` with the result
+4. The LLM sees the tool result and decides again — respond or call another tool
+5. The loop continues until the LLM produces a final text response
+
+## Understanding the Result Messages
+
+The result contains the full message history, including tool interactions:
+
+```python
+result = agent.invoke({"messages": [HumanMessage(content="What's the weather in Paris?")]})
+
+for msg in result["messages"]:
+    print(f"[{msg.type}] {msg.content}")
+```
+
+A typical output looks like:
+
+```
+[human] What's the weather in Paris?
+[ai]
+[tool] The weather in Paris is 72°F and sunny.
+[ai] The weather in Paris is currently 72°F and sunny!
+```
+
+Notice the empty `[ai]` message — that's the LLM's decision to call the tool (the content is empty because it made a tool call instead of responding with text).
+
+## Adding a System Prompt
+
+The system prompt shapes how the agent behaves:
+
+```python
+agent = create_react_agent(
+    model=model,
+    tools=[get_weather],
+    prompt="You are a cheerful weather bot. Always include a fun weather-related fact in your responses.",
+)
+```
+
+## Key Takeaways
+
+- Agents use an LLM to dynamically decide which tools to call
+- `create_react_agent` from LangGraph creates an agent with model, tools, and prompt
+- The agent loop cycles between LLM reasoning and tool execution until a final answer is reached
+- Results include the full message history showing the agent's reasoning and tool calls
+- Tools are defined as Python functions decorated with `@tool`

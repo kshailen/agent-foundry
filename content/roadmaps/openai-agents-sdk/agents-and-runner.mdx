@@ -1,0 +1,78 @@
+# Agents & the Runner Loop
+
+Understanding the agent loop is key to building effective agents with the OpenAI Agents SDK. The Runner orchestrates a cycle of model calls, tool executions, and handoffs until the agent produces a final output.
+
+## The Agent Loop
+
+```
+User Message → Model Call → [Tool Call?] → [Handoff?] → Final Output
+                    ↑            |
+                    └────────────┘ (loop back if tool was called)
+```
+
+Each iteration:
+
+1. The model receives the conversation history and decides what to do
+2. If it calls a tool, the Runner executes the function and feeds the result back
+3. If it triggers a handoff, control passes to another agent
+4. If it produces a text response (no tool calls), the loop ends
+
+## Configuring an Agent
+
+```python
+from agents import Agent
+
+agent = Agent(
+    name="Research Assistant",
+    instructions="""You are a research assistant. When asked about a topic:
+    1. Search for relevant information using your tools
+    2. Synthesize the findings
+    3. Present a clear, structured summary""",
+    model="gpt-4o",
+)
+```
+
+### Agent Properties
+
+| Property | Description |
+|----------|-------------|
+| `name` | Display name for tracing and handoffs |
+| `instructions` | System prompt guiding the agent's behavior |
+| `model` | Which OpenAI model to use (default: gpt-4o) |
+| `tools` | List of function tools the agent can call |
+| `handoffs` | List of agents this agent can hand off to |
+| `output_type` | Pydantic model for structured final output |
+
+## Runner Options
+
+```python
+from agents import Runner
+
+result = Runner.run_sync(
+    agent,
+    "Analyze the latest AI trends",
+    max_turns=10,
+)
+```
+
+- `max_turns` — limits how many loop iterations the agent can take (prevents infinite loops)
+- The runner automatically manages conversation state across turns
+
+## Inspecting Results
+
+```python
+result = Runner.run_sync(agent, "Hello")
+
+print(result.final_output)     # The agent's final text response
+print(result.last_agent)       # The agent that produced the final output (useful with handoffs)
+
+for item in result.new_items:
+    print(item)                # All messages, tool calls, and tool results
+```
+
+## Key Takeaways
+
+- The Runner manages the agent loop: model call → tool execution → repeat
+- The loop ends when the model produces a text response without tool calls
+- `max_turns` prevents runaway loops
+- Results include the full trace of messages and tool calls

@@ -1,0 +1,52 @@
+{
+  "number": 77,
+  "title": "Sequential Agent Pipeline",
+  "difficulty": "easy",
+  "categories": [
+    "multi-agent",
+    "orchestration"
+  ],
+  "frameworks": [
+    "crewai",
+    "langchain",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "The researcher agent must run before the writer agent",
+    "The writer must receive the researcher's output as input",
+    "You may not merge both roles into a single agent",
+    "The pipeline must run end-to-end with a single invocation"
+  ],
+  "hints": [
+    "Capture the researcher's output and pass it as context to the writer",
+    "In CrewAI, use a sequential Process so tasks execute in order with automatic context passing",
+    "In LangChain, chain the two agents using RunnableSequence or call them sequentially in code"
+  ],
+  "starterCode": {
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai import LLM\n\nllm = LLM(model=\"gpt-4o-mini\")\n\nresearcher = Agent(\n    role=\"Researcher\",\n    goal=\"Gather key facts about a given topic\",\n    backstory=\"You are a thorough research analyst.\",\n    llm=llm,\n)\n\nwriter = Agent(\n    role=\"Writer\",\n    goal=\"Write a concise summary from research notes\",\n    backstory=\"You are a skilled technical writer.\",\n    llm=llm,\n)\n\nresearch_task = Task(\n    description=\"Research the latest trends in {topic}\",\n    expected_output=\"A list of 5 key findings with brief explanations\",\n    agent=researcher,\n)\n\nwrite_task = Task(\n    description=\"Write a 200-word summary about {topic}\",\n    expected_output=\"A polished summary paragraph\",\n    agent=writer,\n)\n\n# BUG: Both tasks run independently — the writer never sees the research\n# TODO: Wire the tasks so the writer receives the researcher's output\ncrew = Crew(\n    agents=[researcher, writer],\n    tasks=[research_task, write_task],\n)\n\nresult = crew.kickoff(inputs={\"topic\": \"AI agents\"})\nprint(result)",
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain_core.prompts import ChatPromptTemplate\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\nresearch_prompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a thorough research analyst. Gather key facts about the given topic.\"),\n    (\"human\", \"Research the latest trends in {topic}\"),\n])\n\nwrite_prompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a skilled technical writer. Write a concise summary.\"),\n    (\"human\", \"Write a 200-word summary about {topic}\"),\n])\n\nresearch_chain = research_prompt | llm\nwrite_chain = write_prompt | llm\n\n# BUG: Both chains run independently — the writer never sees the research\n# TODO: Feed the researcher's output into the writer's input\nresearch_result = research_chain.invoke({\"topic\": \"AI agents\"})\nprint(\"Research:\", research_result.content)\n\nwrite_result = write_chain.invoke({\"topic\": \"AI agents\"})\nprint(\"Summary:\", write_result.content)",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\nresearcher = Agent(\n    name=\"Researcher\",\n    instructions=\"You are a thorough research analyst. Gather key facts about the given topic.\",\n)\n\nwriter = Agent(\n    name=\"Writer\",\n    instructions=\"You are a skilled technical writer. Write a concise summary.\",\n)\n\n# BUG: Both agents run independently — the writer never sees the research\n# TODO: Feed the researcher's output into the writer's input\nresearch_result = Runner.run_sync(researcher, \"Research the latest trends in AI agents\")\nprint(\"Research:\", research_result.final_output)\n\nwrite_result = Runner.run_sync(writer, \"Write a 200-word summary about AI agents\")\nprint(\"Summary:\", write_result.final_output)"
+  },
+  "colabUrls": {
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/sequential-agent-pipeline-crewai.ipynb",
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/sequential-agent-pipeline-langchain.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/sequential-agent-pipeline-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "sequential-execution",
+      "label": "Sequential execution order",
+      "description": "The researcher runs first and the writer runs second"
+    },
+    {
+      "id": "context-flows",
+      "label": "Research context flows to writer",
+      "description": "The writer's input includes the researcher's output so the summary is grounded in actual research"
+    },
+    {
+      "id": "coherent-output",
+      "label": "Coherent final summary",
+      "description": "The final summary clearly reflects the specific findings from the research step"
+    }
+  ]
+}

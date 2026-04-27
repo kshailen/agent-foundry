@@ -1,0 +1,57 @@
+{
+  "number": 85,
+  "title": "Dynamic Agent Spawning",
+  "difficulty": "hard",
+  "categories": [
+    "multi-agent",
+    "orchestration"
+  ],
+  "frameworks": [
+    "langgraph",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "The number and type of agents must be determined at runtime, not hard-coded",
+    "A planner must analyze the task and decide which agents to spawn",
+    "Each spawned agent must have a role tailored to the specific subtask",
+    "The system must work for tasks that need different agent configurations"
+  ],
+  "hints": [
+    "Use an LLM call to analyze the task and output a list of required agent roles",
+    "Dynamically create Agent objects from the planner's output before running the crew or graph",
+    "In LangGraph, dynamically add nodes to the graph based on the planner's analysis"
+  ],
+  "starterCode": {
+    "langgraph": "from langchain_openai import ChatOpenAI\nfrom langgraph.graph import StateGraph, START, END\nfrom typing import TypedDict\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\nclass State(TypedDict):\n    task: str\n    result: str\n\n# BUG: Fixed two-agent setup regardless of task complexity\n# TODO: Dynamically decide how many and what type of agents to spawn\ndef agent_1(state: State) -> dict:\n    response = llm.invoke(f\"You are a researcher. Work on: {state['task']}\")\n    return {\"result\": response.content}\n\ndef agent_2(state: State) -> dict:\n    response = llm.invoke(f\"You are a writer. Summarize: {state['result']}\")\n    return {\"result\": response.content}\n\ngraph = StateGraph(State)\ngraph.add_node(\"agent_1\", agent_1)\ngraph.add_node(\"agent_2\", agent_2)\ngraph.add_edge(START, \"agent_1\")\ngraph.add_edge(\"agent_1\", \"agent_2\")\ngraph.add_edge(\"agent_2\", END)\n\napp = graph.compile()\n\n# This task needs a researcher + coder + writer, but only 2 fixed agents exist\nresult = app.invoke({\"task\": \"Research Python async patterns, write example code, and create a tutorial\", \"result\": \"\"})\nprint(result[\"result\"])",
+    "crewai": "from crewai import Agent, Task, Crew, Process\nfrom crewai import LLM\n\nllm = LLM(model=\"gpt-4o-mini\")\n\n# BUG: Fixed two-agent crew regardless of task requirements\n# TODO: Analyze the task and dynamically spawn the right agents\nresearcher = Agent(\n    role=\"Researcher\",\n    goal=\"Research a topic\",\n    backstory=\"You are a researcher.\",\n    llm=llm,\n)\n\nwriter = Agent(\n    role=\"Writer\",\n    goal=\"Write content\",\n    backstory=\"You are a writer.\",\n    llm=llm,\n)\n\nresearch_task = Task(\n    description=\"Research: {task}\",\n    expected_output=\"Research findings\",\n    agent=researcher,\n)\n\nwrite_task = Task(\n    description=\"Write about: {task}\",\n    expected_output=\"Written content\",\n    agent=writer,\n)\n\ncrew = Crew(\n    agents=[researcher, writer],\n    tasks=[research_task, write_task],\n    process=Process.sequential,\n)\n\n# This task needs a researcher + coder + writer, but only 2 fixed agents exist\nresult = crew.kickoff(inputs={\"task\": \"Research Python async patterns, write example code, and create a tutorial\"})\nprint(result)",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\n# BUG: Fixed two-agent setup regardless of task complexity\n# TODO: Dynamically decide how many and what type of agents to spawn\nresearcher = Agent(\n    name=\"Researcher\",\n    instructions=\"You are a researcher. Research the given topic.\",\n)\n\nwriter = Agent(\n    name=\"Writer\",\n    instructions=\"You are a writer. Write content based on research.\",\n)\n\n# This task needs a researcher + coder + writer, but only 2 fixed agents exist\nresearch_result = Runner.run_sync(researcher, \"Research Python async patterns, write example code, and create a tutorial\")\nwrite_result = Runner.run_sync(writer, f\"Write about: {research_result.final_output}\")\nprint(write_result.final_output)"
+  },
+  "colabUrls": {
+    "langgraph": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/dynamic-agent-spawning-langgraph.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/dynamic-agent-spawning-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/dynamic-agent-spawning-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "runtime-decision",
+      "label": "Agent count decided at runtime",
+      "description": "The number and type of agents are determined dynamically based on the task"
+    },
+    {
+      "id": "planner-exists",
+      "label": "Planner analyzes the task",
+      "description": "A planning step inspects the task and decides what agents are needed"
+    },
+    {
+      "id": "tailored-roles",
+      "label": "Agents have tailored roles",
+      "description": "Each spawned agent has a role and instructions specific to its subtask"
+    },
+    {
+      "id": "handles-variety",
+      "label": "Handles different task types",
+      "description": "The system produces different agent configurations for different tasks"
+    }
+  ]
+}

@@ -1,0 +1,51 @@
+{
+  "number": 60,
+  "title": "Graceful Timeout Handler",
+  "difficulty": "easy",
+  "categories": [
+    "error-recovery"
+  ],
+  "frameworks": [
+    "langchain",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "You must not remove or disable the slow tool",
+    "The timeout threshold must be configurable, not hardcoded",
+    "The agent must return a user-friendly message on timeout",
+    "Normal tool responses that complete in time must still work"
+  ],
+  "hints": [
+    "Python's signal module or threading.Timer can enforce time limits on synchronous calls",
+    "Wrap the tool call in a helper that raises a custom exception after the timeout elapses",
+    "Catch the timeout exception and return a friendly fallback string instead of crashing"
+  ],
+  "starterCode": {
+    "langchain": "import time\nfrom langchain_openai import ChatOpenAI\nfrom langchain.agents import AgentExecutor, create_tool_calling_agent\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom langchain_core.tools import tool\n\n@tool\ndef slow_api_lookup(query: str) -> str:\n    \"\"\"Look up information from an external API.\"\"\"\n    # BUG: This tool takes 30 seconds and the agent has no timeout protection\n    time.sleep(30)\n    return f\"Results for: {query}\"\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a helpful assistant. Use tools to answer questions.\"),\n    (\"human\", \"{input}\"),\n    (\"placeholder\", \"{agent_scratchpad}\"),\n])\n\nagent = create_tool_calling_agent(llm, [slow_api_lookup], prompt)\nexecutor = AgentExecutor(agent=agent, tools=[slow_api_lookup])\n\n# Test: This will hang for 30 seconds with no feedback\nresult = executor.invoke({\"input\": \"Look up the latest AI news\"})\nprint(result[\"output\"])",
+    "openai-agents-sdk": "import time\nfrom agents import Agent, Runner\nfrom agents.tool import function_tool\n\n@function_tool\ndef slow_api_lookup(query: str) -> str:\n    \"\"\"Look up information from an external API.\"\"\"\n    # BUG: This tool takes 30 seconds and the agent has no timeout protection\n    time.sleep(30)\n    return f\"Results for: {query}\"\n\nagent = Agent(\n    name=\"Research Assistant\",\n    instructions=\"You are a helpful assistant. Use tools to answer questions.\",\n    tools=[slow_api_lookup],\n)\n\n# Test: This will hang for 30 seconds with no feedback\nresult = Runner.run_sync(agent, \"Look up the latest AI news\")\nprint(result.final_output)",
+    "crewai": "import time\nfrom crewai import Agent, Task, Crew\nfrom crewai.tools import tool\n\n@tool\ndef slow_api_lookup(query: str) -> str:\n    \"\"\"Look up information from an external API.\"\"\"\n    # BUG: This tool takes 30 seconds and the agent has no timeout protection\n    time.sleep(30)\n    return f\"Results for: {query}\"\n\nassistant = Agent(\n    role=\"Research Assistant\",\n    goal=\"Answer questions using tools\",\n    backstory=\"You are a helpful assistant. Use tools to answer questions.\",\n    tools=[slow_api_lookup],\n)\n\n# Test: This will hang for 30 seconds with no feedback\ntask = Task(\n    description=\"Look up the latest AI news\",\n    expected_output=\"Latest AI news results\",\n    agent=assistant,\n)\n\ncrew = Crew(agents=[assistant], tasks=[task])\nresult = crew.kickoff()\nprint(result)"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/graceful-timeout-handler-langchain.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/graceful-timeout-handler-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/graceful-timeout-handler-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "timeout-enforced",
+      "label": "Timeout is enforced",
+      "description": "The agent does not hang indefinitely when a tool takes too long"
+    },
+    {
+      "id": "friendly-message",
+      "label": "Returns friendly message",
+      "description": "On timeout, the user receives a helpful message instead of an error or crash"
+    },
+    {
+      "id": "fast-tools-unaffected",
+      "label": "Fast tools still work",
+      "description": "Tools that respond within the timeout window continue to work normally"
+    }
+  ]
+}

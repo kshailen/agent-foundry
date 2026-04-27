@@ -1,0 +1,181 @@
+# Multi-Agent Systems
+
+Multi-agent systems use multiple specialized agents that collaborate to solve complex problems. Instead of building one monolithic agent, you decompose tasks across agents with distinct roles. LangGraph provides several patterns for coordinating these agents — from simple handoffs to hierarchical subagent architectures.
+
+## Multi-Agent Patterns
+
+| Pattern | Description | When to Use |
+|---------|-------------|-------------|
+| Handoffs | Agent transfers control to a specialist agent | When tasks have clear boundaries between domains |
+| Router | Classify input and route to the right specialist | When you need a dispatcher to select from multiple agents |
+| Subagents | Parent agent spawns child agents for subtasks | When tasks decompose into independent parallel work |
+| Skills | On-demand specialized prompts injected at runtime | When you need dynamic capabilities without separate agents |
+
+## Handoffs Pattern
+
+In a handoff, one agent explicitly transfers control to another. The first agent recognizes it needs a specialist and hands the conversation over. LangGraph's `create_react_agent` supports handoffs through the `handoffs` parameter:
+
+```python
+from langchain.chat_models import init_chat_model
+from langgraph.prebuilt import create_react_agent
+
+model = init_chat_model("gpt-4o-mini", model_provider="openai")
+
+billing_agent = create_react_agent(
+    model=model,
+    tools=[],
+    name="billing_agent",
+    prompt="You are a billing specialist. Help users with invoices, payments, and account charges.",
+)
+
+tech_agent = create_react_agent(
+    model=model,
+    tools=[],
+    name="tech_agent",
+    prompt="You are a technical support specialist. Help users with software issues and troubleshooting.",
+)
+
+triage_agent = create_react_agent(
+    model=model,
+    tools=[],
+    name="triage_agent",
+    prompt="You are a triage agent. Route billing questions to billing_agent and technical questions to tech_agent.",
+    handoffs=["billing_agent", "tech_agent"],
+)
+```
+
+## Building a Multi-Agent Graph
+
+Connect agents into a coordinated graph using `create_react_agent` with handoffs:
+
+```python
+from langgraph.prebuilt import create_react_agent
+
+triage_agent = create_react_agent(
+    model=model,
+    tools=[],
+    name="triage_agent",
+    prompt="You route users to the right specialist.",
+    handoffs=["billing_agent", "tech_agent"],
+)
+```
+
+When the triage agent determines the user needs billing help, it hands off to `billing_agent`. The conversation continues seamlessly from the specialist's perspective.
+
+## Router Pattern
+
+A router agent classifies the incoming message and dispatches it to the correct specialist without doing any work itself:
+
+```python
+from langchain_core.tools import tool
+
+@tool
+def classify_intent(message: str) -> str:
+    """Classify the user's intent into a category."""
+    message_lower = message.lower()
+    if any(word in message_lower for word in ["bill", "invoice", "payment", "charge"]):
+        return "billing"
+    elif any(word in message_lower for word in ["bug", "error", "crash", "install"]):
+        return "technical"
+    return "general"
+
+router_agent = create_react_agent(
+    model=model,
+    tools=[classify_intent],
+    name="router",
+    prompt=(
+        "You are a router. Use classify_intent to determine the category, "
+        "then hand off to the appropriate specialist."
+    ),
+    handoffs=["billing_agent", "tech_agent"],
+)
+```
+
+## Subagents Pattern
+
+A parent agent spawns child agents to handle subtasks independently. Each subagent runs in its own context:
+
+```python
+from langchain_core.tools import tool
+
+@tool
+def research_topic(topic: str) -> str:
+    """Research a topic using a dedicated subagent."""
+    research_agent = create_react_agent(
+        model=model,
+        tools=[],
+        prompt=f"Research the following topic thoroughly: {topic}",
+    )
+    result = research_agent.invoke({
+        "messages": [{"role": "user", "content": f"Research: {topic}"}]
+    })
+    return result["messages"][-1].content
+
+parent_agent = create_react_agent(
+    model=model,
+    tools=[research_topic],
+    prompt="You are a research coordinator. Break complex questions into subtopics and research each one.",
+)
+```
+
+## Skills Pattern
+
+Skills are specialized prompts or tool sets that an agent loads on-demand based on the task:
+
+```python
+SKILLS = {
+    "code_review": "You are a code reviewer. Analyze code for bugs, style issues, and improvements.",
+    "sql_expert": "You are a SQL expert. Write optimized queries and explain execution plans.",
+    "writer": "You are a technical writer. Produce clear, concise documentation.",
+}
+
+@tool
+def activate_skill(skill_name: str, task: str) -> str:
+    """Activate a specialized skill to handle a specific task."""
+    skill_prompt = SKILLS.get(skill_name)
+    if not skill_prompt:
+        return f"Unknown skill: {skill_name}. Available: {list(SKILLS.keys())}"
+
+    skill_agent = create_react_agent(
+        model=model,
+        tools=[],
+        prompt=skill_prompt,
+    )
+    result = skill_agent.invoke({
+        "messages": [{"role": "user", "content": task}]
+    })
+    return result["messages"][-1].content
+
+agent = create_react_agent(
+    model=model,
+    tools=[activate_skill],
+    prompt="You have access to specialized skills: code_review, sql_expert, writer. Activate the right skill for each task.",
+)
+```
+
+## Running the Multi-Agent System
+
+```python
+from langchain_core.messages import HumanMessage
+
+result = triage_agent.invoke({
+    "messages": [HumanMessage(content="I was charged twice on my last invoice")]
+})
+print(result["messages"][-1].content)
+```
+
+```python
+result = triage_agent.invoke({
+    "messages": [HumanMessage(content="My app crashes when I click the submit button")]
+})
+print(result["messages"][-1].content)
+```
+
+## Key Takeaways
+
+- Multi-agent systems decompose complex problems across specialized agents
+- **Handoffs** transfer control between agents using the `handoffs` parameter in `create_react_agent`
+- **Routers** classify input and dispatch to the right specialist without doing work themselves
+- **Subagents** spawn child agents for independent subtasks, each running in its own context
+- **Skills** inject specialized prompts on-demand without creating separate persistent agents
+- Start with handoffs for simple routing; use subagents when tasks need parallel decomposition

@@ -1,0 +1,56 @@
+{
+  "number": 86,
+  "title": "Agent Consensus Protocol",
+  "difficulty": "hard",
+  "categories": [
+    "multi-agent"
+  ],
+  "frameworks": [
+    "crewai",
+    "langgraph",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "At least three agents must independently produce an answer",
+    "A voting or consensus mechanism must determine the final answer",
+    "The system must handle disagreements (no unanimous requirement)",
+    "The first agent's answer must not be automatically preferred"
+  ],
+  "hints": [
+    "Have each agent produce an answer independently, then collect all answers for voting",
+    "Use a majority-vote approach or a mediator agent that weighs each answer",
+    "In LangGraph, run agent nodes in parallel (or sequentially) then aggregate in a consensus node"
+  ],
+  "starterCode": {
+    "crewai": "from crewai import Agent, Task, Crew, Process\nfrom crewai import LLM\n\nllm = LLM(model=\"gpt-4o-mini\")\n\n# BUG: Only one agent answers — its response is always used with no validation\n# TODO: Add multiple agents and a consensus/voting mechanism\nfact_checker = Agent(\n    role=\"Fact Checker\",\n    goal=\"Verify factual claims and provide accurate answers\",\n    backstory=\"You are a careful fact-checker who validates information.\",\n    llm=llm,\n)\n\nverify_task = Task(\n    description=\"Is the following claim true or false? Provide your answer and reasoning. Claim: '{claim}'\",\n    expected_output=\"TRUE or FALSE with a brief explanation\",\n    agent=fact_checker,\n)\n\ncrew = Crew(\n    agents=[fact_checker],\n    tasks=[verify_task],\n    process=Process.sequential,\n)\n\nresult = crew.kickoff(inputs={\"claim\": \"The Great Wall of China is visible from space with the naked eye\"})\nprint(result)",
+    "langgraph": "from langchain_openai import ChatOpenAI\nfrom langgraph.graph import StateGraph, START, END\nfrom typing import TypedDict\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\nclass State(TypedDict):\n    claim: str\n    answer: str\n\n# BUG: Single agent decides — no consensus or validation\n# TODO: Add multiple agents and a voting/consensus mechanism\ndef verify(state: State) -> dict:\n    prompt = f\"Is this claim true or false? Provide your answer (TRUE/FALSE) and reasoning. Claim: '{state['claim']}'\"\n    response = llm.invoke(prompt)\n    return {\"answer\": response.content}\n\ngraph = StateGraph(State)\ngraph.add_node(\"verify\", verify)\ngraph.add_edge(START, \"verify\")\ngraph.add_edge(\"verify\", END)\n\napp = graph.compile()\nresult = app.invoke({\"claim\": \"The Great Wall of China is visible from space with the naked eye\", \"answer\": \"\"})\nprint(result[\"answer\"])",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\n# BUG: Only one agent answers — its response is always used with no validation\n# TODO: Add multiple agents and a consensus/voting mechanism\nfact_checker = Agent(\n    name=\"Fact Checker\",\n    instructions=\"You are a careful fact-checker who validates information. Is the claim true or false? Provide your answer (TRUE or FALSE) and reasoning.\",\n    model=\"gpt-4o-mini\",\n)\n\nclaim = \"The Great Wall of China is visible from space with the naked eye\"\nresult = Runner.run_sync(fact_checker, f\"Claim: '{claim}'\")\nprint(result.final_output)"
+  },
+  "colabUrls": {
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/agent-consensus-protocol-crewai.ipynb",
+    "langgraph": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/agent-consensus-protocol-langgraph.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/agent-consensus-protocol-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "multiple-agents",
+      "label": "Multiple agents produce answers",
+      "description": "At least three agents independently answer the same question"
+    },
+    {
+      "id": "voting-mechanism",
+      "label": "Voting or consensus mechanism",
+      "description": "A formal mechanism aggregates the agents' answers to determine the final result"
+    },
+    {
+      "id": "handles-disagreement",
+      "label": "Handles disagreements",
+      "description": "The system correctly resolves cases where agents disagree"
+    },
+    {
+      "id": "no-first-bias",
+      "label": "No first-agent bias",
+      "description": "The first agent's answer is not automatically preferred over others"
+    }
+  ]
+}

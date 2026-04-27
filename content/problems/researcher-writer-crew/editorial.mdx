@@ -1,0 +1,119 @@
+## Approach
+
+The problem is nearly identical in spirit to the sequential pipeline problem but with a critical nuance: even though the crew uses `Process.sequential`, the write task has no `context` parameter linking it to the research task. Sequential execution only guarantees order — it does not automatically pass outputs between tasks unless context is explicitly configured. The writer therefore generates a market report from scratch, inventing statistics that were never part of the research.
+
+In CrewAI, the fix is adding `context=[research_task]` to the write task so the framework injects the researcher's output into the writer's prompt. In LangChain, the writer's prompt template is missing a placeholder for research data — you need to add a `{research}` variable and populate it with the research chain's actual output.
+
+The distinction from the simpler sequential pipeline problem is that this scenario explicitly requires the report to reference specific data points from the research, not just be "about the same topic." The writer must synthesize the researcher's actual findings, not generate plausible-sounding content independently.
+
+## Solution
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai import LLM
+
+llm = LLM(model="gpt-4o-mini")
+
+researcher = Agent(
+    role="Market Researcher",
+    goal="Find current market data and statistics about a given industry",
+    backstory="You are a senior market analyst with 10 years of experience.",
+    llm=llm,
+)
+
+writer = Agent(
+    role="Report Writer",
+    goal="Draft a professional market report from research data",
+    backstory="You are a business writer who turns raw data into executive summaries.",
+    llm=llm,
+)
+
+research_task = Task(
+    description="Research current market trends and key statistics for the {industry} industry",
+    expected_output="A detailed list of market trends, statistics, and key players",
+    agent=researcher,
+)
+
+write_task = Task(
+    description="Using the research findings provided, write a professional market report for the {industry} industry. Reference specific data points from the research.",
+    expected_output="A 300-word executive summary with data-backed insights",
+    agent=writer,
+    context=[research_task],
+)
+
+crew = Crew(
+    agents=[researcher, writer],
+    tasks=[research_task, write_task],
+    process=Process.sequential,
+)
+
+result = crew.kickoff(inputs={"industry": "electric vehicles"})
+print(result)
+```
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+research_prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a senior market analyst. Find current market data and statistics."),
+    ("human", "Research current market trends and key statistics for the {industry} industry"),
+])
+
+write_prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a business writer who turns raw data into executive summaries. Only use the data provided in the research findings below. Do not invent statistics."),
+    ("human", "Write a professional 300-word market report for the {industry} industry based on the following research findings:\n\n{research}"),
+])
+
+research_chain = research_prompt | llm
+write_chain = write_prompt | llm
+
+research_result = research_chain.invoke({"industry": "electric vehicles"})
+print("Research:", research_result.content)
+
+write_result = write_chain.invoke({"industry": "electric vehicles", "research": research_result.content})
+print("Report:", write_result.content)
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+
+researcher = Agent(
+    name="Market Researcher",
+    instructions="You are a senior market analyst with 10 years of experience. Find current market data and statistics.",
+)
+
+writer = Agent(
+    name="Report Writer",
+    instructions="You are a business writer who turns raw data into executive summaries. Only use the data provided in the research findings below. Do not invent statistics.",
+)
+
+research_result = Runner.run_sync(researcher, "Research current market trends and key statistics for the electric vehicles industry")
+print("Research:", research_result.final_output)
+
+write_result = Runner.run_sync(
+    writer,
+    f"Write a professional 300-word market report for the electric vehicles industry based on the following research findings:\n\n{research_result.final_output}",
+)
+print("Report:", write_result.final_output)
+```
+
+## Why This Works
+
+The `context=[research_task]` parameter in CrewAI explicitly tells the framework to include the research task's output in the writer's prompt context. Without it, even in a sequential process, each task only sees the original input variables (like `{industry}`) — not the output of prior tasks. Similarly, in LangChain, adding `{research}` to the writer's prompt template and passing the actual research output as that variable ensures the writer sees and references the real data.
+
+The writer's system prompt is also updated to instruct it to use only the provided research data, reducing the likelihood of hallucinated statistics.
+
+## Key Takeaways
+
+- Sequential execution order alone does not guarantee context passing — you must explicitly wire outputs to inputs via `context` (CrewAI) or prompt variables (LangChain).
+- Instructing the writer to "only use provided data" in its system prompt adds an extra guardrail against hallucinated statistics.
+- The `context` parameter in CrewAI is a list, allowing a task to receive output from multiple upstream tasks when needed.

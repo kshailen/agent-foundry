@@ -1,0 +1,199 @@
+## Approach
+
+The shopping assistant's `scrape_product` tool returns raw HTML to the agent. The LLM wastes tokens processing HTML tags, sometimes picks up ad copy or sidebar content as product data, and occasionally confuses the original price with the current price. The parsing should happen inside the tool itself, not in the LLM's context window.
+
+The fix is to add an HTML parser (BeautifulSoup) inside the tool that extracts specific fields — product name, current price, original price, rating, review count, availability, description, and specs — and returns them as a clean formatted string. By stripping out sidebars, ads, and irrelevant markup before the data reaches the LLM, the agent gets unambiguous structured data and produces accurate responses with fewer tokens.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+from bs4 import BeautifulSoup
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+
+@tool
+def scrape_product(url: str) -> str:
+    """Scrape product information from a URL and return structured data."""
+    raw_html = """
+    <div class="product-page">
+        <h1 class="product-title">Wireless Noise-Cancelling Headphones</h1>
+        <span class="price">$249.99</span>
+        <span class="original-price">$349.99</span>
+        <div class="rating"><span class="stars">4.5</span> out of 5 (<span class="count">2,847</span> reviews)</div>
+        <div class="availability in-stock">In Stock</div>
+        <p class="description">Premium wireless headphones with active noise cancellation, 30-hour battery life, and comfortable over-ear design.</p>
+        <div class="specs"><ul><li>Bluetooth 5.2</li><li>Weight: 250g</li><li>Driver: 40mm</li></ul></div>
+        <div class="sidebar"><div class="ad">Buy now and save!</div><div class="related">Related products...</div></div>
+    </div>
+    """
+
+    soup = BeautifulSoup(raw_html, "html.parser")
+
+    name = soup.select_one(".product-title").get_text(strip=True)
+    price = soup.select_one(".price").get_text(strip=True)
+    original_price = soup.select_one(".original-price").get_text(strip=True)
+    stars = soup.select_one(".stars").get_text(strip=True)
+    review_count = soup.select_one(".count").get_text(strip=True)
+    availability = soup.select_one(".availability").get_text(strip=True)
+    description = soup.select_one(".description").get_text(strip=True)
+    specs = [li.get_text(strip=True) for li in soup.select(".specs li")]
+
+    return (
+        f"Product: {name}\n"
+        f"Price: {price} (was {original_price})\n"
+        f"Rating: {stars}/5 ({review_count} reviews)\n"
+        f"Availability: {availability}\n"
+        f"Description: {description}\n"
+        f"Specs: {', '.join(specs)}"
+    )
+
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a shopping assistant. Help users find product information."),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}"),
+])
+
+agent = create_tool_calling_agent(llm, [scrape_product], prompt)
+executor = AgentExecutor(agent=agent, tools=[scrape_product])
+
+result = executor.invoke({"input": "Get me the details for the headphones at https://example.com/headphones"})
+print(result["output"])
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from agents.tool import function_tool
+from bs4 import BeautifulSoup
+
+
+@function_tool
+def scrape_product(url: str) -> str:
+    """Scrape product information from a URL and return structured data."""
+    raw_html = """
+    <div class="product-page">
+        <h1 class="product-title">Wireless Noise-Cancelling Headphones</h1>
+        <span class="price">$249.99</span>
+        <span class="original-price">$349.99</span>
+        <div class="rating"><span class="stars">4.5</span> out of 5 (<span class="count">2,847</span> reviews)</div>
+        <div class="availability in-stock">In Stock</div>
+        <p class="description">Premium wireless headphones with active noise cancellation, 30-hour battery life, and comfortable over-ear design.</p>
+        <div class="specs"><ul><li>Bluetooth 5.2</li><li>Weight: 250g</li><li>Driver: 40mm</li></ul></div>
+        <div class="sidebar"><div class="ad">Buy now and save!</div><div class="related">Related products...</div></div>
+    </div>
+    """
+
+    soup = BeautifulSoup(raw_html, "html.parser")
+
+    name = soup.select_one(".product-title").get_text(strip=True)
+    price = soup.select_one(".price").get_text(strip=True)
+    original_price = soup.select_one(".original-price").get_text(strip=True)
+    stars = soup.select_one(".stars").get_text(strip=True)
+    review_count = soup.select_one(".count").get_text(strip=True)
+    availability = soup.select_one(".availability").get_text(strip=True)
+    description = soup.select_one(".description").get_text(strip=True)
+    specs = [li.get_text(strip=True) for li in soup.select(".specs li")]
+
+    return (
+        f"Product: {name}\n"
+        f"Price: {price} (was {original_price})\n"
+        f"Rating: {stars}/5 ({review_count} reviews)\n"
+        f"Availability: {availability}\n"
+        f"Description: {description}\n"
+        f"Specs: {', '.join(specs)}"
+    )
+
+
+agent = Agent(
+    name="Shopping Assistant",
+    instructions="You are a shopping assistant. Help users find product information.",
+    tools=[scrape_product],
+)
+
+result = Runner.run_sync(agent, "Get me the details for the headphones at https://example.com/headphones")
+print(result.final_output)
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai.tools import tool
+from bs4 import BeautifulSoup
+
+
+@tool
+def scrape_product(url: str) -> str:
+    """Scrape product information from a URL and return structured data."""
+    raw_html = """
+    <div class="product-page">
+        <h1 class="product-title">Wireless Noise-Cancelling Headphones</h1>
+        <span class="price">$249.99</span>
+        <span class="original-price">$349.99</span>
+        <div class="rating"><span class="stars">4.5</span> out of 5 (<span class="count">2,847</span> reviews)</div>
+        <div class="availability in-stock">In Stock</div>
+        <p class="description">Premium wireless headphones with active noise cancellation, 30-hour battery life, and comfortable over-ear design.</p>
+        <div class="specs"><ul><li>Bluetooth 5.2</li><li>Weight: 250g</li><li>Driver: 40mm</li></ul></div>
+        <div class="sidebar"><div class="ad">Buy now and save!</div><div class="related">Related products...</div></div>
+    </div>
+    """
+
+    soup = BeautifulSoup(raw_html, "html.parser")
+
+    name = soup.select_one(".product-title").get_text(strip=True)
+    price = soup.select_one(".price").get_text(strip=True)
+    original_price = soup.select_one(".original-price").get_text(strip=True)
+    stars = soup.select_one(".stars").get_text(strip=True)
+    review_count = soup.select_one(".count").get_text(strip=True)
+    availability = soup.select_one(".availability").get_text(strip=True)
+    description = soup.select_one(".description").get_text(strip=True)
+    specs = [li.get_text(strip=True) for li in soup.select(".specs li")]
+
+    return (
+        f"Product: {name}\n"
+        f"Price: {price} (was {original_price})\n"
+        f"Rating: {stars}/5 ({review_count} reviews)\n"
+        f"Availability: {availability}\n"
+        f"Description: {description}\n"
+        f"Specs: {', '.join(specs)}"
+    )
+
+
+shopping_agent = Agent(
+    role="Shopping Assistant",
+    goal="Help users find product information by scraping and presenting product details clearly.",
+    backstory="You are a shopping assistant that helps users find and compare products.",
+    tools=[scrape_product],
+)
+
+task = Task(
+    description="Get me the details for the headphones at https://example.com/headphones",
+    expected_output="A clear summary of the product details including name, price, rating, and availability.",
+    agent=shopping_agent,
+)
+
+crew = Crew(agents=[shopping_agent], tasks=[task], process=Process.sequential)
+result = crew.kickoff()
+print(result)
+```
+
+## Why This Works
+
+By parsing the HTML inside the tool using BeautifulSoup, the agent never sees raw HTML tags, sidebar ads, or related product links. It receives a clean, structured string with exactly the fields it needs: name, price, rating, review count, availability, description, and specs. This eliminates three classes of errors: (1) the LLM wasting tokens processing HTML syntax, (2) the LLM extracting data from irrelevant page sections like ads, and (3) the LLM confusing similar-looking values like original price vs. current price.
+
+The parsing logic is deliberately placed inside the tool function, not in the system prompt. This is important because prompt-based parsing is unreliable (the LLM might misparse HTML differently each time) and expensive (every HTML token counts toward context usage). Tool-level parsing is deterministic, fast, and token-free.
+
+## Key Takeaways
+
+- Parse raw data (HTML, XML, JSON blobs) inside the tool before returning it to the agent — never rely on the LLM to parse structured markup.
+- Use CSS selectors to extract specific fields, ignoring irrelevant page sections like ads and sidebars.
+- Deterministic parsing in code is cheaper, faster, and more reliable than LLM-based extraction from raw markup.

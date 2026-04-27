@@ -1,0 +1,47 @@
+## The Problem
+
+You have an email assistant agent with a `send_email` tool. Right now, when a user says *"send an email to Bob about the meeting"*, the agent immediately fires off the email with no confirmation. In production this is dangerous — typos in recipients, wrong subjects, or accidental sends can't be undone. Your job is to **add a confirmation step** so the agent shows the user a preview of the email (recipient, subject, body) and only sends it after the user explicitly approves.
+
+## Examples
+
+### Example 1
+
+**User input:** Send an email to bob@example.com with subject 'Meeting Tomorrow' and body 'Hi Bob, can we meet at 3pm?'
+
+**Current (bad) output:** The agent immediately calls `send_email` and responds: *Email sent to bob@example.com!* — the user had no chance to review or cancel.
+
+**Expected (good) output:** The agent responds: *I'm about to send this email — please confirm:*
+- **To:** bob@example.com
+- **Subject:** Meeting Tomorrow
+- **Body:** Hi Bob, can we meet at 3pm?
+
+*Reply 'yes' to send or 'no' to cancel.* Only after the user replies 'yes' does the tool execute.
+
+### Example 2
+
+**User input:** (after preview) No, actually change the subject to 'Meeting Wednesday'
+
+**Current (bad) output:** Not applicable — the email was already sent without asking.
+
+**Expected (good) output:** The agent updates the draft and shows a new preview with the revised subject, waiting again for confirmation.
+
+### Example 3
+
+**User input:** (after preview) No, cancel it.
+
+**Expected (good) output:** The agent responds: *Email cancelled. Let me know if you'd like to draft a new one.*
+
+## Your Task
+
+- Add a confirmation step before the `send_email` tool executes its side effect.
+- The confirmation must display the recipient, subject, and body for user review.
+- Handle both approval and rejection gracefully.
+- Update the agent's instructions to enforce the confirmation workflow.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **No automatic sending:** The email tool never executes without explicit user confirmation.
+- **Preview shown before sending:** The agent presents email details for review before executing.
+- **Decline is respected:** If the user declines, the email is not sent and the agent acknowledges the cancellation.

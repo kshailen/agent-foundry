@@ -1,0 +1,134 @@
+## Approach
+
+The agent returns free-text paragraphs because the system prompt simply says "answer the question" — it never specifies the output format. Downstream consumers expect a JSON object with `answer`, `confidence`, and `sources` keys, but without explicit formatting instructions the model defaults to natural language prose. The model is fully capable of producing structured JSON; it just needs to be told to do so.
+
+The fix is to rewrite the system prompt with three key additions: (1) an explicit instruction to respond only with a JSON object, (2) a specification of the exact keys and their types, and (3) a concrete example of the expected output format. Including an example is critical because it anchors the model's behavior more reliably than abstract instructions alone. We also instruct the model not to wrap JSON in markdown code fences or add text outside the JSON object, since both would break downstream parsing.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+import json
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", (
+        "You are a question-answering assistant. You MUST respond with ONLY a valid JSON object — no extra text, "
+        "no markdown code fences, no explanation before or after the JSON.\n\n"
+        "The JSON object must have exactly these keys:\n"
+        "- \"answer\" (string): A clear, informative answer to the user's question.\n"
+        "- \"confidence\" (number): Your confidence in the answer, between 0.0 and 1.0.\n"
+        "- \"sources\" (array of strings): The knowledge domains or sources the answer draws from.\n\n"
+        "Example response:\n"
+        "{\"answer\": \"The speed of light is approximately 299,792,458 meters per second.\", "
+        "\"confidence\": 0.99, \"sources\": [\"physics\", \"general knowledge\"]}"
+    )),
+    ("human", "{input}"),
+])
+
+chain = prompt | llm
+
+result = chain.invoke({"input": "What is the capital of France?"})
+print(result.content)
+
+try:
+    parsed = json.loads(result.content)
+    assert "answer" in parsed
+    assert "confidence" in parsed
+    assert "sources" in parsed
+    print("Valid structured output!")
+except (json.JSONDecodeError, AssertionError) as e:
+    print(f"FAILED: Output is not valid structured JSON - {e}")
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+import json
+
+agent = Agent(
+    name="QA Assistant",
+    instructions=(
+        "You are a question-answering assistant. You MUST respond with ONLY a valid JSON object — no extra text, "
+        "no markdown code fences, no explanation before or after the JSON.\n\n"
+        "The JSON object must have exactly these keys:\n"
+        "- \"answer\" (string): A clear, informative answer to the user's question.\n"
+        "- \"confidence\" (number): Your confidence in the answer, between 0.0 and 1.0.\n"
+        "- \"sources\" (array of strings): The knowledge domains or sources the answer draws from.\n\n"
+        "Example response:\n"
+        "{\"answer\": \"The speed of light is approximately 299,792,458 meters per second.\", "
+        "\"confidence\": 0.99, \"sources\": [\"physics\", \"general knowledge\"]}"
+    ),
+)
+
+result = Runner.run_sync(agent, "What is the capital of France?")
+print(result.final_output)
+
+try:
+    parsed = json.loads(result.final_output)
+    assert "answer" in parsed
+    assert "confidence" in parsed
+    assert "sources" in parsed
+    print("Valid structured output!")
+except (json.JSONDecodeError, AssertionError) as e:
+    print(f"FAILED: Output is not valid structured JSON - {e}")
+```
+
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from crewai import LLM
+import json
+
+llm = LLM(model="gpt-4o-mini")
+
+agent = Agent(
+    role="QA Assistant",
+    goal="Answer user questions with structured JSON output",
+    backstory=(
+        "You are a question-answering assistant. You MUST respond with ONLY a valid JSON object "
+        "- no extra text, no markdown code fences, no explanation before or after the JSON.\n\n"
+        "The JSON object must have exactly these keys:\n"
+        '- "answer" (string): A clear, informative answer to the user's question.\n'
+        '- "confidence" (number): Your confidence in the answer, between 0.0 and 1.0.\n'
+        '- "sources" (array of strings): The knowledge domains or sources the answer draws from.\n\n'
+        "Example response:\n"
+        '{"answer": "The speed of light is approximately 299,792,458 meters per second.", '
+        '"confidence": 0.99, "sources": ["physics", "general knowledge"]}'
+    ),
+    llm=llm,
+)
+
+task = Task(
+    description="What is the capital of France?",
+    expected_output="A JSON object with keys: answer, confidence, sources",
+    agent=agent,
+)
+
+crew = Crew(agents=[agent], tasks=[task])
+result = crew.kickoff()
+print(result)
+
+parsed = json.loads(str(result))
+assert "answer" in parsed
+assert "confidence" in parsed
+assert "sources" in parsed
+print("Valid structured output!")
+```
+
+## Why This Works
+
+LLMs follow output format instructions when those instructions are specific and reinforced with examples. The three-part approach — explicit format command, key/type specification, and a concrete example — gives the model maximum clarity about what to produce. Telling the model "no code fences, no extra text" eliminates the most common failure mode where the model wraps valid JSON in markdown formatting. This prompt-only technique is the simplest way to get structured output without requiring framework-specific features like Pydantic output parsers or response_format parameters.
+
+## Key Takeaways
+
+- When you need structured output from an LLM, specify the exact schema (keys, types, constraints) in the system prompt.
+- Include a concrete example of the expected output — examples anchor model behavior far more effectively than abstract instructions.
+- Explicitly forbid common failure modes like markdown code fences and extra text outside the JSON.

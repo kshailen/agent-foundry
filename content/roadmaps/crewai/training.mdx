@@ -1,0 +1,93 @@
+# Training Crews
+
+**Crew training** is an interactive **human feedback loop**: you run the crew, review each agent’s outputs, add corrections or preferences, and repeat across iterations. Those rounds teach the crew—without editing Python—what “good” looks like for your domain, so later runs align more closely with how you want work delivered.
+
+## CLI: train and save a model
+
+From a CrewAI project directory:
+
+```bash
+crewai train -n 5 -f trained_model.pkl
+```
+
+`-n` sets how many **training iterations** to run; `-f` is the **output file** path for the serialized training data.
+
+## Programmatic training
+
+Call `train()` on the same `Crew` instance you would `kickoff()`:
+
+```python
+crew.train(
+    n_iterations=3,
+    inputs={"topic": "AI Agents"},
+    filename="trained_agents.pkl",
+)
+```
+
+Pass **`inputs`** the same way you do for `kickoff()` so tasks with `{placeholders}` resolve during training runs.
+
+## The training loop (step by step)
+
+1. The **crew executes** normally (tasks run in process order).
+2. You **see each agent’s output** for the current step.
+3. You **provide human feedback** (what to keep, fix, or emphasize).
+4. The **agent revises** its output using that feedback.
+5. You **repeat** until you have completed **`n_iterations`** rounds.
+
+Each iteration sharpens behavior through your corrections rather than by changing agent definitions in code.
+
+## What gets saved
+
+The training artifact (for example **`trained_agents_data.pkl`**) stores a **consolidated bundle** per agent, including:
+
+- **Suggestions** distilled from your feedback across iterations  
+- **Quality scores** associated with those rounds  
+- **Summaries** that capture what the crew should do differently next time  
+
+Keep this file in version control or a shared artifact store if you want the same “institutional” behavior everywhere the crew runs.
+
+## Automatic application on future runs
+
+When you load or point the crew at trained data, **agents automatically append their saved suggestions** to **task prompts** in subsequent executions. You do not manually merge strings: the framework injects the learned guidance so each task benefits from prior human review.
+
+## Crew testing (benchmark-style runs)
+
+**Testing** is separate from training: it **runs the crew multiple times** and **auto-scores** outputs so you can compare stability and quality without typing feedback each time.
+
+```bash
+crewai test -n 5 -m gpt-4o
+```
+
+- **`-n`**: number of test executions  
+- **`-m`**: model used for scoring (and execution, per your CLI/project defaults)  
+
+Each task is scored on a **1–10** scale; you get aggregate views across runs.
+
+### Example testing output (conceptual)
+
+| Task        | Run 1 | Run 2 | Run 3 | Run 4 | Run 5 | Avg |
+|-------------|-------|-------|-------|-------|-------|-----|
+| Task A      | 8     | 7     | 9     | 8     | 8     | 8.0 |
+| Task B      | 6     | 7     | 7     | 6     | 8     | 6.8 |
+| Task C      | 9     | 9     | 8     | 9     | 9     | 8.8 |
+| **Overall avg** | — | — | — | — | — | **7.9** |
+
+| Metric            | Value   |
+|-------------------|---------|
+| Total exec time   | 4m 12s  |
+| Avg time / run    | ~50s    |
+
+Exact column names depend on the CLI version, but expect **per-task scores**, **averages**, and **timing** so you can spot regressions after prompt or tool changes.
+
+## When to use training
+
+- **Tune behavior without code churn** — nudge tone, structure, and policy through feedback instead of rewriting `backstory` every time.  
+- **Capture institutional knowledge** — encode how *your* team reviews outputs so new runs match internal standards.  
+- **Pair with testing** — after training, use `crewai test` to see whether scores stay high across repeated executions.
+
+## Key takeaways
+
+- **Training** = interactive loop: run → review → feedback → revise → repeat for **`n_iterations`**.  
+- **CLI**: `crewai train -n 5 -f trained_model.pkl`; **code**: `crew.train(..., filename="trained_agents.pkl")`.  
+- **Saved pickle** holds **suggestions, scores, and summaries** per agent; future runs **append** that guidance to tasks automatically.  
+- **Testing**: `crewai test -n 5 -m gpt-4o` runs the crew repeatedly with **1–10** task scores, **averages**, and **execution time** for regression-style checks.

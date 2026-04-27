@@ -1,0 +1,72 @@
+## The Problem
+
+Your AI assistant works well, but its system prompt is a sprawling ~2000-token monster. Every API call sends this bloated prompt, costing you 4x more tokens than necessary. The prompt repeats itself constantly — "be helpful" appears four times, "don't fabricate" appears seven times in different phrasings, and "be concise" is ironically said in seven verbose ways. The model doesn't need all this repetition; it understood the first time. Your job is to **compress the system prompt to under 500 tokens** while keeping every capability intact. The compressed agent must pass the same test cases as the original.
+
+## Examples
+
+### Example 1 — Redundancy in the original
+
+**Original (7 lines saying the same thing):**
+```
+When you don't know something, be honest about it.
+Don't make up information or fabricate facts.
+If you're not sure about something, say so.
+It's better to admit uncertainty than to provide incorrect information.
+Never fabricate information or present guesses as facts.
+Always be transparent about the limits of your knowledge.
+Honesty about what you know and don't know is crucial.
+```
+
+**Compressed (1 line):**
+```
+Never fabricate information — state uncertainty honestly.
+```
+
+### Example 2 — Redundancy in the original
+
+**Original (7 lines):**
+```
+Be concise in your responses when possible.
+Don't add unnecessary filler words or phrases.
+Get to the point quickly.
+Avoid being overly verbose or wordy.
+Keep your responses focused and to the point.
+Don't ramble or go off on tangents.
+Stick to what's relevant to the user's question.
+```
+
+**Compressed (1 line):**
+```
+Be concise and relevant — no filler or tangents.
+```
+
+### Example 3 — Test case that must still pass
+
+**User input:** What is the population of Mars?
+
+**Original prompt output:** Mars doesn't have a human population. It's a planet in our solar system that is currently uninhabited. (Honest about what it doesn't know.)
+
+**Compressed prompt output:** Must produce an equivalent answer — acknowledging that Mars has no human population without fabricating data.
+
+## Your Task
+
+Compress `BLOATED_PROMPT` (or `BLOATED_INSTRUCTIONS`) to under 500 tokens while preserving all capabilities:
+
+- Helpful, accurate answers to technical and general questions.
+- Proper formatting (bullet points, numbered lists, headers).
+- Honest handling of unknown or uncertain information.
+- Clear, commented code examples.
+- Professional, friendly tone.
+- Safety-conscious responses.
+- Concise, focused answers.
+- Appropriate tool usage when tools are available.
+
+Use `tiktoken` to verify your compressed prompt is under 500 tokens.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Prompt under 500 tokens:** The compressed prompt uses fewer than 500 tokens as measured by tiktoken.
+- **Agent still passes all test cases:** Technical questions, code generation, and unknown-info queries produce equivalent quality answers.
+- **No capability regression:** All behaviors from the original prompt (honesty, formatting, code quality, safety, tool use) are preserved in the compressed version.

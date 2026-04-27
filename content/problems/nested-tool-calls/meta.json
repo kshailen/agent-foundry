@@ -1,0 +1,52 @@
+{
+  "number": 25,
+  "title": "Nested Tool Calls",
+  "difficulty": "medium",
+  "categories": [
+    "tool-calling",
+    "orchestration"
+  ],
+  "frameworks": [
+    "langgraph",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "The agent must call find_user first to get the user ID",
+    "The user ID from find_user must be passed to get_orders",
+    "The agent must not hallucinate or hardcode user IDs",
+    "No changes to the tool implementations"
+  ],
+  "hints": [
+    "Update the system prompt to explicitly instruct the agent to first look up the user, then use the returned ID for subsequent calls",
+    "Make sure the agent extracts just the ID from the first tool's output rather than passing the entire response string",
+    "In LangGraph, you can model this as two sequential nodes where the first node's output feeds into the second"
+  ],
+  "starterCode": {
+    "langgraph": "from langchain_openai import ChatOpenAI\nfrom langchain_core.tools import tool\nfrom langgraph.prebuilt import create_react_agent\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n@tool\ndef find_user(name: str) -> str:\n    \"\"\"Find a user by name and return their user ID.\"\"\"\n    users = {\"alice\": \"USR-001\", \"bob\": \"USR-002\", \"charlie\": \"USR-003\"}\n    user_id = users.get(name.lower())\n    if user_id:\n        return f\"Found user '{name}' with ID: {user_id}\"\n    return f\"No user found with name '{name}'\"\n\n@tool\ndef get_orders(user_id: str) -> str:\n    \"\"\"Get recent orders for a user by their user ID.\"\"\"\n    orders = {\n        \"USR-001\": \"Order #1234: Laptop ($999), Order #1235: Mouse ($29)\",\n        \"USR-002\": \"Order #1236: Keyboard ($79), Order #1237: Monitor ($449)\",\n        \"USR-003\": \"No recent orders\",\n    }\n    return orders.get(user_id, f\"No orders found for user ID: {user_id}\")\n\n# BUG: The agent fails to chain find_user -> get_orders properly\n# It either hallucinates a user ID or passes the name directly to get_orders\n# TODO: Ensure the agent extracts the user ID from find_user and passes it to get_orders\nagent = create_react_agent(llm, [find_user, get_orders])\n\nresult = agent.invoke({\"messages\": [(\"human\", \"Show me Alice's recent orders\")]})\nprint(result[\"messages\"][-1].content)",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai.tools import tool\n\n@tool\ndef find_user(name: str) -> str:\n    \"\"\"Find a user by name and return their user ID.\"\"\"\n    users = {\"alice\": \"USR-001\", \"bob\": \"USR-002\", \"charlie\": \"USR-003\"}\n    user_id = users.get(name.lower())\n    if user_id:\n        return f\"Found user '{name}' with ID: {user_id}\"\n    return f\"No user found with name '{name}'\"\n\n@tool\ndef get_orders(user_id: str) -> str:\n    \"\"\"Get recent orders for a user by their user ID.\"\"\"\n    orders = {\n        \"USR-001\": \"Order #1234: Laptop ($999), Order #1235: Mouse ($29)\",\n        \"USR-002\": \"Order #1236: Keyboard ($79), Order #1237: Monitor ($449)\",\n        \"USR-003\": \"No recent orders\",\n    }\n    return orders.get(user_id, f\"No orders found for user ID: {user_id}\")\n\n# BUG: The agent fails to chain find_user -> get_orders properly\n# It either hallucinates a user ID or passes the name directly to get_orders\nassistant = Agent(\n    role=\"Customer Service Assistant\",\n    goal=\"Help customers look up their orders\",\n    backstory=\"You are a customer service assistant who helps users find their order information.\",\n    tools=[find_user, get_orders],\n)\n\ntask = Task(\n    description=\"Show me Alice's recent orders\",\n    expected_output=\"Alice's recent order details\",\n    agent=assistant,\n)\n\ncrew = Crew(agents=[assistant], tasks=[task])\nprint(crew.kickoff())",
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom agents.tool import function_tool\n\n@function_tool\ndef find_user(name: str) -> str:\n    \"\"\"Find a user by name and return their user ID.\"\"\"\n    users = {\"alice\": \"USR-001\", \"bob\": \"USR-002\", \"charlie\": \"USR-003\"}\n    user_id = users.get(name.lower())\n    if user_id:\n        return f\"Found user '{name}' with ID: {user_id}\"\n    return f\"No user found with name '{name}'\"\n\n@function_tool\ndef get_orders(user_id: str) -> str:\n    \"\"\"Get recent orders for a user by their user ID.\"\"\"\n    orders = {\n        \"USR-001\": \"Order #1234: Laptop ($999), Order #1235: Mouse ($29)\",\n        \"USR-002\": \"Order #1236: Keyboard ($79), Order #1237: Monitor ($449)\",\n        \"USR-003\": \"No recent orders\",\n    }\n    return orders.get(user_id, f\"No orders found for user ID: {user_id}\")\n\n# BUG: The agent fails to chain find_user -> get_orders properly\n# It either hallucinates a user ID or passes the name directly to get_orders\nagent = Agent(\n    name=\"Customer Service Assistant\",\n    instructions=\"You are a customer service assistant. Help customers look up their orders.\",\n    tools=[find_user, get_orders],\n)\n\nresult = Runner.run_sync(agent, \"Show me Alice's recent orders\")\nprint(result.final_output)"
+  },
+  "colabUrls": {
+    "langgraph": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/nested-tool-calls-langgraph.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/nested-tool-calls-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/nested-tool-calls-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "find-user-first",
+      "label": "find_user is called first",
+      "description": "The agent always calls find_user to get the user ID before calling get_orders"
+    },
+    {
+      "id": "correct-id-passed",
+      "label": "Correct ID is passed to get_orders",
+      "description": "The user ID returned by find_user is extracted and passed to get_orders"
+    },
+    {
+      "id": "no-hallucinated-ids",
+      "label": "No hallucinated IDs",
+      "description": "The agent never invents or guesses user IDs — it always looks them up first"
+    }
+  ]
+}

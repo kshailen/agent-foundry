@@ -1,0 +1,39 @@
+## The Problem
+
+Your customer-support bot answers the same handful of questions hundreds of times a day—"What is your return policy?", "How do I return an item?", "What's your policy on returns?"—and every single one triggers a fresh LLM call. These semantically identical questions waste tokens and add latency. Your job is to **add a semantic caching layer** that recognizes when a new question is similar enough to a previously answered one and serves the cached response instantly, at zero token cost.
+
+## Examples
+
+### Example 1
+
+**User input sequence:** "What is your return policy?" → "How do I return an item?" → "What's your policy on returns?"
+
+**Current (bad) output:** Three separate LLM calls, each taking ~1 second and costing tokens. All three get slightly different phrasings of the same answer.
+
+**Expected (good) output:** The first query calls the LLM and caches the response. The second and third queries are recognized as semantically similar (cosine similarity > 0.95), so the cached response is returned in under 10ms with zero token cost. Output shows: *"[CACHE HIT — 0.003s] Our return policy allows…"*
+
+### Example 2
+
+**User input sequence:** "Do you offer free shipping?" → "Is shipping free?" → "Do you ship for free?"
+
+**Current (bad) output:** Three LLM calls for what is essentially the same question.
+
+**Expected (good) output:** One LLM call, two cache hits. The response time drops from ~1s to under 10ms for cached answers. Total cost is roughly 1/3 of the original.
+
+## Your Task
+
+Modify the starter code so that:
+
+- A **semantic cache** stores query-response pairs indexed by query embeddings.
+- New queries are compared against cached queries using **cosine similarity**.
+- Queries above a similarity threshold **return the cached response** without calling the LLM.
+- The cache has a **configurable max size or TTL** to prevent unbounded growth.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Cache hit on similar queries:** Semantically similar queries return cached responses without calling the LLM.
+- **Faster on cache hit:** Cache hits are significantly faster than LLM calls.
+- **Zero token cost on hit:** Cached responses incur no LLM token cost.
+- **Bounded cache size:** The cache has a configurable TTL or max size to prevent unbounded growth.

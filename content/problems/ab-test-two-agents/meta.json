@@ -1,0 +1,57 @@
+{
+  "number": 102,
+  "title": "A/B Test Two Agents",
+  "difficulty": "hard",
+  "categories": [
+    "evaluation",
+    "cost-optimization"
+  ],
+  "frameworks": [
+    "langchain",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "Both agent configurations must run on the same set of test inputs for fair comparison",
+    "Each configuration must be scored on quality (accuracy) and cost (tokens/dollars)",
+    "The comparison must produce a winner recommendation with statistical justification",
+    "The framework must support swapping in new configurations without code changes"
+  ],
+  "hints": [
+    "Run both agents on the same inputs and use an LLM-as-judge to score quality on a 1-5 scale for each response pair",
+    "Track token usage and compute cost per query for each configuration using API response metadata",
+    "Calculate a cost-effectiveness score (quality per dollar) to find the best value configuration"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain_core.messages import HumanMessage, SystemMessage\n\n# BUG: Only one agent configuration — no way to compare alternatives\n# TODO: Run two configs side-by-side and compare quality vs cost\nllm = ChatOpenAI(model=\"gpt-4o\")\n\ndef run_agent(query: str) -> str:\n    response = llm.invoke([\n        SystemMessage(content=\"You are a helpful customer support agent. Answer thoroughly and professionally.\"),\n        HumanMessage(content=query),\n    ])\n    return response.content\n\ntest_queries = [\n    \"What is your return policy?\",\n    \"My order arrived damaged, what should I do?\",\n    \"Can I change my shipping address after placing an order?\",\n    \"Do you price match with competitors?\",\n    \"How do I cancel my subscription?\",\n]\nfor q in test_queries:\n    result = run_agent(q)\n    print(f\"Q: {q}\\nA: {result[:100]}...\\n\")",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\n# BUG: Only one agent configuration — no way to compare alternatives\n# TODO: Run two configs side-by-side and compare quality vs cost\nagent = Agent(\n    name=\"Customer Support\",\n    instructions=\"You are a helpful customer support agent. Answer thoroughly and professionally.\",\n    model=\"gpt-4o\",\n)\n\ntest_queries = [\n    \"What is your return policy?\",\n    \"My order arrived damaged, what should I do?\",\n    \"Can I change my shipping address after placing an order?\",\n    \"Do you price match with competitors?\",\n    \"How do I cancel my subscription?\",\n]\nfor q in test_queries:\n    result = Runner.run_sync(agent, q)\n    print(f\"Q: {q}\\nA: {result.final_output[:100]}...\\n\")",
+    "crewai": "from crewai import Agent, Task, Crew, Process\nfrom crewai import LLM\n\nllm = LLM(model=\"gpt-4o\")\n\n# BUG: Only one agent configuration — no way to compare alternatives\n# TODO: Run two configs side-by-side and compare quality vs cost\nsupport_agent = Agent(\n    role=\"Customer Support\",\n    goal=\"Answer customer questions thoroughly and professionally\",\n    backstory=\"You are a helpful customer support agent.\",\n    llm=llm,\n)\n\ntest_queries = [\n    \"What is your return policy?\",\n    \"My order arrived damaged, what should I do?\",\n    \"Can I change my shipping address after placing an order?\",\n    \"Do you price match with competitors?\",\n    \"How do I cancel my subscription?\",\n]\nfor q in test_queries:\n    task = Task(description=q, expected_output=\"A helpful response\", agent=support_agent)\n    crew = Crew(agents=[support_agent], tasks=[task], process=Process.sequential)\n    result = crew.kickoff()\n    print(f\"Q: {q}\\nA: {str(result)[:100]}...\\n\")"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/ab-test-two-agents-langchain.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/ab-test-two-agents-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/ab-test-two-agents-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "same-inputs",
+      "label": "Same inputs for both",
+      "description": "Both agent configurations run on the same set of test inputs"
+    },
+    {
+      "id": "quality-and-cost-scores",
+      "label": "Quality and cost scores",
+      "description": "Each configuration is scored on both quality and cost metrics"
+    },
+    {
+      "id": "winner-recommendation",
+      "label": "Winner recommendation",
+      "description": "The comparison produces a winner recommendation with justification"
+    },
+    {
+      "id": "swappable-configs",
+      "label": "Swappable configurations",
+      "description": "New agent configurations can be added without modifying the comparison framework"
+    }
+  ]
+}

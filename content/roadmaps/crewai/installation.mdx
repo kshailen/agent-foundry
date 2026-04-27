@@ -1,0 +1,82 @@
+# Installation & First Crew
+
+Get CrewAI installed and run your first multi-agent crew in minutes.
+
+## Prerequisites
+
+- Python 3.10 or later
+- An OpenAI API key (or another supported LLM provider)
+
+## Install CrewAI
+
+```bash
+pip install crewai crewai-tools
+```
+
+## Set Up Your API Key
+
+```bash
+export OPENAI_API_KEY="sk-your-key-here"
+```
+
+## Your First Crew
+
+Create a file called `main.py`:
+
+```python
+from crewai import Agent, Task, Crew
+
+researcher = Agent(
+    role="AI Researcher",
+    goal="Find the latest trends in AI agents",
+    backstory="You are an expert AI researcher who stays current with the latest developments in autonomous agents and multi-agent systems.",
+    verbose=True,
+)
+
+writer = Agent(
+    role="Technical Writer",
+    goal="Write clear, engaging summaries of technical topics",
+    backstory="You are a skilled technical writer who makes complex AI topics accessible to developers.",
+    verbose=True,
+)
+
+research_task = Task(
+    description="Research the top 3 trends in AI agents for 2025. Focus on practical applications.",
+    expected_output="A bullet-point list of 3 trends with a one-paragraph explanation each.",
+    agent=researcher,
+)
+
+write_task = Task(
+    description="Write a short blog post summarizing the research findings.",
+    expected_output="A 300-word blog post with an introduction, 3 sections (one per trend), and a conclusion.",
+    agent=writer,
+)
+
+crew = Crew(
+    agents=[researcher, writer],
+    tasks=[research_task, write_task],
+    verbose=True,
+)
+
+result = crew.kickoff()
+print(result)
+```
+
+## Run It
+
+```bash
+python main.py
+```
+
+You'll see both agents working in sequence — the researcher gathers information, then the writer produces a polished blog post using those findings.
+
+## What Just Happened?
+
+1. Two **agents** were created with distinct roles and goals
+2. Two **tasks** were defined with clear expected outputs
+3. A **crew** was assembled, linking agents to tasks
+4. `crew.kickoff()` executed the tasks in sequential order
+
+## Next Steps
+
+Now that you've seen a crew in action, let's dive deeper into how to define agents effectively.

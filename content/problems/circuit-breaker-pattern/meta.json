@@ -1,0 +1,57 @@
+{
+  "number": 69,
+  "title": "Circuit Breaker Pattern",
+  "difficulty": "medium",
+  "categories": [
+    "error-recovery",
+    "orchestration"
+  ],
+  "frameworks": [
+    "langgraph",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "The circuit breaker must open after 3 consecutive failures",
+    "Once open, the breaker must reject calls for 60 seconds without hitting the service",
+    "After the cooldown, the breaker must allow one trial call to check recovery",
+    "The breaker state must be shared across all calls to the same service"
+  ],
+  "hints": [
+    "Track failure count and last failure timestamp in a class or shared state object",
+    "Implement three states: CLOSED (normal), OPEN (rejecting), HALF-OPEN (testing recovery)",
+    "In HALF-OPEN state, let one call through \u2014 if it succeeds, reset to CLOSED; if it fails, go back to OPEN"
+  ],
+  "starterCode": {
+    "langgraph": "import time\nimport random\nfrom langgraph.graph import StateGraph, START, END\nfrom typing import TypedDict\n\nclass State(TypedDict):\n    amount: str\n    result: str\n    attempt: int\n\ndef process_payment(state: State) -> State:\n    \"\"\"Process a payment through the payment service.\"\"\"\n    # BUG: The service is down and there is no circuit breaker\n    raise ConnectionError(\"Payment service is unavailable\")\n\ngraph = StateGraph(State)\ngraph.add_node(\"payment\", process_payment)\ngraph.add_edge(START, \"payment\")\ngraph.add_edge(\"payment\", END)\n\napp = graph.compile()\n\n# Test: The agent keeps hitting a dead service with no protection\nfor i in range(5):\n    print(f\"\\nAttempt {i+1}:\")\n    result = app.invoke({\"amount\": \"$50\", \"result\": \"\", \"attempt\": i})\n    print(result[\"result\"])",
+    "crewai": "import time\nfrom crewai import Agent, Task, Crew\nfrom crewai import LLM\nfrom crewai.tools import tool\n\nllm = LLM(model=\"gpt-4o-mini\")\n\n@tool\ndef process_payment(amount: str) -> str:\n    \"\"\"Process a payment through the payment service.\"\"\"\n    # BUG: The service is down and there is no circuit breaker\n    raise ConnectionError(\"Payment service is unavailable\")\n\nagent = Agent(\n    role=\"Payment Assistant\",\n    goal=\"Help users process payments\",\n    backstory=\"You are a payment assistant that processes payments.\",\n    tools=[process_payment],\n    llm=llm,\n)\n\n# Test: The agent keeps hitting a dead service with no protection\nfor i in range(5):\n    print(f\"\\nAttempt {i+1}:\")\n    task = Task(\n        description=\"Process payment of $50\",\n        expected_output=\"Payment result\",\n        agent=agent,\n    )\n    crew = Crew(agents=[agent], tasks=[task])\n    result = crew.kickoff()\n    print(result)",
+    "openai-agents-sdk": "import time\nfrom agents import Agent, Runner\nfrom agents.tool import function_tool\n\n@function_tool\ndef process_payment(amount: str) -> str:\n    \"\"\"Process a payment through the payment service.\"\"\"\n    # BUG: The service is down and there is no circuit breaker\n    raise ConnectionError(\"Payment service is unavailable\")\n\nagent = Agent(\n    name=\"Payment Assistant\",\n    instructions=\"You are a payment assistant. Help users process payments.\",\n    tools=[process_payment],\n)\n\n# Test: The agent keeps hitting a dead service with no protection\nfor i in range(5):\n    print(f\"\\nAttempt {i+1}:\")\n    result = Runner.run_sync(agent, \"Process payment of $50\")\n    print(result.final_output)"
+  },
+  "colabUrls": {
+    "langgraph": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/circuit-breaker-pattern-langgraph.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/circuit-breaker-pattern-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/circuit-breaker-pattern-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "opens-after-3",
+      "label": "Opens after 3 consecutive failures",
+      "description": "The circuit breaker trips open after 3 consecutive errors"
+    },
+    {
+      "id": "rejects-when-open",
+      "label": "Rejects calls when open",
+      "description": "While open, calls are immediately rejected without contacting the service"
+    },
+    {
+      "id": "half-open-recovery",
+      "label": "Tests recovery in half-open state",
+      "description": "After the cooldown period, one trial call is allowed to check if the service recovered"
+    },
+    {
+      "id": "resets-on-success",
+      "label": "Resets on successful recovery",
+      "description": "If the trial call succeeds, the breaker resets to closed and normal operation resumes"
+    }
+  ]
+}

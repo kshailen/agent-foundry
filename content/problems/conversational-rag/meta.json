@@ -1,0 +1,52 @@
+{
+  "number": 52,
+  "title": "Conversational RAG",
+  "difficulty": "medium",
+  "categories": [
+    "rag",
+    "memory"
+  ],
+  "frameworks": [
+    "langchain",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "The agent must maintain conversation history across turns",
+    "Follow-up questions must be resolved using prior context",
+    "The retriever must receive contextualized queries, not raw follow-ups",
+    "The agent must still retrieve documents for each turn"
+  ],
+  "hints": [
+    "Store conversation history and use it to reformulate follow-up questions into standalone queries",
+    "Before retrieval, combine the chat history with the current question to create a contextualized search query",
+    "Use a history-aware retriever or a question condensation step before the main retrieval"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI, OpenAIEmbeddings\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom langchain_community.vectorstores import FAISS\nfrom langchain_core.documents import Document\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\nembeddings = OpenAIEmbeddings()\n\ndocuments = [\n    Document(page_content=\"ProductX is an enterprise CRM platform starting at $99/month.\"),\n    Document(page_content=\"ProductY is a project management tool priced at $49/month per team.\"),\n    Document(page_content=\"ProductX offers advanced analytics, custom dashboards, and API access.\"),\n    Document(page_content=\"ProductY includes Gantt charts, sprint planning, and time tracking.\"),\n    Document(page_content=\"ProductX has a 14-day free trial with full feature access.\"),\n]\n\nvectorstore = FAISS.from_documents(documents, embeddings)\nretriever = vectorstore.as_retriever()\n\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"Answer based on context.\\n\\nContext: {context}\"),\n    (\"human\", \"{question}\"),\n])\n\n# BUG: Each query is treated independently \u2014 no conversation history\ndef ask(question: str) -> str:\n    docs = retriever.invoke(question)\n    context = \"\\n\".join([doc.page_content for doc in docs])\n    chain = prompt | llm\n    result = chain.invoke({\"context\": context, \"question\": question})\n    return result.content\n\nprint(ask(\"Tell me about ProductX.\"))\n# Follow-up: \"What about pricing?\" \u2014 but the agent doesn't know we're still talking about ProductX\nprint(ask(\"What about pricing?\"))",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai import LLM\nfrom crewai.tools import tool\nfrom langchain_openai import OpenAIEmbeddings\nfrom langchain_community.vectorstores import FAISS\nfrom langchain_core.documents import Document\n\nllm = LLM(model=\"gpt-4o-mini\")\nembeddings = OpenAIEmbeddings()\n\ndocuments = [\n    Document(page_content=\"ProductX is an enterprise CRM platform starting at $99/month.\"),\n    Document(page_content=\"ProductY is a project management tool priced at $49/month per team.\"),\n    Document(page_content=\"ProductX offers advanced analytics, custom dashboards, and API access.\"),\n    Document(page_content=\"ProductY includes Gantt charts, sprint planning, and time tracking.\"),\n    Document(page_content=\"ProductX has a 14-day free trial with full feature access.\"),\n]\n\nvectorstore = FAISS.from_documents(documents, embeddings)\nretriever = vectorstore.as_retriever()\n\n@tool\ndef search_products(query: str) -> str:\n    \"\"\"Search product documentation for relevant information.\"\"\"\n    docs = retriever.invoke(query)\n    return \"\\n\".join([doc.page_content for doc in docs])\n\nagent = Agent(\n    role=\"Product Q&A Specialist\",\n    goal=\"Answer questions about products\",\n    backstory=\"You are a product specialist. Answer based on retrieved context.\",\n    tools=[search_products],\n    llm=llm,\n)\n\n# BUG: Each query is treated independently \u2014 no conversation history\ntask1 = Task(description=\"Tell me about ProductX.\", expected_output=\"Product information\", agent=agent)\ncrew1 = Crew(agents=[agent], tasks=[task1])\nprint(crew1.kickoff())\n\n# Follow-up: \"What about pricing?\" \u2014 but the agent doesn't know we're still talking about ProductX\ntask2 = Task(description=\"What about pricing?\", expected_output=\"Pricing information\", agent=agent)\ncrew2 = Crew(agents=[agent], tasks=[task2])\nprint(crew2.kickoff())",
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom agents.tool import function_tool\nfrom langchain_openai import OpenAIEmbeddings\nfrom langchain_community.vectorstores import FAISS\nfrom langchain_core.documents import Document\n\nembeddings = OpenAIEmbeddings()\n\ndocuments = [\n    Document(page_content=\"ProductX is an enterprise CRM platform starting at $99/month.\"),\n    Document(page_content=\"ProductY is a project management tool priced at $49/month per team.\"),\n    Document(page_content=\"ProductX offers advanced analytics, custom dashboards, and API access.\"),\n    Document(page_content=\"ProductY includes Gantt charts, sprint planning, and time tracking.\"),\n    Document(page_content=\"ProductX has a 14-day free trial with full feature access.\"),\n]\n\nvectorstore = FAISS.from_documents(documents, embeddings)\nretriever = vectorstore.as_retriever()\n\n@function_tool\ndef search_products(query: str) -> str:\n    \"\"\"Search product documentation for relevant information.\"\"\"\n    docs = retriever.invoke(query)\n    return \"\\n\".join([doc.page_content for doc in docs])\n\nagent = Agent(\n    name=\"Product Q&A\",\n    instructions=\"Answer questions about products. Use the search tool to find relevant information.\",\n    tools=[search_products],\n)\n\n# BUG: Each query is treated independently \u2014 no conversation history\nprint(Runner.run_sync(agent, \"Tell me about ProductX.\").final_output)\n\n# Follow-up: \"What about pricing?\" \u2014 but the agent doesn't know we're still talking about ProductX\nprint(Runner.run_sync(agent, \"What about pricing?\").final_output)"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/conversational-rag-langchain.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/conversational-rag-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/conversational-rag-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "maintains-history",
+      "label": "Maintains conversation history",
+      "description": "The agent tracks prior turns and uses them to understand follow-up questions"
+    },
+    {
+      "id": "resolves-references",
+      "label": "Resolves follow-up references",
+      "description": "Ambiguous follow-ups like 'What about pricing?' are correctly resolved to the right product"
+    },
+    {
+      "id": "contextual-retrieval",
+      "label": "Retrieves with conversational context",
+      "description": "The retriever receives contextualized queries that incorporate prior conversation context"
+    }
+  ]
+}

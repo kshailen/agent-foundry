@@ -1,0 +1,39 @@
+## The Problem
+
+You have a single generalist agent that tries to perform an entire business analysis — covering market research, financial projections, and technical feasibility — all by itself. The output is shallow because one agent cannot be an expert in all three domains. Your task is to refactor this into a **hierarchical delegation** pattern: a **manager agent** decomposes the task into subtasks and delegates each to a **specialist agent** (market analyst, financial analyst, technical analyst), then synthesizes their outputs into a final report.
+
+## Examples
+
+### Example 1
+
+**User input:** Idea: AI-powered personal finance app
+
+**Current (bad) output:** A single agent produces a surface-level report that vaguely covers all three areas without depth in any of them.
+
+**Expected (good) output:** The manager identifies three subtasks. The market analyst provides detailed competitive landscape data. The financial analyst produces revenue projections. The technical analyst assesses feasibility. The manager synthesizes all three into a structured, in-depth report.
+
+### Example 2
+
+**User input:** Idea: drone delivery service for rural areas
+
+**Current (bad) output:** A generic one-paragraph analysis from a single agent.
+
+**Expected (good) output:** Each specialist contributes deep domain expertise. The final report has distinct sections for market opportunity, financial viability, and technical requirements, all synthesized by the manager.
+
+## Your Task
+
+Refactor the starter code so that:
+
+- A **manager agent** receives the user's request and decomposes it into subtasks.
+- **Specialist agents** (at least market, finance, and technical) handle their respective subtasks.
+- The manager **delegates** each subtask to the right specialist.
+- The manager **synthesizes** the specialists' outputs into a coherent final report.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Manager decomposes the task:** The manager agent breaks the complex task into distinct subtasks.
+- **Specialist agents exist:** There are at least two specialist agents with distinct domains.
+- **Delegation to specialists works:** Each subtask is handled by the appropriate specialist, not the manager.
+- **Manager synthesizes final output:** The manager combines specialist outputs into a coherent final report.

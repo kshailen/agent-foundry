@@ -1,0 +1,121 @@
+# Memory Store
+
+Checkpointers save state **within a single thread** — great for multi-turn conversations but useless when you need an agent to remember facts across different threads or users. The **Memory Store** provides cross-thread, long-term memory with optional semantic search.
+
+## InMemoryStore
+
+`InMemoryStore` is a key-value store that lives alongside your graph:
+
+```python
+from langgraph.store.memory import InMemoryStore
+
+store = InMemoryStore()
+app = graph.compile(checkpointer=checkpointer, store=store)
+```
+
+Unlike the checkpointer (which tracks graph execution state), the store holds arbitrary data that persists across threads and can be accessed by any node.
+
+## Namespaces
+
+Store entries are organized into **namespaces** — tuples of strings that form a hierarchical path:
+
+```python
+store.put(("users", "alice", "preferences"), "theme", {"value": "dark"})
+store.put(("users", "alice", "preferences"), "language", {"value": "en"})
+store.put(("users", "bob", "preferences"), "theme", {"value": "light"})
+```
+
+The namespace `("users", "alice", "preferences")` groups all of Alice's preferences together. The second argument is the **key** (a unique ID within the namespace), and the third is the **value** (any dict).
+
+## store.put and store.search
+
+Write and read from the store:
+
+```python
+store.put(("memories", "user-42"), "fact-1", {"text": "User prefers Python"})
+store.put(("memories", "user-42"), "fact-2", {"text": "User is building a chatbot"})
+
+results = store.search(("memories", "user-42"))
+for item in results:
+    print(f"{item.key}: {item.value}")
+```
+
+`store.search(namespace)` returns all items in that namespace. Each result is an `Item` with `.namespace`, `.key`, `.value`, and `.created_at` / `.updated_at` fields.
+
+## Semantic Search with IndexConfig
+
+For large stores, keyword-less retrieval is essential. `IndexConfig` enables embedding-based semantic search:
+
+```python
+from langgraph.store.memory import InMemoryStore
+
+store = InMemoryStore(
+    index={
+        "dims": 1536,
+        "embed": "openai:text-embedding-3-small",
+        "fields": ["text"],
+    }
+)
+```
+
+The `index` config tells the store to embed the `text` field of each item using the specified embedding model. Now `store.search` supports a `query` parameter for semantic retrieval:
+
+```python
+store.put(("knowledge",), "k1", {"text": "LangGraph uses nodes and edges"})
+store.put(("knowledge",), "k2", {"text": "Python is a programming language"})
+store.put(("knowledge",), "k3", {"text": "StateGraph compiles into a runnable"})
+
+results = store.search(("knowledge",), query="How does LangGraph work?", limit=2)
+for item in results:
+    print(f"{item.key}: {item.value['text']} (score: {item.score:.3f})")
+```
+
+Results are ranked by cosine similarity to the query embedding.
+
+## Accessing Store from Nodes
+
+Nodes access the store via the `store` parameter in their function signature. LangGraph injects it automatically:
+
+```python
+from langchain_core.messages import HumanMessage
+from langgraph.store.base import BaseStore
+
+def memory_node(state, *, store: BaseStore):
+    user_id = state.get("user_id", "default")
+    namespace = ("memories", user_id)
+
+    memories = store.search(namespace)
+    memory_text = "\n".join(m.value["text"] for m in memories)
+
+    response = llm.invoke([
+        ("system", f"Known facts about the user:\n{memory_text}"),
+        *state["messages"],
+    ])
+
+    new_fact = extract_fact(response.content)
+    if new_fact:
+        store.put(namespace, str(uuid4()), {"text": new_fact})
+
+    return {"messages": [response]}
+```
+
+The node reads existing memories, uses them as context for the LLM, and optionally stores new facts learned from the conversation.
+
+## Store vs Checkpointer
+
+| Feature | Checkpointer | Store |
+|---------|-------------|-------|
+| Scope | Single thread | Cross-thread |
+| Purpose | Graph execution state | Long-term memory / knowledge |
+| Access | Automatic per step | Via `store` parameter in nodes |
+| Search | By thread/checkpoint ID | By namespace, key, or semantic query |
+| Typical data | Messages, node outputs | User preferences, learned facts, documents |
+
+## Key Takeaways
+
+- `InMemoryStore` provides cross-thread memory that persists beyond individual conversations
+- Namespaces are tuples of strings that organize data hierarchically (e.g., `("users", "alice", "preferences")`)
+- `store.put(namespace, key, value)` writes data; `store.search(namespace)` reads it
+- Enable semantic search with `IndexConfig` to find relevant memories by meaning, not just key
+- Nodes access the store by declaring a `store` parameter — LangGraph injects it automatically
+- Use the store for long-term knowledge; use the checkpointer for conversation state

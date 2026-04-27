@@ -1,0 +1,57 @@
+{
+  "number": 103,
+  "title": "Production Observability",
+  "difficulty": "hard",
+  "categories": [
+    "evaluation",
+    "orchestration"
+  ],
+  "frameworks": [
+    "langgraph",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "Every LLM call must emit a structured log with input, output, tokens, latency, and model name",
+    "Requests must be traced end-to-end with a unique trace ID that links all related calls",
+    "Key metrics (latency p50/p95, token usage, error rate) must be aggregated and reportable",
+    "The observability layer must not change the agent's behavior or output"
+  ],
+  "hints": [
+    "Use LangChain callbacks to hook into every LLM call and emit structured JSON logs with trace context",
+    "Generate a unique trace_id per user request and pass it through all callback handlers so related calls can be correlated",
+    "Collect latency and token metrics in a list, then compute percentiles and averages at the end of the run"
+  ],
+  "starterCode": {
+    "langgraph": "from langchain_openai import ChatOpenAI\nfrom langchain_core.messages import HumanMessage, SystemMessage\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# BUG: No logging, no tracing, no metrics \u2014 impossible to debug in production\n# TODO: Add structured logging, distributed tracing, and metrics collection\ndef handle_support_query(query: str) -> str:\n    classification = llm.invoke([\n        SystemMessage(content=\"Classify this query as: billing, technical, or general. Reply with just the category.\"),\n        HumanMessage(content=query),\n    ])\n\n    response = llm.invoke([\n        SystemMessage(content=f\"You are a {classification.content.strip()} support specialist. Help the customer.\"),\n        HumanMessage(content=query),\n    ])\n\n    followup = llm.invoke([\n        SystemMessage(content=\"Based on this conversation, suggest one proactive follow-up action.\"),\n        HumanMessage(content=f\"Query: {query}\\nResponse: {response.content}\"),\n    ])\n\n    return f\"{response.content}\\n\\nSuggested follow-up: {followup.content}\"\n\nqueries = [\n    \"Why was I charged twice for my subscription?\",\n    \"The app crashes when I upload large files\",\n    \"Do you have a student discount?\",\n    \"I can't reset my password\",\n    \"What's the difference between Pro and Enterprise plans?\",\n]\nfor q in queries:\n    result = handle_support_query(q)\n    print(f\"Q: {q}\\nA: {result[:150]}...\\n\")",
+    "crewai": "from crewai import Agent, Task, Crew\n\n# BUG: No logging, no tracing, no metrics \u2014 impossible to debug in production\n# TODO: Add structured logging, distributed tracing, and metrics collection\nclassifier = Agent(\n    role=\"Query Classifier\",\n    goal=\"Classify support queries into categories\",\n    backstory=\"You classify queries as billing, technical, or general.\",\n)\n\nresponder = Agent(\n    role=\"Support Specialist\",\n    goal=\"Help customers with their queries\",\n    backstory=\"You are a customer support specialist.\",\n)\n\ndef handle_support_query(query: str) -> str:\n    classify_task = Task(\n        description=f\"Classify this query as billing, technical, or general: '{query}'\",\n        expected_output=\"The category: billing, technical, or general\",\n        agent=classifier,\n    )\n    respond_task = Task(\n        description=f\"Help the customer with this query: '{query}'\",\n        expected_output=\"A helpful response and a suggested follow-up action\",\n        agent=responder,\n        context=[classify_task],\n    )\n    crew = Crew(agents=[classifier, responder], tasks=[classify_task, respond_task])\n    result = crew.kickoff()\n    return str(result)\n\nqueries = [\n    \"Why was I charged twice for my subscription?\",\n    \"The app crashes when I upload large files\",\n    \"Do you have a student discount?\",\n]\nfor q in queries:\n    result = handle_support_query(q)\n    print(f\"Q: {q}\\nA: {result[:150]}...\\n\")",
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom openai import OpenAI\n\nclient = OpenAI()\n\n# BUG: No logging, no tracing, no metrics \u2014 impossible to debug in production\n# TODO: Add structured logging, distributed tracing, and metrics collection\ndef handle_support_query(query: str) -> str:\n    classify_result = client.chat.completions.create(\n        model=\"gpt-4o-mini\",\n        messages=[{\"role\": \"user\", \"content\": f\"Classify this query as: billing, technical, or general. Reply with just the category.\\n\\n{query}\"}],\n    )\n    category = classify_result.choices[0].message.content.strip()\n\n    agent = Agent(\n        name=\"Support Specialist\",\n        instructions=f\"You are a {category} support specialist. Help the customer.\",\n    )\n    result = Runner.run_sync(agent, query)\n\n    followup_result = client.chat.completions.create(\n        model=\"gpt-4o-mini\",\n        messages=[{\"role\": \"user\", \"content\": f\"Based on this conversation, suggest one proactive follow-up action.\\n\\nQuery: {query}\\nResponse: {result.final_output}\"}],\n    )\n\n    return f\"{result.final_output}\\n\\nSuggested follow-up: {followup_result.choices[0].message.content}\"\n\nqueries = [\n    \"Why was I charged twice for my subscription?\",\n    \"The app crashes when I upload large files\",\n    \"Do you have a student discount?\",\n]\nfor q in queries:\n    result = handle_support_query(q)\n    print(f\"Q: {q}\\nA: {result[:150]}...\\n\")"
+  },
+  "colabUrls": {
+    "langgraph": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/production-observability-langgraph.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/production-observability-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/production-observability-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "structured-logging",
+      "label": "Structured logging",
+      "description": "Every LLM call emits a structured log with input, output, tokens, latency, and model"
+    },
+    {
+      "id": "end-to-end-tracing",
+      "label": "End-to-end tracing",
+      "description": "A unique trace ID links all LLM calls within a single request"
+    },
+    {
+      "id": "aggregated-metrics",
+      "label": "Aggregated metrics",
+      "description": "Key metrics like latency percentiles, token usage, and error rates are computed and reportable"
+    },
+    {
+      "id": "transparent-to-agent",
+      "label": "Transparent to agent",
+      "description": "The observability layer does not change the agent's behavior or output"
+    }
+  ]
+}

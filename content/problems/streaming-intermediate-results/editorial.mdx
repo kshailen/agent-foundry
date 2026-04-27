@@ -1,0 +1,266 @@
+## Approach
+
+The starter code runs three sequential LLM calls (outline, research, report) and only returns the final result. The user stares at a blank screen for 10+ seconds with no indication that work is happening. The core issue is that all intermediate results are discarded — only the last step's output is surfaced.
+
+The fix restructures the pipeline so each step emits its result as soon as it completes, before the next step begins. The user sees the outline within seconds, then the research findings, then the polished report — all progressively. Each emitted update is labeled with which step produced it, giving the user both progress feedback and useful intermediate content.
+
+In LangGraph, this is achieved by modeling each step as a graph node that writes to a specific state key, then using `stream_mode="updates"` to receive state updates after each node executes. In LangChain, the same effect is achieved using a callback handler that intercepts each chain step's completion and prints the result immediately.
+
+## Solution
+
+### LangGraph
+
+```python
+from langgraph.graph import StateGraph, START, END
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage
+from typing import TypedDict, Optional
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+
+class ResearchState(TypedDict):
+    topic: str
+    outline: Optional[str]
+    research: Optional[str]
+    report: Optional[str]
+
+
+def create_outline(state: ResearchState) -> dict:
+    response = llm.invoke([
+        SystemMessage(content="Create a brief research outline for this topic. List 3-4 key areas to investigate."),
+        HumanMessage(content=state["topic"]),
+    ])
+    return {"outline": response.content}
+
+
+def conduct_research(state: ResearchState) -> dict:
+    response = llm.invoke([
+        SystemMessage(content="Based on this outline, write a detailed research summary for each area."),
+        HumanMessage(content=state["outline"]),
+    ])
+    return {"research": response.content}
+
+
+def write_report(state: ResearchState) -> dict:
+    response = llm.invoke([
+        SystemMessage(content="Turn this research into a polished final report with an introduction and conclusion."),
+        HumanMessage(content=state["research"]),
+    ])
+    return {"report": response.content}
+
+
+graph = StateGraph(ResearchState)
+graph.add_node("create_outline", create_outline)
+graph.add_node("conduct_research", conduct_research)
+graph.add_node("write_report", write_report)
+graph.add_edge(START, "create_outline")
+graph.add_edge("create_outline", "conduct_research")
+graph.add_edge("conduct_research", "write_report")
+graph.add_edge("write_report", END)
+
+app = graph.compile()
+
+step_labels = {
+    "create_outline": "Step 1: Outline",
+    "conduct_research": "Step 2: Research",
+    "write_report": "Step 3: Report",
+}
+
+for update in app.stream(
+    {"topic": "The impact of AI on healthcare"},
+    stream_mode="updates",
+):
+    for node_name, node_output in update.items():
+        if node_name in step_labels:
+            label = step_labels[node_name]
+            content_key = list(node_output.keys())[0]
+            print(f"\n{'='*60}")
+            print(f"[{label}]")
+            print(f"{'='*60}")
+            print(node_output[content_key])
+```
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.callbacks import BaseCallbackHandler
+import time
+
+
+class StreamingStepHandler(BaseCallbackHandler):
+    def __init__(self):
+        self.current_step = ""
+        self.step_count = 0
+
+    def on_llm_start(self, *args, **kwargs):
+        self.step_count += 1
+        steps = {1: "Outline", 2: "Research", 3: "Report"}
+        self.current_step = steps.get(self.step_count, f"Step {self.step_count}")
+        print(f"\n{'='*60}")
+        print(f"[Step {self.step_count}: {self.current_step}] Starting...")
+        print(f"{'='*60}")
+
+    def on_llm_end(self, response, *args, **kwargs):
+        content = response.generations[0][0].text
+        print(content)
+        print(f"\n--- Step {self.step_count}: {self.current_step} complete ---\n")
+
+
+def research_topic(topic: str):
+    handler = StreamingStepHandler()
+    llm = ChatOpenAI(model="gpt-4o-mini", callbacks=[handler])
+
+    outline = llm.invoke([
+        SystemMessage(content="Create a brief research outline for this topic. List 3-4 key areas to investigate."),
+        HumanMessage(content=topic),
+    ])
+
+    research = llm.invoke([
+        SystemMessage(content="Based on this outline, write a detailed research summary for each area."),
+        HumanMessage(content=outline.content),
+    ])
+
+    report = llm.invoke([
+        SystemMessage(content="Turn this research into a polished final report with an introduction and conclusion."),
+        HumanMessage(content=research.content),
+    ])
+
+    return report.content
+
+
+research_topic("The impact of AI on healthcare")
+```
+
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai import LLM
+
+llm = LLM(model="gpt-4o-mini")
+
+outliner = Agent(
+    role="Outliner",
+    goal="Create a research outline",
+    backstory="Create a brief research outline. List 3-4 key areas to investigate.",
+    llm=llm,
+)
+
+researcher = Agent(
+    role="Researcher",
+    goal="Write detailed research summaries",
+    backstory="Write a detailed research summary for each area in the outline.",
+    llm=llm,
+)
+
+reporter = Agent(
+    role="Reporter",
+    goal="Write a polished final report",
+    backstory="Turn research into a polished final report with an introduction and conclusion.",
+    llm=llm,
+)
+
+outline_task = Task(
+    description="Create a research outline for: The impact of AI on healthcare",
+    expected_output="A list of 3-4 key areas to investigate",
+    agent=outliner,
+)
+
+research_task = Task(
+    description="Write detailed research for each area",
+    expected_output="Detailed research summary for each area",
+    agent=researcher,
+    context=[outline_task],
+)
+
+report_task = Task(
+    description="Write a polished final report",
+    expected_output="A polished report with introduction and conclusion",
+    agent=reporter,
+    context=[research_task],
+)
+
+crew = Crew(
+    agents=[outliner, researcher, reporter],
+    tasks=[outline_task, research_task, report_task],
+    process=Process.sequential,
+    verbose=True,
+)
+
+result = crew.kickoff()
+
+step_labels = {
+    "Outliner": "Step 1: Outline",
+    "Researcher": "Step 2: Research",
+    "Reporter": "Step 3: Report",
+}
+
+for task_output in crew.tasks:
+    agent_role = task_output.agent.role
+    label = step_labels.get(agent_role, agent_role)
+    print(f"\n{'='*60}")
+    print(f"[{label}]")
+    print(f"{'='*60}")
+    print(task_output.output)
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+
+
+def research_topic(topic: str):
+    step_labels = {
+        "Outliner": "Step 1: Outline",
+        "Researcher": "Step 2: Research",
+        "Reporter": "Step 3: Report",
+    }
+
+    outliner = Agent(
+        name="Outliner",
+        instructions="Create a brief research outline for this topic. List 3-4 key areas to investigate.",
+    )
+    outline_result = Runner.run_sync(outliner, topic)
+    print(f"\n{'='*60}")
+    print(f"[{step_labels['Outliner']}]")
+    print(f"{'='*60}")
+    print(outline_result.final_output)
+
+    researcher = Agent(
+        name="Researcher",
+        instructions="Based on this outline, write a detailed research summary for each area.",
+    )
+    research_result = Runner.run_sync(researcher, outline_result.final_output)
+    print(f"\n{'='*60}")
+    print(f"[{step_labels['Researcher']}]")
+    print(f"{'='*60}")
+    print(research_result.final_output)
+
+    reporter = Agent(
+        name="Reporter",
+        instructions="Turn this research into a polished final report with an introduction and conclusion.",
+    )
+    report_result = Runner.run_sync(reporter, research_result.final_output)
+    print(f"\n{'='*60}")
+    print(f"[{step_labels['Reporter']}]")
+    print(f"{'='*60}")
+    print(report_result.final_output)
+
+
+research_topic("The impact of AI on healthcare")
+```
+
+## Why This Works
+
+The LangGraph solution models each pipeline step as a separate node in a state graph. When streaming with `stream_mode="updates"`, the graph emits a state update after each node completes — the consumer receives the outline as soon as step 1 finishes, without waiting for steps 2 and 3. Each update contains only the keys that changed, making it easy to identify which step produced the output. The LangChain solution achieves the same with a callback handler: `on_llm_start` announces the step, and `on_llm_end` prints the result immediately. In both cases, the user sees progressive output instead of a blank screen, and each update is clearly labeled with its step name.
+
+## Key Takeaways
+
+- Multi-step LLM pipelines should stream intermediate results — users should never wait for the entire pipeline without feedback.
+- In LangGraph, `stream_mode="updates"` provides node-level granularity for free when each step is its own node.
+- Label each streamed update with its step name so the user understands what they are seeing and where the pipeline currently is in its execution.

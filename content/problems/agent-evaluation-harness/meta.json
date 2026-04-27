@@ -1,0 +1,56 @@
+{
+  "number": 101,
+  "title": "Agent Evaluation Harness",
+  "difficulty": "hard",
+  "categories": [
+    "evaluation"
+  ],
+  "frameworks": [
+    "langchain",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "The test suite must include at least 10 test cases with expected outputs",
+    "Each test case must be scored on accuracy, latency, and cost",
+    "Results must be aggregated into a summary report with pass/fail rates and averages",
+    "The harness must be reusable — adding new test cases should require no code changes"
+  ],
+  "hints": [
+    "Define test cases as a list of dicts with 'input', 'expected_output', and 'grading_criteria' fields",
+    "Use an LLM-as-judge to score accuracy by comparing the agent's output against the expected output",
+    "Track wall-clock time per test for latency and token usage from the API response for cost estimation"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain_core.messages import HumanMessage, SystemMessage\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# BUG: No automated evaluation — testing is manual, inconsistent, and not reproducible\n# TODO: Build an evaluation harness that runs test cases and scores accuracy, latency, and cost\ndef customer_support_agent(query: str) -> str:\n    response = llm.invoke([\n        SystemMessage(content=\"You are a customer support agent for an e-commerce store. Answer questions about orders, returns, shipping, and products.\"),\n        HumanMessage(content=query),\n    ])\n    return response.content\n\n# Manual testing — no scoring, no metrics, not reproducible\nprint(customer_support_agent(\"What is your return policy?\"))\nprint(\"---\")\nprint(customer_support_agent(\"Where is my order #1234?\"))\nprint(\"---\")\nprint(customer_support_agent(\"Do you ship internationally?\"))",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\n# BUG: No automated evaluation — testing is manual, inconsistent, and not reproducible\n# TODO: Build an evaluation harness that runs test cases and scores accuracy, latency, and cost\nagent = Agent(\n    name=\"Customer Support\",\n    instructions=\"You are a customer support agent for an e-commerce store. Answer questions about orders, returns, shipping, and products.\",\n)\n\n# Manual testing — no scoring, no metrics, not reproducible\nresult = Runner.run_sync(agent, \"What is your return policy?\")\nprint(result.final_output)\nprint(\"---\")\nresult = Runner.run_sync(agent, \"Where is my order #1234?\")\nprint(result.final_output)\nprint(\"---\")\nresult = Runner.run_sync(agent, \"Do you ship internationally?\")\nprint(result.final_output)",
+    "crewai": "from crewai import Agent, Task, Crew, Process\nfrom crewai import LLM\n\nllm = LLM(model=\"gpt-4o-mini\")\n\n# BUG: No automated evaluation — testing is manual, inconsistent, and not reproducible\n# TODO: Build an evaluation harness that runs test cases and scores accuracy, latency, and cost\nsupport_agent = Agent(\n    role=\"Customer Support\",\n    goal=\"Answer questions about orders, returns, shipping, and products\",\n    backstory=\"You are a customer support agent for an e-commerce store.\",\n    llm=llm,\n)\n\n# Manual testing — no scoring, no metrics, not reproducible\nfor q in [\"What is your return policy?\", \"Where is my order #1234?\", \"Do you ship internationally?\"]:\n    task = Task(description=q, expected_output=\"A support response\", agent=support_agent)\n    crew = Crew(agents=[support_agent], tasks=[task], process=Process.sequential)\n    result = crew.kickoff()\n    print(result)\n    print(\"---\")"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/agent-evaluation-harness-langchain.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/agent-evaluation-harness-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/agent-evaluation-harness-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "ten-test-cases",
+      "label": "At least 10 test cases",
+      "description": "The harness includes at least 10 test cases with expected outputs"
+    },
+    {
+      "id": "multi-metric-scoring",
+      "label": "Multi-metric scoring",
+      "description": "Each test case is scored on accuracy, latency, and cost"
+    },
+    {
+      "id": "summary-report",
+      "label": "Summary report",
+      "description": "Results are aggregated into a report with pass/fail rates and metric averages"
+    },
+    {
+      "id": "data-driven-cases",
+      "label": "Data-driven test cases",
+      "description": "Adding new test cases requires only data changes, not code modifications"
+    }
+  ]
+}

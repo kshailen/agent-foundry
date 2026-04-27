@@ -1,0 +1,47 @@
+## The Problem
+
+Your payment processing agent calls an external payment service. When the service goes down, the agent keeps hammering it with requests on every user interaction — making things worse for the already-struggling service and giving users nothing but error messages. There is **no circuit breaker** to stop the flood. Your job is to implement the circuit breaker pattern: after 3 consecutive failures, the agent should stop trying for 60 seconds, then carefully test whether the service has recovered before resuming normal operation.
+
+## Examples
+
+### Example 1
+
+**User input:** Process payment of $50 *(5 times in a row while service is down)*
+
+**Current (bad) output:** All 5 attempts hit the dead service, each one throwing `ConnectionError`. The user sees 5 crashes.
+
+**Expected (good) output:** Attempts 1–3 fail and the circuit opens. Attempts 4–5 are immediately rejected with: *"The payment service is temporarily unavailable. Please try again later."* — without hitting the service.
+
+### Example 2
+
+**User input:** Process payment of $25 *(after 60-second cooldown)*
+
+**Current (bad) output:** Still crashes because there's no recovery logic.
+
+**Expected (good) output:** The breaker enters half-open state and lets one trial call through. If the service is back, the payment succeeds and the breaker resets. If still down, the breaker re-opens for another 60 seconds.
+
+### Example 3
+
+**User input:** Process payment of $100 *(service is healthy)*
+
+**Current (bad) output:** *(Works fine when the service is up — no issue here.)*
+
+**Expected (good) output:** Payment processes normally. The circuit breaker stays closed.
+
+## Your Task
+
+Implement the **circuit breaker pattern** so the agent:
+
+- Tracks consecutive failures and opens the breaker after 3 in a row.
+- Immediately rejects calls (without contacting the service) while the breaker is open.
+- Enters half-open state after a 60-second cooldown and allows one trial call.
+- Resets to closed if the trial call succeeds; re-opens if it fails.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Opens after 3 consecutive failures:** The breaker trips after 3 errors in a row.
+- **Rejects calls when open:** While tripped, the service is not contacted.
+- **Tests recovery in half-open state:** After the cooldown, one trial request is allowed.
+- **Resets on successful recovery:** A successful trial call returns the breaker to normal.

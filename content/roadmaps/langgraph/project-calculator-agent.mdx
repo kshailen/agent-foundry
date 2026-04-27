@@ -1,0 +1,179 @@
+# Project: Calculator Agent
+
+In this project you'll build a complete calculator agent that uses LangGraph's `StateGraph` to let an LLM solve math problems by calling tools. The agent receives a question, decides which math operations to perform, executes them, and returns the final answer.
+
+## What You'll Build
+
+A tool-calling agent with:
+- Three math tools: `add`, `multiply`, `divide`
+- An LLM node that reasons about which tools to call
+- A conditional edge that loops until the LLM has the answer
+- `MessagesState` for managing the conversation
+
+## Step 1: Install Dependencies
+
+```bash
+pip install langgraph langchain-openai
+```
+
+## Step 2: Define Math Tools
+
+```python
+from langchain_core.tools import tool
+
+@tool
+def add(a: float, b: float) -> float:
+    """Add two numbers together. Use this for addition operations."""
+    return a + b
+
+@tool
+def multiply(a: float, b: float) -> float:
+    """Multiply two numbers together. Use this for multiplication operations."""
+    return a * b
+
+@tool
+def divide(a: float, b: float) -> float:
+    """Divide a by b. Use this for division operations."""
+    return a / b
+
+tools = [add, multiply, divide]
+```
+
+Each tool has a descriptive docstring — the LLM reads these to decide which tool fits the task.
+
+## Step 3: Set Up the LLM with Tools
+
+```python
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+llm_with_tools = llm.bind_tools(tools)
+```
+
+`bind_tools` gives the model the JSON schemas of all tools so it can generate structured tool calls.
+
+## Step 4: Create the LLM Node
+
+```python
+from langgraph.graph import MessagesState
+
+def calculator_node(state: MessagesState) -> dict:
+    response = llm_with_tools.invoke(state["messages"])
+    return {"messages": [response]}
+```
+
+The node invokes the LLM with the full message history and returns the response to be appended.
+
+## Step 5: Build the Graph
+
+```python
+from langgraph.graph import StateGraph, START, END
+from langgraph.prebuilt import ToolNode, tools_condition
+
+graph = StateGraph(MessagesState)
+
+graph.add_node("calculator", calculator_node)
+graph.add_node("tools", ToolNode(tools))
+
+graph.add_edge(START, "calculator")
+graph.add_conditional_edges("calculator", tools_condition)
+graph.add_edge("tools", "calculator")
+
+app = graph.compile()
+```
+
+### Graph Structure
+
+```
+START → calculator → tools_condition?
+                        ├── tool_calls → tools → calculator (loop)
+                        └── no tool_calls → END
+```
+
+## Step 6: Run Calculations
+
+```python
+from langchain_core.messages import HumanMessage
+
+questions = [
+    "What is 42 * 17?",
+    "What is 1000 / 8?",
+    "What is 25 + 75 * 2?",
+    "What is (144 / 12) + (8 * 7)?",
+]
+
+for question in questions:
+    result = app.invoke({"messages": [HumanMessage(content=question)]})
+    answer = result["messages"][-1].content
+    print(f"Q: {question}")
+    print(f"A: {answer}\n")
+```
+
+## Step 7: Visualize the Graph
+
+```python
+from IPython.display import Image
+Image(app.get_graph().draw_mermaid_png())
+```
+
+## Full Code
+
+```python
+import os
+from langchain_core.tools import tool
+from langchain_core.messages import HumanMessage
+from langchain_openai import ChatOpenAI
+from langgraph.graph import StateGraph, MessagesState, START, END
+from langgraph.prebuilt import ToolNode, tools_condition
+
+os.environ["OPENAI_API_KEY"] = "your-key-here"
+
+@tool
+def add(a: float, b: float) -> float:
+    """Add two numbers together. Use this for addition operations."""
+    return a + b
+
+@tool
+def multiply(a: float, b: float) -> float:
+    """Multiply two numbers together. Use this for multiplication operations."""
+    return a * b
+
+@tool
+def divide(a: float, b: float) -> float:
+    """Divide a by b. Use this for division operations."""
+    return a / b
+
+tools = [add, multiply, divide]
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+llm_with_tools = llm.bind_tools(tools)
+
+def calculator_node(state: MessagesState) -> dict:
+    response = llm_with_tools.invoke(state["messages"])
+    return {"messages": [response]}
+
+graph = StateGraph(MessagesState)
+graph.add_node("calculator", calculator_node)
+graph.add_node("tools", ToolNode(tools))
+graph.add_edge(START, "calculator")
+graph.add_conditional_edges("calculator", tools_condition)
+graph.add_edge("tools", "calculator")
+
+app = graph.compile()
+
+result = app.invoke({
+    "messages": [HumanMessage(content="What is (100 / 4) + (15 * 3)?")]
+})
+
+for msg in result["messages"]:
+    print(f"{msg.type}: {msg.content}")
+```
+
+## Key Takeaways
+
+- Three `@tool`-decorated functions give the LLM math capabilities
+- `bind_tools` attaches tool schemas so the LLM can generate structured calls
+- `ToolNode` executes tool calls automatically and returns results as messages
+- `tools_condition` creates the agent loop — the graph cycles until the LLM stops calling tools
+- `MessagesState` manages the full conversation with the `add_messages` reducer
+- The same pattern works for any set of tools — replace math functions with APIs, databases, or web search

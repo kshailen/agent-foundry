@@ -1,0 +1,176 @@
+# Streaming Responses
+
+Streaming lets you display agent output as it's being generated rather than waiting for the full response. This is essential for responsive user interfaces — users see tokens appear in real time, tool calls as they happen, and custom status updates from tools.
+
+## agent.stream() Basics
+
+Instead of `agent.invoke()`, use `agent.stream()` to get results incrementally:
+
+```python
+from langchain.chat_models import init_chat_model
+from langgraph.prebuilt import create_react_agent
+from langchain_core.messages import HumanMessage
+
+model = init_chat_model("gpt-4o-mini", model_provider="openai")
+
+agent = create_react_agent(
+    model=model,
+    tools=[],
+    prompt="You are a helpful assistant.",
+)
+
+for chunk in agent.stream(
+    {"messages": [HumanMessage(content="Explain quantum computing in 3 sentences.")]},
+    stream_mode="updates",
+):
+    print(chunk)
+```
+
+## Stream Modes
+
+The `stream_mode` parameter controls what kind of data you receive. You can pass a single mode or a list of modes:
+
+| Mode | What It Returns | Use Case |
+|------|----------------|----------|
+| `"updates"` | State updates from each node | Tracking agent steps and tool calls |
+| `"messages"` | Individual message objects with metadata | Token-by-token streaming |
+| `"custom"` | Custom data emitted from tools via `StreamWriter` | Progress updates from long-running tools |
+
+## Stream Mode: updates
+
+The `"updates"` mode returns state changes from each node in the agent graph:
+
+```python
+for chunk in agent.stream(
+    {"messages": [HumanMessage(content="What is 42 * 17?")]},
+    stream_mode="updates",
+):
+    for node_name, update in chunk.items():
+        print(f"--- {node_name} ---")
+        for msg in update.get("messages", []):
+            print(f"  [{msg.type}] {msg.content[:100]}")
+```
+
+This shows you each step: the agent thinking, tool calls being made, and the final response.
+
+## Stream Mode: messages
+
+The `"messages"` mode gives you individual message objects, enabling token-by-token streaming:
+
+```python
+for message, metadata in agent.stream(
+    {"messages": [HumanMessage(content="Write a haiku about programming.")]},
+    stream_mode="messages",
+):
+    if message.content and metadata.get("langgraph_node") == "agent":
+        print(message.content, end="", flush=True)
+print()
+```
+
+Each chunk contains a partial message and metadata about which node produced it. Filter by `langgraph_node` to show only the agent's response.
+
+## Using version="v2" for Richer Metadata
+
+Pass `version="v2"` to get enhanced metadata in your stream events:
+
+```python
+for event in agent.stream(
+    {"messages": [HumanMessage(content="Tell me a joke.")]},
+    stream_mode="updates",
+    version="v2",
+):
+    print(event)
+```
+
+## Streaming with Tools
+
+When an agent has tools, streaming shows the full execution flow — the agent deciding to call a tool, the tool executing, and the agent responding:
+
+```python
+from langchain_core.tools import tool
+
+@tool
+def calculate(expression: str) -> str:
+    """Evaluate a math expression."""
+    return str(eval(expression))
+
+agent = create_react_agent(
+    model=model,
+    tools=[calculate],
+    prompt="You are a math assistant.",
+)
+
+for chunk in agent.stream(
+    {"messages": [HumanMessage(content="What's (15 + 27) * 3?")]},
+    stream_mode="updates",
+):
+    for node_name, update in chunk.items():
+        print(f"[{node_name}]")
+        for msg in update.get("messages", []):
+            if msg.type == "tool":
+                print(f"  Tool {msg.name}: {msg.content}")
+            else:
+                print(f"  {msg.content[:100]}")
+```
+
+## Custom Stream Writer from Tools
+
+Tools can emit custom streaming events using `StreamWriter`. This is useful for long-running tools that want to report progress:
+
+```python
+from langgraph.types import StreamWriter
+
+@tool
+def analyze_data(query: str, writer: StreamWriter) -> str:
+    """Analyze data and stream progress updates."""
+    writer("Starting analysis...")
+    writer(f"Processing query: {query}")
+    writer("Running calculations...")
+    result = f"Analysis complete for '{query}': 42 records found"
+    writer("Done!")
+    return result
+
+agent = create_react_agent(
+    model=model,
+    tools=[analyze_data],
+    prompt="You are a data analyst.",
+)
+
+for chunk in agent.stream(
+    {"messages": [HumanMessage(content="Analyze sales data for Q4")]},
+    stream_mode=["updates", "custom"],
+):
+    print(chunk)
+```
+
+The `writer` parameter is automatically injected by LangGraph — just add it to your tool's function signature.
+
+## Multiple Stream Modes
+
+You can combine stream modes by passing a list:
+
+```python
+for mode, chunk in agent.stream(
+    {"messages": [HumanMessage(content="Calculate 100 / 7")]},
+    stream_mode=["updates", "messages"],
+):
+    if mode == "updates":
+        print(f"[Update] {chunk}")
+    elif mode == "messages":
+        msg, meta = chunk
+        if msg.content:
+            print(f"[Message] {msg.content}", end="")
+print()
+```
+
+When using multiple modes, each chunk is a tuple of `(mode, data)`.
+
+## Key Takeaways
+
+- Use `agent.stream()` instead of `agent.invoke()` for real-time output
+- `stream_mode="updates"` shows step-by-step agent execution including tool calls
+- `stream_mode="messages"` enables token-by-token streaming for responsive UIs
+- `stream_mode="custom"` captures events emitted by tools via `StreamWriter`
+- Tools can report progress by adding a `StreamWriter` parameter
+- Combine multiple stream modes by passing a list to `stream_mode`
+- Use `version="v2"` for enhanced metadata in stream events

@@ -1,0 +1,146 @@
+## Approach
+
+The bug is that the product review agent is supposed to return structured JSON matching a Pydantic schema (`product_name`, `rating`, `summary`, `pros`, `cons`), but there is no validation step. The LLM may return free-form text, missing fields, wrong types, or malformed JSON — and the downstream system breaks because it expects a well-typed object.
+
+The fix depends on the framework. In the OpenAI Agents SDK, the cleanest approach is to use the `output_type` parameter, which tells the SDK to enforce structured output directly from the model — the LLM is constrained to produce valid JSON matching the Pydantic schema. In LangChain, the equivalent is `llm.with_structured_output(Model)`, which uses the model's function-calling or JSON mode to produce schema-compliant output. Both approaches handle validation at the framework level, and if the output doesn't match the schema, you can catch the validation error and re-prompt or return a structured error instead of crashing.
+
+The key insight is that you should never trust raw LLM text output for structured data. Use the framework's built-in structured output support to enforce the schema at generation time, and add a validation fallback for edge cases where the model still produces malformed output.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+from pydantic import BaseModel
+
+class ProductReview(BaseModel):
+    product_name: str
+    rating: int
+    summary: str
+    pros: list[str]
+    cons: list[str]
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+structured_llm = llm.with_structured_output(ProductReview)
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a product review assistant. Analyze the given product and return a structured review."),
+    ("human", "{input}"),
+])
+
+chain = prompt | structured_llm
+
+MAX_RETRIES = 2
+
+def get_validated_review(query: str) -> ProductReview | str:
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            result = chain.invoke({"input": query})
+            return result
+        except Exception as e:
+            if attempt == MAX_RETRIES:
+                return f"Unable to generate a valid review after {MAX_RETRIES + 1} attempts. Error: {e}"
+    return "Unexpected error during review generation."
+
+review = get_validated_review("Review the Sony WH-1000XM5 headphones")
+if isinstance(review, ProductReview):
+    print(review.model_dump_json(indent=2))
+else:
+    print(review)
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from pydantic import BaseModel
+
+class ProductReview(BaseModel):
+    product_name: str
+    rating: int
+    summary: str
+    pros: list[str]
+    cons: list[str]
+
+agent = Agent(
+    name="Review Assistant",
+    instructions="You are a product review assistant. Analyze the given product and return a structured review with product_name, rating (1-5), summary, pros (list), and cons (list).",
+    output_type=ProductReview,
+)
+
+MAX_RETRIES = 2
+
+def get_validated_review(query: str) -> ProductReview | str:
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            result = Runner.run_sync(agent, query)
+            return result.final_output
+        except Exception as e:
+            if attempt == MAX_RETRIES:
+                return f"Unable to generate a valid review after {MAX_RETRIES + 1} attempts. Error: {e}"
+    return "Unexpected error during review generation."
+
+review = get_validated_review("Review the Sony WH-1000XM5 headphones")
+if isinstance(review, ProductReview):
+    print(review.model_dump_json(indent=2))
+else:
+    print(review)
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from pydantic import BaseModel
+
+class ProductReview(BaseModel):
+    product_name: str
+    rating: int
+    summary: str
+    pros: list[str]
+    cons: list[str]
+
+reviewer = Agent(
+    role="Review Assistant",
+    goal="Analyze products and return structured reviews",
+    backstory="You are a product review assistant who provides detailed, structured reviews.",
+)
+
+task = Task(
+    description="Review the Sony WH-1000XM5 headphones. Return a structured review with product_name, rating (1-5), summary, pros (list), and cons (list).",
+    expected_output="A structured product review with product_name, rating, summary, pros, and cons",
+    agent=reviewer,
+    output_pydantic=ProductReview,
+)
+
+MAX_RETRIES = 2
+
+def get_validated_review(industry_input: dict) -> ProductReview | str:
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            crew = Crew(agents=[reviewer], tasks=[task])
+            result = crew.kickoff(inputs=industry_input)
+            return result.pydantic
+        except Exception as e:
+            if attempt == MAX_RETRIES:
+                return f"Unable to generate a valid review after {MAX_RETRIES + 1} attempts. Error: {e}"
+    return "Unexpected error during review generation."
+
+review = get_validated_review({})
+if isinstance(review, ProductReview):
+    print(review.model_dump_json(indent=2))
+else:
+    print(review)
+```
+
+## Why This Works
+
+Both solutions use the framework's native structured output support to constrain the LLM's response to match the `ProductReview` Pydantic schema. In LangChain, `with_structured_output()` uses the model's function-calling capabilities to produce JSON that maps directly to the schema fields. In the OpenAI Agents SDK, `output_type=ProductReview` does the same thing natively. This means the model is guided at generation time to produce all required fields with the correct types — not just asked nicely via prompt instructions. The retry wrapper adds a safety net: if the structured output call fails for any reason (network error, model glitch), the code retries up to 2 more times before returning a clean error message instead of crashing.
+
+## Key Takeaways
+
+- Never trust raw LLM text output for structured data — use framework-level structured output support to enforce the schema at generation time.
+- Pydantic models serve double duty: they define the expected shape and automatically validate the response.
+- Always wrap structured output calls in error handling with retries — even constrained generation can fail, and your application should never crash on a validation error.

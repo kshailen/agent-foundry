@@ -1,0 +1,51 @@
+{
+  "number": 95,
+  "title": "Model Routing by Complexity",
+  "difficulty": "medium",
+  "categories": [
+    "cost-optimization"
+  ],
+  "frameworks": [
+    "langchain",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "Simple queries must route to the cheaper model (gpt-4o-mini), complex queries to the more capable model (gpt-4o)",
+    "The complexity classifier itself must use the cheap model to avoid defeating the purpose",
+    "The routing must be automatic based on query analysis, not manual",
+    "The solution must log which model handled each query and the estimated cost"
+  ],
+  "hints": [
+    "Use gpt-4o-mini as a lightweight classifier that scores complexity on a 1-5 scale, then route queries scoring 4+ to gpt-4o",
+    "Simple queries include greetings, factual lookups, and formatting requests; complex queries involve multi-step reasoning, code generation, or nuanced analysis",
+    "Track token usage for each call to demonstrate the cost savings from routing simple queries to the cheaper model"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain_core.messages import HumanMessage, SystemMessage\n\n# BUG: All queries go to the expensive model regardless of complexity\n# TODO: Route simple queries to gpt-4o-mini and complex ones to gpt-4o\nllm = ChatOpenAI(model=\"gpt-4o\")\n\ndef handle_query(query: str) -> str:\n    response = llm.invoke([\n        SystemMessage(content=\"You are a helpful assistant.\"),\n        HumanMessage(content=query),\n    ])\n    return response.content\n\nqueries = [\n    \"What is 2 + 2?\",\n    \"Explain the trade-offs between microservices and monoliths for a startup with 5 engineers, considering team growth, deployment complexity, and technical debt.\",\n    \"Convert 100 Fahrenheit to Celsius.\",\n    \"Design a database schema for a multi-tenant SaaS platform that needs to handle row-level security, audit logging, and cross-tenant analytics.\",\n    \"What day comes after Monday?\",\n]\nfor q in queries:\n    result = handle_query(q)\n    print(f\"Query: {q}\\nAnswer: {result}\\n\")",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\n# BUG: All queries go to the expensive model regardless of complexity\n# TODO: Route simple queries to gpt-4o-mini and complex ones to gpt-4o\nagent = Agent(\n    name=\"Assistant\",\n    instructions=\"You are a helpful assistant.\",\n    model=\"gpt-4o\",\n)\n\nqueries = [\n    \"What is 2 + 2?\",\n    \"Explain the trade-offs between microservices and monoliths for a startup with 5 engineers, considering team growth, deployment complexity, and technical debt.\",\n    \"Convert 100 Fahrenheit to Celsius.\",\n    \"Design a database schema for a multi-tenant SaaS platform that needs to handle row-level security, audit logging, and cross-tenant analytics.\",\n    \"What day comes after Monday?\",\n]\nfor q in queries:\n    result = Runner.run_sync(agent, q)\n    print(f\"Query: {q}\\nAnswer: {result.final_output}\\n\")",
+    "crewai": "from crewai import Agent, Task, Crew\n\n# BUG: All queries go to the expensive model regardless of complexity\n# TODO: Route simple queries to gpt-4o-mini and complex ones to gpt-4o\nassistant = Agent(\n    role=\"Assistant\",\n    goal=\"Answer user questions helpfully\",\n    backstory=\"You are a helpful assistant.\",\n    llm=\"gpt-4o\",\n)\n\nqueries = [\n    \"What is 2 + 2?\",\n    \"Explain the trade-offs between microservices and monoliths for a startup with 5 engineers, considering team growth, deployment complexity, and technical debt.\",\n    \"Convert 100 Fahrenheit to Celsius.\",\n    \"Design a database schema for a multi-tenant SaaS platform that needs to handle row-level security, audit logging, and cross-tenant analytics.\",\n    \"What day comes after Monday?\",\n]\nfor q in queries:\n    task = Task(description=q, expected_output=\"A helpful answer\", agent=assistant)\n    crew = Crew(agents=[assistant], tasks=[task])\n    result = crew.kickoff()\n    print(f\"Query: {q}\\nAnswer: {result}\\n\")"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/model-routing-by-complexity-langchain.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/model-routing-by-complexity-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/model-routing-by-complexity-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "correct-routing",
+      "label": "Correct routing",
+      "description": "Simple queries go to the cheap model and complex queries go to the capable model"
+    },
+    {
+      "id": "cheap-classifier",
+      "label": "Cheap classifier",
+      "description": "The complexity classifier itself uses the cheaper model"
+    },
+    {
+      "id": "model-logging",
+      "label": "Model logging",
+      "description": "Each query logs which model handled it and the estimated cost"
+    }
+  ]
+}

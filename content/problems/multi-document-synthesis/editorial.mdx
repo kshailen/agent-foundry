@@ -1,0 +1,197 @@
+## Approach
+
+The bug is in the retriever configuration: `search_kwargs={"k": 1}` limits retrieval to a single document. When a user asks for a complete summary of Project Alpha, the agent finds one fact (e.g., the budget) but misses the team size, delivery timeline, and client feedback that live in other documents. The result is a partial, incomplete answer.
+
+The fix is twofold. First, increase the retriever's `k` parameter to return multiple documents (e.g., `k=4`) so that all relevant facts are fetched. Second, update the prompt to instruct the LLM to synthesize information from all retrieved documents into a single coherent answer, rather than just echoing one document.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="Project Alpha started in January 2024 with a budget of $2M."),
+    Document(page_content="Project Alpha's team consists of 12 engineers and 3 designers."),
+    Document(page_content="Project Alpha delivered its MVP in June 2024, two weeks ahead of schedule."),
+    Document(page_content="Project Beta has a budget of $5M and started in March 2024."),
+    Document(page_content="Project Alpha received positive client feedback with a satisfaction score of 9.2/10."),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system",
+     "Answer the question by synthesizing information from ALL the context documents below. "
+     "Combine facts from multiple documents into a single coherent answer.\n\n"
+     "Context:\n{context}"),
+    ("human", "{question}"),
+])
+
+def ask(question: str) -> str:
+    docs = retriever.invoke(question)
+    context = "\n".join([doc.page_content for doc in docs])
+    chain = prompt | llm
+    result = chain.invoke({"context": context, "question": question})
+    return result.content
+
+print(ask("Give me a complete summary of Project Alpha."))
+```
+
+### LangGraph
+
+```python
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="Project Alpha started in January 2024 with a budget of $2M."),
+    Document(page_content="Project Alpha's team consists of 12 engineers and 3 designers."),
+    Document(page_content="Project Alpha delivered its MVP in June 2024, two weeks ahead of schedule."),
+    Document(page_content="Project Beta has a budget of $5M and started in March 2024."),
+    Document(page_content="Project Alpha received positive client feedback with a satisfaction score of 9.2/10."),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
+
+class State(TypedDict):
+    question: str
+    context: str
+    answer: str
+
+def retrieve(state: State) -> State:
+    docs = retriever.invoke(state["question"])
+    context = "\n".join([doc.page_content for doc in docs])
+    return {"context": context}
+
+def synthesize(state: State) -> State:
+    response = llm.invoke(
+        f"Answer the question by synthesizing information from ALL the context documents below. "
+        f"Combine facts from multiple documents into a single coherent answer.\n\n"
+        f"Context:\n{state['context']}\n\n"
+        f"Question: {state['question']}"
+    )
+    return {"answer": response.content}
+
+graph = StateGraph(State)
+graph.add_node("retrieve", retrieve)
+graph.add_node("synthesize", synthesize)
+graph.add_edge(START, "retrieve")
+graph.add_edge("retrieve", "synthesize")
+graph.add_edge("synthesize", END)
+
+app = graph.compile()
+result = app.invoke({"question": "Give me a complete summary of Project Alpha."})
+print(result["answer"])
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from crewai.tools import tool
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="Project Alpha started in January 2024 with a budget of $2M."),
+    Document(page_content="Project Alpha's team consists of 12 engineers and 3 designers."),
+    Document(page_content="Project Alpha delivered its MVP in June 2024, two weeks ahead of schedule."),
+    Document(page_content="Project Beta has a budget of $5M and started in March 2024."),
+    Document(page_content="Project Alpha received positive client feedback with a satisfaction score of 9.2/10."),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
+
+@tool
+def search_projects(question: str) -> str:
+    """Search project documentation for relevant information."""
+    docs = retriever.invoke(question)
+    return "\n".join([doc.page_content for doc in docs])
+
+analyst = Agent(
+    role="Project Analyst",
+    goal="Answer questions by synthesizing information from all retrieved documents",
+    backstory="You are an expert project analyst who combines facts from multiple sources into complete answers.",
+    tools=[search_projects],
+)
+
+task = Task(
+    description="Give me a complete summary of Project Alpha. Synthesize information from all available documents.",
+    expected_output="A comprehensive summary combining all available facts about Project Alpha",
+    agent=analyst,
+)
+
+crew = Crew(agents=[analyst], tasks=[task])
+print(crew.kickoff())
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from agents.tool import function_tool
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="Project Alpha started in January 2024 with a budget of $2M."),
+    Document(page_content="Project Alpha's team consists of 12 engineers and 3 designers."),
+    Document(page_content="Project Alpha delivered its MVP in June 2024, two weeks ahead of schedule."),
+    Document(page_content="Project Beta has a budget of $5M and started in March 2024."),
+    Document(page_content="Project Alpha received positive client feedback with a satisfaction score of 9.2/10."),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
+
+@function_tool
+def search_projects(question: str) -> str:
+    """Search project documentation for relevant information."""
+    docs = retriever.invoke(question)
+    return "\n".join([doc.page_content for doc in docs])
+
+agent = Agent(
+    name="Project Analyst",
+    instructions=(
+        "You are an expert project analyst. Answer questions by synthesizing information "
+        "from ALL retrieved documents. Combine facts from multiple sources into a single coherent answer."
+    ),
+    tools=[search_projects],
+)
+
+result = Runner.run_sync(agent, "Give me a complete summary of Project Alpha.")
+print(result.final_output)
+```
+
+## Why This Works
+
+By increasing `k` to 4, the retriever fetches multiple Project Alpha documents instead of just one. The synthesis prompt instructs the LLM to combine facts from all retrieved chunks, producing a complete answer that covers budget, team composition, delivery timeline, and client feedback. The model merges these separate facts into a coherent narrative rather than repeating a single document.
+
+## Key Takeaways
+
+- Setting `k=1` in the retriever is a common pitfall that produces partial answers for multi-fact queries.
+- Many real-world questions require synthesizing information spread across multiple documents.
+- The prompt should explicitly instruct the LLM to combine and synthesize, not just summarize the first document it sees.

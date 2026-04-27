@@ -1,0 +1,169 @@
+## Approach
+
+The agent has four perfectly functional tools — weather lookup, web search, calculator, and calendar check — but it routes queries to the wrong one. The root cause is twofold: the tool docstrings are uselessly vague ("Look up information," "Search for things," "Compute stuff," "Check things") and the system prompt provides no routing guidance. The model sees four tools with overlapping, generic descriptions and essentially guesses which one to call.
+
+The fix targets both surfaces allowed by the constraints. First, rewrite each tool's docstring to clearly state what the tool does, what input it expects, and what output it returns — with zero overlap between tools. Second, update the system prompt with explicit routing rules that map query types to specific tools. Together, these changes give the model unambiguous signals for tool selection.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+
+@tool
+def weather_lookup(location: str) -> str:
+    """Get the current weather for a specific city or location. Input: a city or location name (e.g., 'San Francisco'). Output: current temperature and weather conditions for that location."""
+    return f"Weather in {location}: 72°F, sunny"
+
+@tool
+def web_search(query: str) -> str:
+    """Search the web for general knowledge, news, or information not covered by other tools. Input: a search query string. Output: relevant web search results. Do NOT use this for weather, math, or calendar queries."""
+    return f"Results for {query}: ..."
+
+@tool
+def calculator(expression: str) -> str:
+    """Evaluate a mathematical expression or perform arithmetic calculations. Input: a valid Python math expression (e.g., '230 * 0.15' or '2 + 2'). Output: the numeric result of the calculation."""
+    return str(eval(expression))
+
+@tool
+def calendar_check(date: str) -> str:
+    """Check the user's calendar for scheduled events on a specific date. Input: a date string (e.g., 'Friday', '2025-03-15'). Output: list of events scheduled for that date."""
+    return f"Events on {date}: Team standup at 10am"
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+tools = [weather_lookup, web_search, calculator, calendar_check]
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", (
+        "You are a helpful assistant with access to specific tools. Use the following routing rules:\n\n"
+        "- For weather questions (temperature, forecast, conditions) → use weather_lookup\n"
+        "- For math or arithmetic (percentages, calculations, conversions) → use calculator\n"
+        "- For schedule, meetings, or calendar queries → use calendar_check\n"
+        "- For general knowledge, news, or anything not covered above → use web_search\n\n"
+        "Always pick exactly one tool per query. Do not call multiple tools when one suffices."
+    )),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}"),
+])
+
+agent = create_tool_calling_agent(llm, tools, prompt)
+executor = AgentExecutor(agent=agent, tools=tools)
+
+print(executor.invoke({"input": "What's the weather in San Francisco?"}))
+print(executor.invoke({"input": "What is 15% of 230?"}))
+print(executor.invoke({"input": "Do I have any meetings on Friday?"}))
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from agents.tool import function_tool
+
+@function_tool
+def weather_lookup(location: str) -> str:
+    """Get the current weather for a specific city or location. Input: a city or location name (e.g., 'San Francisco'). Output: current temperature and weather conditions for that location."""
+    return f"Weather in {location}: 72°F, sunny"
+
+@function_tool
+def web_search(query: str) -> str:
+    """Search the web for general knowledge, news, or information not covered by other tools. Input: a search query string. Output: relevant web search results. Do NOT use this for weather, math, or calendar queries."""
+    return f"Results for {query}: ..."
+
+@function_tool
+def calculator(expression: str) -> str:
+    """Evaluate a mathematical expression or perform arithmetic calculations. Input: a valid Python math expression (e.g., '230 * 0.15' or '2 + 2'). Output: the numeric result of the calculation."""
+    return str(eval(expression))
+
+@function_tool
+def calendar_check(date: str) -> str:
+    """Check the user's calendar for scheduled events on a specific date. Input: a date string (e.g., 'Friday', '2025-03-15'). Output: list of events scheduled for that date."""
+    return f"Events on {date}: Team standup at 10am"
+
+agent = Agent(
+    name="Assistant",
+    instructions=(
+        "You are a helpful assistant with access to specific tools. Use the following routing rules:\n\n"
+        "- For weather questions (temperature, forecast, conditions) → use weather_lookup\n"
+        "- For math or arithmetic (percentages, calculations, conversions) → use calculator\n"
+        "- For schedule, meetings, or calendar queries → use calendar_check\n"
+        "- For general knowledge, news, or anything not covered above → use web_search\n\n"
+        "Always pick exactly one tool per query. Do not call multiple tools when one suffices."
+    ),
+    tools=[weather_lookup, web_search, calculator, calendar_check],
+)
+
+print(Runner.run_sync(agent, "What's the weather in San Francisco?"))
+print(Runner.run_sync(agent, "What is 15% of 230?"))
+print(Runner.run_sync(agent, "Do I have any meetings on Friday?"))
+```
+
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from crewai import LLM
+from crewai.tools import tool
+
+@tool
+def weather_lookup(location: str) -> str:
+    """Get the current weather for a specific city or location. Input: a city or location name (e.g., 'San Francisco'). Output: current temperature and weather conditions for that location."""
+    return f"Weather in {location}: 72°F, sunny"
+
+@tool
+def web_search(query: str) -> str:
+    """Search the web for general knowledge, news, or information not covered by other tools. Input: a search query string. Output: relevant web search results. Do NOT use this for weather, math, or calendar queries."""
+    return f"Results for {query}: ..."
+
+@tool
+def calculator(expression: str) -> str:
+    """Evaluate a mathematical expression or perform arithmetic calculations. Input: a valid Python math expression (e.g., '230 * 0.15' or '2 + 2'). Output: the numeric result of the calculation."""
+    return str(eval(expression))
+
+@tool
+def calendar_check(date: str) -> str:
+    """Check the user's calendar for scheduled events on a specific date. Input: a date string (e.g., 'Friday', '2025-03-15'). Output: list of events scheduled for that date."""
+    return f"Events on {date}: Team standup at 10am"
+
+llm = LLM(model="gpt-4o-mini")
+
+agent = Agent(
+    role="Helpful Assistant",
+    goal="Help users by routing each query to the correct tool",
+    backstory=(
+        "You are a helpful assistant with access to specific tools. Use the following routing rules:\n\n"
+        "- For weather questions (temperature, forecast, conditions) -> use weather_lookup\n"
+        "- For math or arithmetic (percentages, calculations, conversions) -> use calculator\n"
+        "- For schedule, meetings, or calendar queries -> use calendar_check\n"
+        "- For general knowledge, news, or anything not covered above -> use web_search\n\n"
+        "Always pick exactly one tool per query. Do not call multiple tools when one suffices."
+    ),
+    tools=[weather_lookup, web_search, calculator, calendar_check],
+    llm=llm,
+)
+
+task = Task(
+    description="Answer the following queries: 1) What's the weather in San Francisco? 2) What is 15% of 230? 3) Do I have any meetings on Friday?",
+    expected_output="Accurate answers using the correct tools for each query",
+    agent=agent,
+)
+
+crew = Crew(agents=[agent], tasks=[task])
+result = crew.kickoff()
+print(result)
+```
+
+## Why This Works
+
+Tool selection in LLM agents is driven by two things: the tool's schema (especially its description/docstring) and the system prompt. When descriptions are vague, the model lacks the semantic signal to differentiate tools. By making each description specific about purpose, input format, and output format — and adding explicit routing rules to the system prompt — we give the model a decision tree it can follow reliably. The key principle is that tool descriptions are part of the prompt engineering surface, not just documentation.
+
+## Key Takeaways
+
+- Tool docstrings are the primary signal an LLM uses for tool selection — vague descriptions lead to wrong tool calls.
+- Each tool description should state its purpose, expected input format, and output format with no overlap between tools.
+- System prompt routing rules act as a fallback decision tree when tool descriptions alone aren't enough.

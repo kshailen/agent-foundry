@@ -1,0 +1,43 @@
+## The Problem
+
+Your shopping assistant agent has two data sources: `get_price_source_a` (a retail aggregator) and `get_price_source_b` (a manufacturer database). These sources frequently **disagree** — one might say a laptop costs $999 while the other says $1,049, or one reports "in stock" while the other says "out of stock". Currently, the agent either queries only one source, or queries both but **silently picks the first result** without acknowledging the conflict. Your job is to make the agent **consult both sources and transparently handle discrepancies**.
+
+## Examples
+
+### Example 1
+
+**User input:** What's the price of Laptop X1 and is it in stock?
+
+**Current (bad) output:** The agent calls only `get_price_source_a` and says: *Laptop X1 is $999 and in stock.* It ignores Source B, which reports $1,049.
+
+**Expected (good) output:** The agent calls both sources and responds: *I found different prices for Laptop X1: Source A (retail aggregator) lists it at $999, while Source B (manufacturer) lists it at $1,049. Both sources show it as in stock. The price difference may be due to retailer markdowns.*
+
+### Example 2
+
+**User input:** Is the Headphones Z3 available?
+
+**Current (bad) output:** The agent calls one source and says *Yes, in stock!* — but the other source says out of stock.
+
+**Expected (good) output:** *There's a discrepancy on availability for Headphones Z3: Source A shows it as in stock, while Source B shows it as out of stock. I'd recommend checking directly with the retailer to confirm current availability.*
+
+### Example 3
+
+**User input:** What's the rating for Keyboard K5?
+
+**Expected (good) output:** The agent calls both sources and responds: *Keyboard K5 has a 4.0/5 rating on Source A and 4.1/5 on Source B — very consistent across sources.*
+
+## Your Task
+
+- Update the agent to always call both data sources before answering.
+- When the sources agree, present the data confidently.
+- When the sources conflict, explicitly flag the discrepancy and present both values.
+- The agent must explain its reasoning when recommending one value over another.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Both sources are consulted:** The agent calls both tools before answering.
+- **Conflicts are flagged:** When sources disagree, the discrepancy is highlighted.
+- **No silent preference:** The agent does not silently pick one source when there is a conflict.
+- **Resolution is transparent:** The agent explains its reasoning when presenting conflicting data.

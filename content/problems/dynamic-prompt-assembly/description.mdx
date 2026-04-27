@@ -1,0 +1,48 @@
+## The Problem
+
+Your AI assistant serves users on different tiers (free and pro) and needs to behave differently based on context. Free users should get basic features and upgrade suggestions; pro users should get advanced capabilities like data export, custom analysis, and priority support. New users should see a welcome message and quick-start guide; returning users should skip onboarding. But the current code uses a single static prompt for everyone — a free user gets the same experience as a pro user, and a first-time visitor gets no welcome. Your job is to **build a dynamic prompt assembly system** that constructs different system prompts based on user tier and returning status.
+
+## Examples
+
+### Example 1
+
+**User input:** "How do I analyze my data?" (Free tier, new user)
+
+**Current (bad) output:** Generic answer with no mention of tier limitations or onboarding.
+
+**Expected (good) output:** Includes a welcome message for new users, explains free-tier analysis features (basic charts, limited queries), and mentions that advanced analysis is available on the pro plan.
+
+### Example 2
+
+**User input:** "How do I analyze my data?" (Pro tier, returning user)
+
+**Current (bad) output:** Same generic answer as above — identical for all users.
+
+**Expected (good) output:** Welcomes the returning user back (no onboarding), explains full pro analysis features (custom queries, data export, advanced visualizations), and offers direct access to advanced capabilities.
+
+### Example 3
+
+**User input:** "What features do I have access to?" (Free tier, returning user)
+
+**Current (bad) output:** Lists all features including pro-only ones.
+
+**Expected (good) output:** Lists only free-tier features, acknowledges the user as a returning visitor, and suggests upgrading for additional capabilities.
+
+## Your Task
+
+Modify the prompt assembly logic so that:
+
+- The system prompt is built dynamically from modular blocks based on `user_tier` and `is_returning_user`.
+- Free-tier prompts include basic features only and mention upgrade options.
+- Pro-tier prompts include all features including advanced capabilities.
+- New-user prompts include a welcome message and quick-start guidance.
+- Returning-user prompts skip onboarding and welcome the user back.
+- Pro features never leak into free-tier prompts.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Different behavior per tier:** Free and pro users receive noticeably different instructions and capabilities.
+- **Recognizes returning users:** New users see onboarding; returning users see a welcome-back and skip the intro.
+- **Prompt changes are correct:** All four combinations (free+new, free+returning, pro+new, pro+returning) produce appropriate, distinct prompts.

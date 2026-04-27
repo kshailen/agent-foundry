@@ -1,0 +1,56 @@
+{
+  "number": 91,
+  "title": "Human-in-the-Loop Approval",
+  "difficulty": "medium",
+  "categories": [
+    "orchestration"
+  ],
+  "frameworks": [
+    "langgraph",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "The workflow must pause and wait for human approval before executing any high-risk action",
+    "Low-risk actions should proceed automatically without human intervention",
+    "The workflow must resume from the approval point after human input, not restart",
+    "The human must see the proposed action and its risk assessment before approving or rejecting"
+  ],
+  "hints": [
+    "In LangGraph, use an interrupt_before or interrupt_after pattern with a checkpointer to pause the graph at the approval node",
+    "Classify actions as high-risk (refund > $100, account deletion, data export) vs low-risk (status lookup, FAQ) before routing",
+    "Store the pending action in the workflow state so the human reviewer can see exactly what they are approving"
+  ],
+  "starterCode": {
+    "langgraph": "from langchain_openai import ChatOpenAI\nfrom langchain_core.messages import HumanMessage, SystemMessage\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# BUG: All actions are auto-approved, including high-risk ones like large refunds\n# TODO: Add a human-in-the-loop approval step that pauses for review on high-risk actions\ndef process_request(request: str) -> str:\n    risk_check = llm.invoke([\n        SystemMessage(content=\"Classify this request as high-risk or low-risk. High-risk: refunds over $100, account deletion, data export. Low-risk: everything else. Reply with just 'high' or 'low'.\"),\n        HumanMessage(content=request),\n    ])\n    risk_level = risk_check.content.strip().lower()\n\n    # BUG: High-risk actions are auto-approved\n    action = llm.invoke([\n        SystemMessage(content=f\"Execute this {risk_level}-risk customer request. Describe the action taken.\"),\n        HumanMessage(content=request),\n    ])\n    return f\"[{risk_level.upper()} RISK - AUTO-APPROVED] {action.content}\"\n\nrequests = [\n    \"Please refund $250 for order #5678\",\n    \"What is the status of my order #1234?\",\n    \"Delete my account and all associated data\",\n]\nfor req in requests:\n    result = process_request(req)\n    print(f\"Request: {req}\\nResult: {result}\\n\")",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\n# BUG: All actions are auto-approved, including high-risk ones like large refunds\n# TODO: Add a human-in-the-loop approval step that pauses for review on high-risk actions\nagent = Agent(\n    name=\"Request Processor\",\n    instructions=\"\"\"You process customer requests. For each request:\n1. Classify it as high-risk or low-risk (high-risk: refunds over $100, account deletion, data export)\n2. Execute the action immediately regardless of risk level\nDescribe the action taken.\"\"\",\n)\n\nrequests = [\n    \"Please refund $250 for order #5678\",\n    \"What is the status of my order #1234?\",\n    \"Delete my account and all associated data\",\n]\nfor req in requests:\n    result = Runner.run_sync(agent, req)\n    print(f\"Request: {req}\\nResult: {result.final_output}\\n\")",
+    "crewai": "from crewai import Agent, Task, Crew\n\n# BUG: All actions are auto-approved, including high-risk ones like large refunds\n# TODO: Add a human-in-the-loop approval step that pauses for review on high-risk actions\nagent = Agent(\n    role=\"Request Processor\",\n    goal=\"Process customer requests. Classify as high-risk or low-risk and execute immediately regardless of risk level.\",\n    backstory=\"You process customer requests.\",\n)\n\nrequests = [\n    \"Please refund $250 for order #5678\",\n    \"What is the status of my order #1234?\",\n    \"Delete my account and all associated data\",\n]\nfor req in requests:\n    task = Task(\n        description=req,\n        expected_output=\"Action taken for the request\",\n        agent=agent,\n    )\n    crew = Crew(agents=[agent], tasks=[task])\n    result = crew.kickoff()\n    print(f\"Request: {req}\\nResult: {result}\\n\")"
+  },
+  "colabUrls": {
+    "langgraph": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/human-in-the-loop-approval-langgraph.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/human-in-the-loop-approval-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/human-in-the-loop-approval-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "pauses-on-high-risk",
+      "label": "Pauses on high-risk actions",
+      "description": "The workflow interrupts and waits for human approval before executing high-risk actions"
+    },
+    {
+      "id": "auto-approves-low-risk",
+      "label": "Auto-approves low-risk actions",
+      "description": "Low-risk actions proceed without requiring human intervention"
+    },
+    {
+      "id": "resumes-after-approval",
+      "label": "Resumes after approval",
+      "description": "After human approval or rejection, the workflow continues from the approval point without restarting"
+    },
+    {
+      "id": "shows-pending-action",
+      "label": "Shows pending action to reviewer",
+      "description": "The human reviewer can see the proposed action and risk assessment before deciding"
+    }
+  ]
+}

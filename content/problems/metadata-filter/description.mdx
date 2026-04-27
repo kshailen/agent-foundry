@@ -1,0 +1,46 @@
+## The Problem
+
+Your company has policy documents spanning multiple years and categories (HR, finance, security). When a user asks for "2024 HR policies," the retriever ignores the year and category constraints and returns semantically similar documents from **any year**—so 2022 safety training shows up alongside 2024 PTO policies. The user ends up with outdated information they can't trust. Your job is to **extract metadata filters from the user's query** (year, category) and **apply them during retrieval** so only documents matching the specified criteria are returned.
+
+## Examples
+
+### Example 1
+
+**User input:** What are the 2024 HR policies?
+
+**Current (bad) output:** An answer mixing 2022 safety training, 2023 remote work, and 2024 PTO policies — the user asked for 2024 only.
+
+**Expected (good) output:** Based on the 2024 HR policies: All employees receive 20 days of PTO per year.
+
+### Example 2
+
+**User input:** What finance policies were updated in 2024?
+
+**Current (bad) output:** Mentions 2022 travel expense policy alongside 2024 401k matching — no year filtering.
+
+**Expected (good) output:** In 2024, the finance policy states that the company matches 401k contributions up to 6%.
+
+### Example 3
+
+**User input:** What are the current security requirements?
+
+**Current (bad) output:** Returns HR or finance documents that are semantically closer but wrong category.
+
+**Expected (good) output:** According to the 2024 security policy, data must be encrypted at rest and in transit.
+
+## Your Task
+
+Modify the retrieval pipeline so the agent:
+
+- Parses the user's natural language query to extract metadata filters (year, category).
+- Applies those filters during retrieval so only matching documents are searched.
+- Combines metadata filtering with semantic search for accurate, targeted results.
+- Returns answers grounded only in documents that match the user's criteria.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Extracts metadata filters from query:** The agent correctly identifies filter criteria (year, category) from the user's natural language query.
+- **Applies metadata filters during retrieval:** The retriever uses metadata filters to narrow results before or during search.
+- **Returns correctly filtered results:** The agent returns only documents matching the specified metadata criteria.

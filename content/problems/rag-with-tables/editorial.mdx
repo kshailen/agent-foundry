@@ -1,0 +1,399 @@
+## Approach
+
+The starter code uses a naive `CharacterTextSplitter` with a 150-character chunk size that blindly chops the document at character boundaries. This destroys table structure: the header row ends up in one chunk, some data rows in another, and remaining rows in a third. When the agent retrieves a chunk containing `| Asia Pacific | $28M`, it has no column headers to understand what `$28M` represents. The result is hallucinated or incorrect answers for any tabular question.
+
+The fix is a table-aware chunking strategy. Before splitting, detect table boundaries in the document (markdown tables are delimited by lines starting with `|`). Keep each table as an atomic unit — never split a table across chunks. Prose sections between tables can be split normally. This ensures that every retrieved chunk containing tabular data includes the full table with headers and all rows.
+
+## Solution
+
+### LangChain
+
+```python
+import re
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings()
+
+document_text = """Company Financial Report Q3 2024
+
+Revenue Summary:
+The company achieved strong growth across all segments.
+
+| Region       | Q3 Revenue | Q2 Revenue | Growth |
+|-------------|-----------|-----------|--------|
+| North America | $45M      | $38M      | 18.4%  |
+| Europe       | $32M      | $29M      | 10.3%  |
+| Asia Pacific | $28M      | $22M      | 27.3%  |
+| Latin America | $12M      | $11M      | 9.1%   |
+
+Expense Breakdown:
+Operating expenses were well managed this quarter.
+
+| Category     | Amount  | % of Revenue |
+|-------------|---------|-------------|
+| R&D          | $25M    | 21.4%       |
+| Sales        | $18M    | 15.4%       |
+| Operations   | $15M    | 12.8%       |
+| G&A          | $8M     | 6.8%        |
+
+The company projects continued growth in Q4 2024."""
+
+def table_aware_split(text: str) -> list[str]:
+    chunks = []
+    current_chunk = []
+    in_table = False
+
+    for line in text.split("\n"):
+        is_table_line = line.strip().startswith("|")
+
+        if is_table_line and not in_table:
+            if current_chunk:
+                prose = "\n".join(current_chunk).strip()
+                if prose:
+                    chunks.append(prose)
+                current_chunk = []
+            in_table = True
+            current_chunk.append(line)
+        elif is_table_line and in_table:
+            current_chunk.append(line)
+        elif not is_table_line and in_table:
+            chunks.append("\n".join(current_chunk).strip())
+            current_chunk = [line]
+            in_table = False
+        else:
+            current_chunk.append(line)
+
+    if current_chunk:
+        remaining = "\n".join(current_chunk).strip()
+        if remaining:
+            chunks.append(remaining)
+
+    return chunks
+
+chunks = table_aware_split(document_text)
+docs = [Document(page_content=chunk) for chunk in chunks]
+
+vectorstore = FAISS.from_documents(docs, embeddings)
+retriever = vectorstore.as_retriever(search_kwargs={"k": 2})
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system",
+     "Answer the question based on the context below. "
+     "Pay attention to table data including headers and all rows.\n\n"
+     "Context:\n{context}"),
+    ("human", "{question}"),
+])
+
+def ask(question: str) -> str:
+    retrieved = retriever.invoke(question)
+    context = "\n\n".join([doc.page_content for doc in retrieved])
+    chain = prompt | llm
+    result = chain.invoke({"context": context, "question": question})
+    return result.content
+
+print(ask("What was the revenue growth in Asia Pacific?"))
+print(ask("What percentage of revenue goes to R&D?"))
+```
+
+### LangGraph
+
+```python
+import re
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings()
+
+document_text = """Company Financial Report Q3 2024
+
+Revenue Summary:
+The company achieved strong growth across all segments.
+
+| Region       | Q3 Revenue | Q2 Revenue | Growth |
+|-------------|-----------|-----------|--------|
+| North America | $45M      | $38M      | 18.4%  |
+| Europe       | $32M      | $29M      | 10.3%  |
+| Asia Pacific | $28M      | $22M      | 27.3%  |
+| Latin America | $12M      | $11M      | 9.1%   |
+
+Expense Breakdown:
+Operating expenses were well managed this quarter.
+
+| Category     | Amount  | % of Revenue |
+|-------------|---------|-------------|
+| R&D          | $25M    | 21.4%       |
+| Sales        | $18M    | 15.4%       |
+| Operations   | $15M    | 12.8%       |
+| G&A          | $8M     | 6.8%        |
+
+The company projects continued growth in Q4 2024."""
+
+def table_aware_split(text: str) -> list[str]:
+    chunks = []
+    current_chunk = []
+    in_table = False
+
+    for line in text.split("\n"):
+        is_table_line = line.strip().startswith("|")
+
+        if is_table_line and not in_table:
+            if current_chunk:
+                prose = "\n".join(current_chunk).strip()
+                if prose:
+                    chunks.append(prose)
+                current_chunk = []
+            in_table = True
+            current_chunk.append(line)
+        elif is_table_line and in_table:
+            current_chunk.append(line)
+        elif not is_table_line and in_table:
+            chunks.append("\n".join(current_chunk).strip())
+            current_chunk = [line]
+            in_table = False
+        else:
+            current_chunk.append(line)
+
+    if current_chunk:
+        remaining = "\n".join(current_chunk).strip()
+        if remaining:
+            chunks.append(remaining)
+
+    return chunks
+
+chunks = table_aware_split(document_text)
+docs = [Document(page_content=chunk) for chunk in chunks]
+
+vectorstore = FAISS.from_documents(docs, embeddings)
+retriever = vectorstore.as_retriever(search_kwargs={"k": 2})
+
+class State(TypedDict):
+    question: str
+    context: str
+    answer: str
+
+def retrieve(state: State) -> State:
+    retrieved = retriever.invoke(state["question"])
+    context = "\n\n".join([doc.page_content for doc in retrieved])
+    return {"context": context}
+
+def answer(state: State) -> State:
+    response = llm.invoke(
+        f"Answer the question based on the context below. "
+        f"Pay attention to table data including headers and all rows.\n\n"
+        f"Context:\n{state['context']}\n\n"
+        f"Question: {state['question']}"
+    )
+    return {"answer": response.content}
+
+graph = StateGraph(State)
+graph.add_node("retrieve", retrieve)
+graph.add_node("answer", answer)
+graph.add_edge(START, "retrieve")
+graph.add_edge("retrieve", "answer")
+graph.add_edge("answer", END)
+
+app = graph.compile()
+result = app.invoke({"question": "What was the revenue growth in Asia Pacific?"})
+print(result["answer"])
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+
+embeddings = OpenAIEmbeddings()
+
+document_text = """Company Financial Report Q3 2024
+
+Revenue Summary:
+The company achieved strong growth across all segments.
+
+| Region       | Q3 Revenue | Q2 Revenue | Growth |
+|-------------|-----------|-----------|--------|
+| North America | $45M      | $38M      | 18.4%  |
+| Europe       | $32M      | $29M      | 10.3%  |
+| Asia Pacific | $28M      | $22M      | 27.3%  |
+| Latin America | $12M      | $11M      | 9.1%   |
+
+Expense Breakdown:
+Operating expenses were well managed this quarter.
+
+| Category     | Amount  | % of Revenue |
+|-------------|---------|-------------|
+| R&D          | $25M    | 21.4%       |
+| Sales        | $18M    | 15.4%       |
+| Operations   | $15M    | 12.8%       |
+| G&A          | $8M     | 6.8%        |
+
+The company projects continued growth in Q4 2024."""
+
+def table_aware_split(text: str) -> list[str]:
+    chunks = []
+    current_chunk = []
+    in_table = False
+
+    for line in text.split("\n"):
+        is_table_line = line.strip().startswith("|")
+
+        if is_table_line and not in_table:
+            if current_chunk:
+                prose = "\n".join(current_chunk).strip()
+                if prose:
+                    chunks.append(prose)
+                current_chunk = []
+            in_table = True
+            current_chunk.append(line)
+        elif is_table_line and in_table:
+            current_chunk.append(line)
+        elif not is_table_line and in_table:
+            chunks.append("\n".join(current_chunk).strip())
+            current_chunk = [line]
+            in_table = False
+        else:
+            current_chunk.append(line)
+
+    if current_chunk:
+        remaining = "\n".join(current_chunk).strip()
+        if remaining:
+            chunks.append(remaining)
+
+    return chunks
+
+chunks = table_aware_split(document_text)
+docs = [Document(page_content=chunk) for chunk in chunks]
+
+vectorstore = FAISS.from_documents(docs, embeddings)
+retriever = vectorstore.as_retriever(search_kwargs={"k": 2})
+
+answerer = Agent(
+    role="Financial Analyst",
+    goal="Answer questions about financial data accurately",
+    backstory="You answer questions using only the provided financial context. Pay attention to table data including headers and all rows.",
+)
+
+def ask(question: str) -> str:
+    retrieved = retriever.invoke(question)
+    context = "\n\n".join([doc.page_content for doc in retrieved])
+    task = Task(
+        description=f"Answer this question based on the context.\n\nContext:\n{context}\n\nQuestion: {question}",
+        expected_output="A data-backed answer from the financial report",
+        agent=answerer,
+    )
+    crew = Crew(agents=[answerer], tasks=[task])
+    return str(crew.kickoff())
+
+print(ask("What was the revenue growth in Asia Pacific?"))
+print(ask("What percentage of revenue goes to R&D?"))
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+
+embeddings = OpenAIEmbeddings()
+
+document_text = """Company Financial Report Q3 2024
+
+Revenue Summary:
+The company achieved strong growth across all segments.
+
+| Region       | Q3 Revenue | Q2 Revenue | Growth |
+|-------------|-----------|-----------|--------|
+| North America | $45M      | $38M      | 18.4%  |
+| Europe       | $32M      | $29M      | 10.3%  |
+| Asia Pacific | $28M      | $22M      | 27.3%  |
+| Latin America | $12M      | $11M      | 9.1%   |
+
+Expense Breakdown:
+Operating expenses were well managed this quarter.
+
+| Category     | Amount  | % of Revenue |
+|-------------|---------|-------------|
+| R&D          | $25M    | 21.4%       |
+| Sales        | $18M    | 15.4%       |
+| Operations   | $15M    | 12.8%       |
+| G&A          | $8M     | 6.8%        |
+
+The company projects continued growth in Q4 2024."""
+
+def table_aware_split(text: str) -> list[str]:
+    chunks = []
+    current_chunk = []
+    in_table = False
+
+    for line in text.split("\n"):
+        is_table_line = line.strip().startswith("|")
+
+        if is_table_line and not in_table:
+            if current_chunk:
+                prose = "\n".join(current_chunk).strip()
+                if prose:
+                    chunks.append(prose)
+                current_chunk = []
+            in_table = True
+            current_chunk.append(line)
+        elif is_table_line and in_table:
+            current_chunk.append(line)
+        elif not is_table_line and in_table:
+            chunks.append("\n".join(current_chunk).strip())
+            current_chunk = [line]
+            in_table = False
+        else:
+            current_chunk.append(line)
+
+    if current_chunk:
+        remaining = "\n".join(current_chunk).strip()
+        if remaining:
+            chunks.append(remaining)
+
+    return chunks
+
+chunks = table_aware_split(document_text)
+docs = [Document(page_content=chunk) for chunk in chunks]
+
+vectorstore = FAISS.from_documents(docs, embeddings)
+retriever = vectorstore.as_retriever(search_kwargs={"k": 2})
+
+def ask(question: str) -> str:
+    retrieved = retriever.invoke(question)
+    context = "\n\n".join([doc.page_content for doc in retrieved])
+    agent = Agent(
+        name="Financial Analyst",
+        instructions=(
+            f"Answer the question based on the context below. "
+            f"Pay attention to table data including headers and all rows.\n\n"
+            f"Context:\n{context}"
+        ),
+    )
+    result = Runner.run_sync(agent, question)
+    return result.final_output
+
+print(ask("What was the revenue growth in Asia Pacific?"))
+print(ask("What percentage of revenue goes to R&D?"))
+```
+
+## Why This Works
+
+The custom `table_aware_split` function detects table boundaries by checking for lines starting with `|`. It accumulates table lines into a single chunk, ensuring that headers stay with their data rows. Prose sections are split separately. When the retriever finds the revenue table chunk, the LLM sees the complete table with all columns and rows, enabling accurate data extraction and comparison across regions.
+
+## Key Takeaways
+
+- Naive character-based splitting destroys tabular structure by separating headers from data rows.
+- Tables should be treated as atomic units during chunking — never split across chunk boundaries.
+- A simple line-by-line parser that detects `|`-delimited table rows is sufficient for markdown tables.

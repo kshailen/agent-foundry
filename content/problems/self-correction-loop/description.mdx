@@ -1,0 +1,50 @@
+## The Problem
+
+Your knowledge assistant sends its first draft directly to the user without any quality check. When asked about population comparisons or historical timelines, the first draft often contains inaccurate numbers, inconsistent dates, or logical contradictions. The model *can* catch these errors if asked to review its own work, but the current code never does that — it generates a single response and returns it immediately. Your job is to **add a self-correction loop** where the agent generates a draft, reviews it for errors, revises if needed, and only then sends the final answer. The loop must terminate after a bounded number of revisions.
+
+## Examples
+
+### Example 1
+
+**User input:** What is the population of Tokyo and how does it compare to New York?
+
+**Current (bad) output:** Tokyo has a population of 14 million and New York has 12 million. (First draft — numbers may be inaccurate or comparing metro vs city inconsistently.)
+
+**Expected (good) output:** The agent generates a draft, reviews it (catches that it's mixing metro and city populations), revises to be consistent (e.g., both metro areas: Tokyo ~37 million, New York ~20 million), and sends the corrected version.
+
+### Example 2
+
+**User input:** Explain how photosynthesis works and what its chemical equation is.
+
+**Current (bad) output:** First draft might get the equation slightly wrong or omit balancing.
+
+**Expected (good) output:** Draft is generated, review catches any errors in the chemical equation (6CO₂ + 6H₂O → C₆H₁₂O₆ + 6O₂), revision fixes them, and the final answer is accurate.
+
+### Example 3
+
+**User input:** What were the causes of World War I and when did key events occur?
+
+**Current (bad) output:** First draft may list incorrect dates or attribute causes incorrectly.
+
+**Expected (good) output:** The review step checks dates and causal claims, catches any errors (e.g., wrong year for the assassination of Archduke Franz Ferdinand), and the revision corrects them before the final response is sent.
+
+## Your Task
+
+Add a self-correction mechanism so the agent:
+
+- Generates an initial draft answer.
+- Reviews the draft for factual accuracy, logical consistency, and completeness.
+- Revises the draft if the review finds issues.
+- Sends the final (reviewed and possibly revised) answer to the user.
+- Terminates after at most 2 revision cycles to prevent infinite loops.
+
+For the LangGraph version, implement this as explicit graph nodes: `generate_draft` → `review` → (conditional: `revise` or `finalize`) → `END`.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Output is reviewed:** The agent performs an explicit review step on its draft before finalizing.
+- **Errors are caught and fixed:** Factual or logical errors in the first draft are identified and corrected.
+- **Final output is higher quality:** The final answer is more accurate and complete than the raw first draft.
+- **Loop terminates:** The revision cycle is bounded and does not run indefinitely.

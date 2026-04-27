@@ -1,0 +1,46 @@
+## The Problem
+
+Your agent relies on an external API tool that occasionally takes 30+ seconds to respond. When this happens the entire application hangs — no spinner, no message, just dead silence until the call eventually completes (or the user kills the process). The tool itself is correct when it does return; the problem is that **there is no timeout or fallback**. Your job is to add a configurable timeout so the agent gracefully informs the user when a tool is taking too long, rather than freezing.
+
+## Examples
+
+### Example 1
+
+**User input:** Look up the latest AI news
+
+**Current (bad) output:** *(Agent hangs for 30 seconds with no feedback, then finally returns the result — or the user force-quits.)*
+
+**Expected (good) output:** The agent attempts the tool call. After a reasonable timeout (e.g. 10 seconds), it responds: *"The external lookup is taking longer than expected. Please try again shortly."* — instead of blocking forever.
+
+### Example 2
+
+**User input:** Summarize today's tech headlines
+
+**Current (bad) output:** *(30-second freeze, no indication anything is happening.)*
+
+**Expected (good) output:** If the tool responds within the timeout, the agent returns results normally. If not, it returns a clear, friendly timeout message and does not crash.
+
+### Example 3
+
+**User input:** What's the weather right now?
+
+**Current (bad) output:** *(Unresponsive UI while the slow tool runs.)*
+
+**Expected (good) output:** *"I wasn't able to fetch the weather in time. You can try again or check a weather site directly."*
+
+## Your Task
+
+Add a **configurable timeout** around the tool call so the agent:
+
+- Stops waiting after a set number of seconds (e.g. 10s).
+- Returns a user-friendly fallback message when the timeout fires.
+- Still returns normal results when the tool responds within the time limit.
+- Does not remove or bypass the slow tool.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Timeout is enforced:** The agent does not hang indefinitely when a tool takes too long.
+- **Returns friendly message:** On timeout, the user sees a helpful message instead of an error or crash.
+- **Fast tools still work:** Tools that respond within the timeout continue to work normally.

@@ -1,0 +1,59 @@
+## The Problem
+
+Your travel booking assistant makes dangerous assumptions. When a user says "Book a flight," the agent invents a destination, picks arbitrary dates, and presents a fake booking confirmation — instead of asking where the user wants to go. The agent's "always provide a complete answer" instruction forces it to fill in the blanks with guesses. Conversely, when a user provides every detail ("one-way, JFK to Heathrow, March 15, economy, 1 adult"), the agent should proceed immediately — not stall with redundant questions. Your job is to **fix the system prompt** so the agent asks clarifying questions when information is missing and acts confidently when the request is complete.
+
+## Examples
+
+### Example 1
+
+**User input:** Book a flight
+
+**Current (bad) output:** Sure! I've booked you a round-trip flight from New York to Los Angeles on January 20 for $350. (Completely fabricated details — the user never specified any of this.)
+
+**Expected (good) output:** I'd be happy to help you book a flight! To get started, I need a few details:
+1. Where are you flying from?
+2. Where are you flying to?
+3. What date(s) do you need?
+4. How many passengers?
+5. Any class preference (economy, business, first)?
+
+### Example 2
+
+**User input:** Book a one-way flight from New York JFK to London Heathrow on March 15, 2025, economy class, for 1 adult
+
+**Current (bad) output:** Sure, let me also ask — do you have a preferred airline? What time do you want to depart? Do you need travel insurance? (Over-asks when all essential info is present.)
+
+**Expected (good) output:** I have everything I need. Let me search for one-way economy flights from JFK to Heathrow on March 15, 2025, for 1 adult.
+
+### Example 3
+
+**User input:** I need a flight from San Francisco to Tokyo next week
+
+**Current (bad) output:** Booked! You have a round-trip flight SFO-NRT, departing Monday, returning Friday, economy, $890. (Assumed round-trip, specific days, and a price.)
+
+**Expected (good) output:** Great, San Francisco to Tokyo next week. A couple of things I need to confirm:
+1. One-way or round-trip?
+2. Which specific date(s) next week?
+3. How many passengers?
+4. Class preference?
+
+## Your Task
+
+Update the **system prompt** (and only that) so the agent:
+
+- Identifies required booking fields: origin, destination, date(s), number of passengers, and class.
+- Asks targeted clarifying questions when any required field is missing.
+- Acknowledges information the user already provided and only asks about what's missing.
+- Proceeds immediately when all required information is present.
+- Never fabricates booking details the user did not provide.
+
+Do not add tools, code logic, or change model parameters.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Asks clarifying questions for vague queries:** The agent requests missing information instead of guessing.
+- **Proceeds on clear queries:** Complete requests are acted on without unnecessary questions.
+- **Does not over-ask:** The agent only asks about genuinely missing fields, not info already provided.
+- **Handles partially complete queries:** Provided information is acknowledged, and only gaps are addressed.

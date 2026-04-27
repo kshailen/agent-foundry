@@ -1,0 +1,171 @@
+## Approach
+
+The bug is that the financial advisor agent has a system prompt saying it should help with "investment and finance questions," but nothing actually enforces this boundary. When a user asks about diabetes symptoms or asks for a poem, the LLM happily answers because system prompts are soft guidance, not hard constraints. The model doesn't reliably self-police topic boundaries.
+
+The fix is to add an explicit topic classification step that runs before the agent processes the query. This classifier checks whether the user's input is related to finance by looking for domain-relevant keywords (stocks, investing, budget, portfolio, etc.). If the query doesn't match any finance-related terms, it's classified as off-topic and the user gets a polite redirect message suggesting they seek help elsewhere. On-topic queries pass through to the agent normally.
+
+A keyword-based approach is simple and effective for clear domain boundaries like finance. It's deterministic, requires no LLM call, and has low latency. For more nuanced domains, you could replace the keyword check with a lightweight LLM classification call, but for most use cases, a well-chosen keyword list covers the vast majority of queries.
+
+## Solution
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from agents.tool import function_tool
+
+FINANCE_KEYWORDS = [
+    "stock", "invest", "portfolio", "dividend", "bond", "mutual fund", "etf",
+    "market", "trading", "finance", "financial", "budget", "saving", "retirement",
+    "401k", "ira", "tax", "interest rate", "mortgage", "loan", "credit",
+    "debt", "asset", "equity", "capital", "wealth", "bank", "insurance",
+    "inflation", "recession", "gdp", "economy", "crypto", "bitcoin",
+    "price", "ticker", "earnings", "revenue", "profit", "index", "dow",
+    "nasdaq", "s&p", "money", "income", "expense", "payment", "salary",
+]
+
+REDIRECT_MESSAGE = (
+    "I'm a financial advisor and can only help with finance-related questions. "
+    "For other topics, please consult an appropriate specialist or a general-purpose assistant."
+)
+
+def is_on_topic(text: str) -> bool:
+    text_lower = text.lower()
+    return any(keyword in text_lower for keyword in FINANCE_KEYWORDS)
+
+@function_tool
+def get_stock_price(ticker: str) -> str:
+    """Get the current stock price for a ticker symbol."""
+    prices = {"AAPL": "$185.23", "GOOGL": "$142.56", "MSFT": "$378.91"}
+    return prices.get(ticker, f"No data for {ticker}")
+
+agent = Agent(
+    name="Financial Advisor",
+    instructions="You are a financial advisor. Help users with investment and finance questions.",
+    tools=[get_stock_price],
+)
+
+user_input = "What are the symptoms of diabetes?"
+
+if is_on_topic(user_input):
+    result = Runner.run_sync(agent, user_input)
+    print(result.final_output)
+else:
+    print(REDIRECT_MESSAGE)
+```
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+
+FINANCE_KEYWORDS = [
+    "stock", "invest", "portfolio", "dividend", "bond", "mutual fund", "etf",
+    "market", "trading", "finance", "financial", "budget", "saving", "retirement",
+    "401k", "ira", "tax", "interest rate", "mortgage", "loan", "credit",
+    "debt", "asset", "equity", "capital", "wealth", "bank", "insurance",
+    "inflation", "recession", "gdp", "economy", "crypto", "bitcoin",
+    "price", "ticker", "earnings", "revenue", "profit", "index", "dow",
+    "nasdaq", "s&p", "money", "income", "expense", "payment", "salary",
+]
+
+REDIRECT_MESSAGE = (
+    "I'm a financial advisor and can only help with finance-related questions. "
+    "For other topics, please consult an appropriate specialist or a general-purpose assistant."
+)
+
+def is_on_topic(text: str) -> bool:
+    text_lower = text.lower()
+    return any(keyword in text_lower for keyword in FINANCE_KEYWORDS)
+
+@tool
+def get_stock_price(ticker: str) -> str:
+    """Get the current stock price for a ticker symbol."""
+    prices = {"AAPL": "$185.23", "GOOGL": "$142.56", "MSFT": "$378.91"}
+    return prices.get(ticker, f"No data for {ticker}")
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a financial advisor. Help users with investment and finance questions."),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}"),
+])
+
+agent = create_tool_calling_agent(llm, [get_stock_price], prompt)
+executor = AgentExecutor(agent=agent, tools=[get_stock_price])
+
+user_input = "What are the symptoms of diabetes?"
+
+if is_on_topic(user_input):
+    result = executor.invoke({"input": user_input})
+    print(result["output"])
+else:
+    print(REDIRECT_MESSAGE)
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai.tools import tool
+
+FINANCE_KEYWORDS = [
+    "stock", "invest", "portfolio", "dividend", "bond", "mutual fund", "etf",
+    "market", "trading", "finance", "financial", "budget", "saving", "retirement",
+    "401k", "ira", "tax", "interest rate", "mortgage", "loan", "credit",
+    "debt", "asset", "equity", "capital", "wealth", "bank", "insurance",
+    "inflation", "recession", "gdp", "economy", "crypto", "bitcoin",
+    "price", "ticker", "earnings", "revenue", "profit", "index", "dow",
+    "nasdaq", "s&p", "money", "income", "expense", "payment", "salary",
+]
+
+REDIRECT_MESSAGE = (
+    "I'm a financial advisor and can only help with finance-related questions. "
+    "For other topics, please consult an appropriate specialist or a general-purpose assistant."
+)
+
+def is_on_topic(text: str) -> bool:
+    text_lower = text.lower()
+    return any(keyword in text_lower for keyword in FINANCE_KEYWORDS)
+
+@tool
+def get_stock_price(ticker: str) -> str:
+    """Get the current stock price for a ticker symbol."""
+    prices = {"AAPL": "$185.23", "GOOGL": "$142.56", "MSFT": "$378.91"}
+    return prices.get(ticker, f"No data for {ticker}")
+
+financial_agent = Agent(
+    role="Financial Advisor",
+    goal="Help users with investment and finance questions.",
+    backstory="You are a financial advisor that helps users with financial decisions.",
+    tools=[get_stock_price],
+)
+
+user_input = "What are the symptoms of diabetes?"
+
+if is_on_topic(user_input):
+    task = Task(
+        description=user_input,
+        expected_output="A helpful financial advice response.",
+        agent=financial_agent,
+    )
+    crew = Crew(agents=[financial_agent], tasks=[task], process=Process.sequential)
+    result = crew.kickoff()
+    print(result)
+else:
+    print(REDIRECT_MESSAGE)
+```
+
+## Why This Works
+
+The `is_on_topic` function checks user input against a comprehensive list of finance-related keywords. Queries like "What's the best way to invest $10,000?" match on "invest" and pass through to the agent. Off-topic queries like "What are the symptoms of diabetes?" match none of the keywords and get the polite redirect. Because this check runs before the agent, the LLM never even sees off-topic queries — there's no chance for it to answer a medical question. The redirect message is polite and constructive, suggesting the user seek an appropriate specialist rather than simply refusing. This approach is fast, deterministic, and doesn't consume any LLM tokens for rejected queries.
+
+## Key Takeaways
+
+- System prompts alone are unreliable for topic enforcement — LLMs frequently answer off-topic questions despite prompt instructions.
+- A keyword-based topic classifier is a simple, effective first line of defense for domains with clear vocabulary boundaries.
+- Polite redirect messages that suggest alternative resources are better UX than blunt refusals.

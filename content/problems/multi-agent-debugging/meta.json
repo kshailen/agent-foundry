@@ -1,0 +1,57 @@
+{
+  "number": 88,
+  "title": "Multi-Agent Debugging",
+  "difficulty": "hard",
+  "categories": [
+    "multi-agent",
+    "evaluation"
+  ],
+  "frameworks": [
+    "crewai",
+    "langgraph",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "You must add tracing or logging to each agent's input and output",
+    "The tracing must make it possible to identify which agent produced incorrect output",
+    "You may not change the agents' core logic to fix the bug — only add observability",
+    "The trace output must include agent name, input received, and output produced"
+  ],
+  "hints": [
+    "Wrap each agent's execution with logging that captures its input and output",
+    "In LangGraph, add a tracing wrapper around each node function",
+    "Compare each agent's output against expected behavior to isolate the faulty agent"
+  ],
+  "starterCode": {
+    "crewai": "from crewai import Agent, Task, Crew, Process\nfrom crewai import LLM\n\nllm = LLM(model=\"gpt-4o-mini\")\n\ncollector = Agent(\n    role=\"Data Collector\",\n    goal=\"Collect raw data points about a topic\",\n    backstory=\"You gather raw information from various sources.\",\n    llm=llm,\n)\n\ncleaner = Agent(\n    role=\"Data Cleaner\",\n    goal=\"Clean and normalize the collected data\",\n    backstory=\"You remove duplicates, fix formatting, and standardize data.\",\n    llm=llm,\n)\n\nanalyzer = Agent(\n    role=\"Data Analyzer\",\n    goal=\"Analyze cleaned data and extract insights\",\n    backstory=\"You find patterns and trends in structured data.\",\n    llm=llm,\n)\n\nreporter = Agent(\n    role=\"Report Generator\",\n    goal=\"Generate a final report from the analysis\",\n    backstory=\"You create clear, executive-ready reports.\",\n    llm=llm,\n)\n\ncollect_task = Task(\n    description=\"Collect key data points about {topic}\",\n    expected_output=\"A list of raw data points\",\n    agent=collector,\n)\n\nclean_task = Task(\n    description=\"Clean and normalize the collected data\",\n    expected_output=\"Cleaned, standardized data\",\n    agent=cleaner,\n)\n\nanalyze_task = Task(\n    description=\"Analyze the cleaned data for trends and insights\",\n    expected_output=\"Key insights and trend analysis\",\n    agent=analyzer,\n)\n\nreport_task = Task(\n    description=\"Generate a final executive report\",\n    expected_output=\"A polished executive report\",\n    agent=reporter,\n)\n\n# BUG: The pipeline produces a wrong final report but it's unclear which agent erred\n# TODO: Add tracing/logging to each agent to identify the faulty one\ncrew = Crew(\n    agents=[collector, cleaner, analyzer, reporter],\n    tasks=[collect_task, clean_task, analyze_task, report_task],\n    process=Process.sequential,\n)\n\nresult = crew.kickoff(inputs={\"topic\": \"global renewable energy adoption trends\"})\nprint(result)",
+    "langgraph": "from langchain_openai import ChatOpenAI\nfrom langgraph.graph import StateGraph, START, END\nfrom typing import TypedDict\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\nclass State(TypedDict):\n    topic: str\n    raw_data: str\n    cleaned_data: str\n    analysis: str\n    report: str\n\ndef collect(state: State) -> dict:\n    response = llm.invoke(f\"Collect key data points about: {state['topic']}\")\n    return {\"raw_data\": response.content}\n\ndef clean(state: State) -> dict:\n    response = llm.invoke(f\"Clean and normalize this data: {state['raw_data']}\")\n    return {\"cleaned_data\": response.content}\n\ndef analyze(state: State) -> dict:\n    response = llm.invoke(f\"Analyze trends and insights from: {state['cleaned_data']}\")\n    return {\"analysis\": response.content}\n\ndef report(state: State) -> dict:\n    response = llm.invoke(f\"Generate an executive report from: {state['analysis']}\")\n    return {\"report\": response.content}\n\n# BUG: The pipeline produces a wrong report but there's no way to tell which node erred\n# TODO: Add tracing/logging to each node to identify the faulty one\ngraph = StateGraph(State)\ngraph.add_node(\"collect\", collect)\ngraph.add_node(\"clean\", clean)\ngraph.add_node(\"analyze\", analyze)\ngraph.add_node(\"report\", report)\ngraph.add_edge(START, \"collect\")\ngraph.add_edge(\"collect\", \"clean\")\ngraph.add_edge(\"clean\", \"analyze\")\ngraph.add_edge(\"analyze\", \"report\")\ngraph.add_edge(\"report\", END)\n\napp = graph.compile()\nresult = app.invoke({\"topic\": \"global renewable energy adoption trends\", \"raw_data\": \"\", \"cleaned_data\": \"\", \"analysis\": \"\", \"report\": \"\"})\nprint(result[\"report\"])",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\ncollector = Agent(\n    name=\"Data Collector\",\n    instructions=\"You are a data collector. Collect key data points about the given topic.\",\n)\n\ncleaner = Agent(\n    name=\"Data Cleaner\",\n    instructions=\"You are a data cleaner. Clean and normalize the collected data.\",\n)\n\nanalyzer = Agent(\n    name=\"Data Analyzer\",\n    instructions=\"You are a data analyst. Analyze the cleaned data for trends and insights.\",\n)\n\nreporter = Agent(\n    name=\"Report Generator\",\n    instructions=\"You are a report writer. Generate a final executive report from the analysis.\",\n)\n\n# BUG: The pipeline produces a wrong final report but it's unclear which agent erred\n# TODO: Add tracing/logging to each agent to identify the faulty one\ntopic = \"global renewable energy adoption trends\"\n\nraw_data = Runner.run_sync(collector, f\"Collect key data points about: {topic}\")\ncleaned_data = Runner.run_sync(cleaner, f\"Clean and normalize this data: {raw_data.final_output}\")\nanalysis = Runner.run_sync(analyzer, f\"Analyze trends and insights from: {cleaned_data.final_output}\")\nreport = Runner.run_sync(reporter, f\"Generate an executive report from: {analysis.final_output}\")\n\nprint(report.final_output)"
+  },
+  "colabUrls": {
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/multi-agent-debugging-crewai.ipynb",
+    "langgraph": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/multi-agent-debugging-langgraph.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/multi-agent-debugging-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "tracing-added",
+      "label": "Tracing added to each agent",
+      "description": "Each agent's input and output are logged or traced"
+    },
+    {
+      "id": "agent-identifiable",
+      "label": "Faulty agent identifiable",
+      "description": "The trace output makes it possible to identify which specific agent produced incorrect output"
+    },
+    {
+      "id": "trace-format",
+      "label": "Trace includes key information",
+      "description": "Each trace entry includes the agent name, input received, and output produced"
+    },
+    {
+      "id": "no-logic-changes",
+      "label": "Core logic unchanged",
+      "description": "The agents' core prompts and logic are not modified — only observability is added"
+    }
+  ]
+}

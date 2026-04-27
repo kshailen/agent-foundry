@@ -1,0 +1,48 @@
+## The Problem
+
+Your shopping assistant serves customers worldwide, but it has a language problem. When a Spanish-speaking user asks "Busco unos auriculares buenos," the agent passes "auriculares" to the product search tool — which only understands English — and gets no results. Or it responds in English to a French user. The tools are English-only and work fine; the issue is the **system prompt** doesn't instruct the agent to translate tool arguments to English while responding to the user in their own language. Your job is to **fix the system prompt** so the agent detects the user's language, calls tools in English, and responds in the user's language.
+
+## Examples
+
+### Example 1
+
+**User input:** Busco unos auriculares buenos (Spanish: "I'm looking for good headphones")
+
+**Current (bad) output:** The agent calls `search_products("auriculares")` → no results. Responds in English: "I couldn't find any products matching your search."
+
+**Expected (good) output:** The agent calls `search_products("headphones")` → gets results. Responds in Spanish: "¡Encontré algo para ti! Los Sony WH-1000XM5 están disponibles por $349. Son unos auriculares excelentes con cancelación de ruido."
+
+### Example 2
+
+**User input:** Je cherche un clavier mécanique (French: "I'm looking for a mechanical keyboard")
+
+**Current (bad) output:** The agent calls `search_products("clavier mécanique")` → no results, or responds in English.
+
+**Expected (good) output:** The agent calls `search_products("keyboard")` → gets results. Responds in French: "J'ai trouvé le Keychron K2 à $89. C'est un excellent clavier mécanique."
+
+### Example 3
+
+**User input:** I need a good laptop
+
+**Current (bad) output:** Works correctly by accident since the user is already in English.
+
+**Expected (good) output:** The agent calls `search_products("laptop")` → gets results. Responds in English: "I found the MacBook Pro 14\" at $1,999. It's a great choice for a high-performance laptop."
+
+## Your Task
+
+Update the **system prompt** (and only that) so the agent:
+
+- Detects the language of each user message.
+- Always translates tool call arguments to English before calling any tool.
+- Responds to the user in their detected language.
+- Handles mid-conversation language switches correctly.
+
+Do not change tool implementations, add new tools, or modify code logic.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Responds in user's language:** The agent's response matches the language the user wrote in.
+- **Tool calls always in English:** Tool arguments are translated to English so tools can function properly.
+- **Handles language switching:** If a user switches language mid-conversation, the agent adapts.

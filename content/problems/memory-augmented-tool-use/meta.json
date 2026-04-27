@@ -1,0 +1,52 @@
+{
+  "number": 45,
+  "title": "Memory-Augmented Tool Use",
+  "difficulty": "medium",
+  "categories": [
+    "memory",
+    "tool-calling"
+  ],
+  "frameworks": [
+    "langchain",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "The agent must check memory before calling any tool",
+    "If the answer exists in memory, the tool must NOT be called",
+    "Tool results must be cached in memory for future queries",
+    "The memory check must be transparent — the agent should mention when it uses cached data"
+  ],
+  "hints": [
+    "Before each tool call, search the memory cache for a matching query or data point",
+    "Store tool results in a dictionary keyed by the query or data identifier",
+    "Add logic that intercepts tool calls: if the cache has a hit, return the cached result instead of calling the tool"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain.agents import AgentExecutor, create_tool_calling_agent\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom langchain_core.tools import tool\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\ncall_count = 0\n\n@tool\ndef get_weather(city: str) -> str:\n    \"\"\"Get the current weather for a city.\"\"\"\n    global call_count\n    call_count += 1\n    print(f\"  [API CALL #{call_count}] Fetching weather for {city}...\")\n    return f\"Weather in {city}: 72°F, sunny.\"\n\n@tool\ndef get_stock_price(symbol: str) -> str:\n    \"\"\"Get the current stock price for a ticker symbol.\"\"\"\n    global call_count\n    call_count += 1\n    print(f\"  [API CALL #{call_count}] Fetching stock price for {symbol}...\")\n    return f\"{symbol}: $150.25 (+2.3%)\"\n\n# BUG: Agent always calls tools, even if it already fetched the same data\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a helpful assistant with access to weather and stock tools.\"),\n    (\"human\", \"{input}\"),\n    (\"placeholder\", \"{agent_scratchpad}\"),\n])\n\ntools = [get_weather, get_stock_price]\nagent = create_tool_calling_agent(llm, tools, prompt)\nexecutor = AgentExecutor(agent=agent, tools=tools)\n\n# Query 1: First time — should call the tool\nprint(executor.invoke({\"input\": \"What's the weather in Tokyo?\"})[\"output\"])\n\n# Query 2: Same question — should use cached data, NOT call the tool again\nprint(executor.invoke({\"input\": \"What's the weather in Tokyo?\"})[\"output\"])\n\n# Query 3: Different query — should call the tool\nprint(executor.invoke({\"input\": \"What's AAPL stock price?\"})[\"output\"])\n\n# Query 4: Same stock query — should use cache\nprint(executor.invoke({\"input\": \"What's the price of AAPL?\"})[\"output\"])\n\nprint(f\"\\nTotal API calls made: {call_count} (should be 2, not 4)\")",
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom agents.tool import function_tool\n\ncall_count = 0\n\n@function_tool\ndef get_weather(city: str) -> str:\n    \"\"\"Get the current weather for a city.\"\"\"\n    global call_count\n    call_count += 1\n    print(f\"  [API CALL #{call_count}] Fetching weather for {city}...\")\n    return f\"Weather in {city}: 72°F, sunny.\"\n\n@function_tool\ndef get_stock_price(symbol: str) -> str:\n    \"\"\"Get the current stock price for a ticker symbol.\"\"\"\n    global call_count\n    call_count += 1\n    print(f\"  [API CALL #{call_count}] Fetching stock price for {symbol}...\")\n    return f\"{symbol}: $150.25 (+2.3%)\"\n\n# BUG: Agent always calls tools, even if it already fetched the same data\nagent = Agent(\n    name=\"Assistant\",\n    instructions=\"You are a helpful assistant with access to weather and stock tools.\",\n    tools=[get_weather, get_stock_price],\n)\n\n# Query 1: First time — should call the tool\nresult1 = Runner.run_sync(agent, \"What's the weather in Tokyo?\")\nprint(result1.final_output)\n\n# Query 2: Same question — should use cached data, NOT call the tool again\nresult2 = Runner.run_sync(agent, \"What's the weather in Tokyo?\")\nprint(result2.final_output)\n\n# Query 3: Different query — should call the tool\nresult3 = Runner.run_sync(agent, \"What's AAPL stock price?\")\nprint(result3.final_output)\n\n# Query 4: Same stock query — should use cache\nresult4 = Runner.run_sync(agent, \"What's the price of AAPL?\")\nprint(result4.final_output)\n\nprint(f\"\\nTotal API calls made: {call_count} (should be 2, not 4)\")",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai.tools import tool\n\ncall_count = 0\n\n@tool\ndef get_weather(city: str) -> str:\n    \"\"\"Get the current weather for a city.\"\"\"\n    global call_count\n    call_count += 1\n    print(f\"  [API CALL #{call_count}] Fetching weather for {city}...\")\n    return f\"Weather in {city}: 72°F, sunny.\"\n\n@tool\ndef get_stock_price(symbol: str) -> str:\n    \"\"\"Get the current stock price for a ticker symbol.\"\"\"\n    global call_count\n    call_count += 1\n    print(f\"  [API CALL #{call_count}] Fetching stock price for {symbol}...\")\n    return f\"{symbol}: $150.25 (+2.3%)\"\n\n# BUG: Agent always calls tools, even if it already fetched the same data\nassistant = Agent(\n    role=\"Assistant\",\n    goal=\"Help users with weather and stock information\",\n    backstory=\"You are a helpful assistant with access to weather and stock tools.\",\n    tools=[get_weather, get_stock_price],\n)\n\ntask1 = Task(description=\"What's the weather in Tokyo?\", expected_output=\"Weather information for Tokyo\", agent=assistant)\ncrew1 = Crew(agents=[assistant], tasks=[task1])\nprint(crew1.kickoff())\n\ntask2 = Task(description=\"What's the weather in Tokyo?\", expected_output=\"Weather information for Tokyo\", agent=assistant)\ncrew2 = Crew(agents=[assistant], tasks=[task2])\nprint(crew2.kickoff())\n\ntask3 = Task(description=\"What's AAPL stock price?\", expected_output=\"Stock price for AAPL\", agent=assistant)\ncrew3 = Crew(agents=[assistant], tasks=[task3])\nprint(crew3.kickoff())\n\ntask4 = Task(description=\"What's the price of AAPL?\", expected_output=\"Stock price for AAPL\", agent=assistant)\ncrew4 = Crew(agents=[assistant], tasks=[task4])\nprint(crew4.kickoff())\n\nprint(f\"\\nTotal API calls made: {call_count} (should be 2, not 4)\")"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/memory-augmented-tool-use-langchain.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/memory-augmented-tool-use-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/memory-augmented-tool-use-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "cache-hit",
+      "label": "Uses cached results",
+      "description": "When the same data has been fetched before, the agent returns cached results without calling the tool"
+    },
+    {
+      "id": "cache-miss-calls-tool",
+      "label": "Calls tool on cache miss",
+      "description": "When data is not in memory, the agent correctly calls the tool to fetch it"
+    },
+    {
+      "id": "reduces-api-calls",
+      "label": "Reduces redundant API calls",
+      "description": "Duplicate queries result in fewer total tool calls than without caching"
+    }
+  ]
+}

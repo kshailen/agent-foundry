@@ -1,0 +1,44 @@
+## The Problem
+
+Your RAG agent answers product questions well on the first turn, but falls apart on follow-ups. When a user asks "Tell me about ProductX" and then follows up with "What about pricing?"—the agent treats the second question in isolation. It doesn't know "pricing" refers to ProductX, so it might return pricing for a different product or give a generic answer. The agent has **no conversation memory**. Your job is to add conversation history tracking and **contextualize follow-up questions** so the retriever searches with full conversational context.
+
+## Examples
+
+### Example 1
+
+**Turn 1 — User:** Tell me about ProductX.
+**Agent:** ProductX is an enterprise CRM platform offering advanced analytics, custom dashboards, and API access.
+
+**Turn 2 — User:** What about pricing?
+
+**Current (bad) output:** Returns pricing for both ProductX and ProductY, or gives a generic answer—because the retriever doesn't know the user is still asking about ProductX.
+
+**Expected (good) output:** ProductX starts at $99/month and offers a 14-day free trial with full feature access.
+
+### Example 2
+
+**Turn 1 — User:** Compare ProductX and ProductY.
+**Agent:** *(gives comparison)*
+
+**Turn 2 — User:** Which one has a free trial?
+
+**Current (bad) output:** Retrieves random documents because "free trial" alone is too vague without conversation context.
+
+**Expected (good) output:** ProductX has a 14-day free trial with full feature access. There is no mention of a free trial for ProductY in the available documents.
+
+## Your Task
+
+Modify the RAG pipeline to support multi-turn conversations:
+
+- Maintain conversation history across multiple turns.
+- Before retrieval, reformulate follow-up questions into standalone queries using the conversation context.
+- Ensure the retriever receives fully contextualized search queries.
+- Return accurate answers that correctly resolve references from prior turns.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Maintains conversation history:** The agent tracks prior turns and uses them to understand follow-up questions.
+- **Resolves follow-up references:** Ambiguous follow-ups like "What about pricing?" are correctly resolved to the right product.
+- **Retrieves with conversational context:** The retriever receives contextualized queries that incorporate prior conversation context.

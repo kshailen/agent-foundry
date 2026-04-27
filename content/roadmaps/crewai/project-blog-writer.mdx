@@ -1,0 +1,167 @@
+# Project: Blog Writing Crew
+
+## What You'll Build
+
+You will build a **three-agent CrewAI crew** that takes a topic and runs a pipeline: one agent **researches** the subject and gathers key information, another **writes** a blog post draft from that research, and a third **edits** the draft for clarity and engagement. The result is a polished blog post produced through coordinated agent roles and tasks.
+
+## Features Used
+
+- **Agents** — specialized roles with goals and backstories
+- **Tasks** — concrete work units with descriptions and expected outputs
+- **Crews** — groups of agents executing a set of tasks
+- **Sequential Process** — tasks run in order so each step builds on the last
+
+## Step 1: Define the Agents
+
+Create three agents:
+
+1. **Researcher** — gathers reliable information and key points on the topic
+2. **Writer** — turns research into a structured blog draft (~500 words)
+3. **Editor** — polishes the draft for clarity, tone, and reader engagement
+
+```python
+from crewai import Agent
+
+researcher = Agent(
+    role="Researcher",
+    goal="Gather accurate, relevant information and key talking points on the given topic",
+    backstory="You are a diligent researcher who finds facts, context, and angles readers care about.",
+    verbose=True,
+)
+
+writer = Agent(
+    role="Writer",
+    goal="Draft clear, engaging blog posts grounded in the research provided",
+    backstory="You are a skilled blogger who explains ideas in plain language with a strong narrative arc.",
+    verbose=True,
+)
+
+editor = Agent(
+    role="Editor",
+    goal="Improve drafts for clarity, flow, grammar, and engagement without changing the core message",
+    backstory="You are an experienced editor who tightens prose and sharpens hooks and conclusions.",
+    verbose=True,
+)
+```
+
+## Step 2: Define the Tasks
+
+Wire **research_task**, **write_task**, and **edit_task** so outputs flow forward:
+
+- **research_task** — find and summarize key points for the topic
+- **write_task** — produce a ~500-word blog draft from the research
+- **edit_task** — polish the draft for clarity and engagement
+
+```python
+from crewai import Task
+
+research_task = Task(
+    description="Research the topic: {topic}. Identify main themes, facts, and angles worth covering.",
+    expected_output="A structured summary of findings (bullet points or short sections) the writer can use.",
+    agent=researcher,
+)
+
+write_task = Task(
+    description="Using the research, write a blog post about {topic} of roughly 500 words. Include intro, body, and conclusion.",
+    expected_output="A complete ~500-word blog draft in markdown.",
+    agent=writer,
+    context=[research_task],
+)
+
+edit_task = Task(
+    description="Edit the draft for clarity, tone, and engagement. Fix awkward phrasing and strengthen opening and closing.",
+    expected_output="The final polished blog post, ready to publish.",
+    agent=editor,
+    context=[write_task],
+)
+```
+
+## Step 3: Assemble the Crew
+
+Combine agents and tasks and use a **sequential** process so research runs first, then writing, then editing.
+
+```python
+from crewai import Crew, Process
+
+crew = Crew(
+    agents=[researcher, writer, editor],
+    tasks=[research_task, write_task, edit_task],
+    process=Process.sequential,
+    verbose=True,
+)
+```
+
+## Step 4: Run the Crew
+
+Call **kickoff** with a **topic** in `inputs` so task descriptions can interpolate `{topic}`.
+
+```python
+result = crew.kickoff(inputs={"topic": "Why multi-agent systems matter for product teams"})
+print(result)
+```
+
+## Full Code
+
+```python
+import os
+from getpass import getpass
+
+from crewai import Agent, Crew, Process, Task
+
+os.environ["OPENAI_API_KEY"] = getpass("Enter your OpenAI API key: ")
+
+researcher = Agent(
+    role="Researcher",
+    goal="Gather accurate, relevant information and key talking points on the given topic",
+    backstory="You are a diligent researcher who finds facts, context, and angles readers care about.",
+    verbose=True,
+)
+
+writer = Agent(
+    role="Writer",
+    goal="Draft clear, engaging blog posts grounded in the research provided",
+    backstory="You are a skilled blogger who explains ideas in plain language with a strong narrative arc.",
+    verbose=True,
+)
+
+editor = Agent(
+    role="Editor",
+    goal="Improve drafts for clarity, flow, grammar, and engagement without changing the core message",
+    backstory="You are an experienced editor who tightens prose and sharpens hooks and conclusions.",
+    verbose=True,
+)
+
+research_task = Task(
+    description="Research the topic: {topic}. Identify main themes, facts, and angles worth covering.",
+    expected_output="A structured summary of findings (bullet points or short sections) the writer can use.",
+    agent=researcher,
+)
+
+write_task = Task(
+    description="Using the research, write a blog post about {topic} of roughly 500 words. Include intro, body, and conclusion.",
+    expected_output="A complete ~500-word blog draft in markdown.",
+    agent=writer,
+    context=[research_task],
+)
+
+edit_task = Task(
+    description="Edit the draft for clarity, tone, and engagement. Fix awkward phrasing and strengthen opening and closing.",
+    expected_output="The final polished blog post, ready to publish.",
+    agent=editor,
+    context=[write_task],
+)
+
+crew = Crew(
+    agents=[researcher, writer, editor],
+    tasks=[research_task, write_task, edit_task],
+    process=Process.sequential,
+    verbose=True,
+)
+
+result = crew.kickoff(inputs={"topic": "Why multi-agent systems matter for product teams"})
+print(result)
+```
+
+## What You Learned
+
+You practiced modeling a real workflow as **specialized agents**, breaking work into **tasks** with clear **expected outputs**, chaining tasks with **context** so later steps consume earlier results, and orchestrating everything in a **Crew** with **Process.sequential**. You also saw how **kickoff(inputs=...)** passes dynamic values like `{topic}` into task descriptions, which is the pattern you will reuse for other multi-step crews.

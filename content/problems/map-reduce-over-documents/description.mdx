@@ -1,0 +1,39 @@
+## The Problem
+
+Your document-processing pipeline summarizes 20 reports one at a time, then combines them into an executive report. With each LLM call taking ~1 second, the sequential approach takes over 20 seconds—far too slow for a product that needs to process hundreds of documents. The map step (summarizing each document) is embarrassingly parallel since documents are independent. Your job is to **implement a map-reduce pattern** where documents are summarized in parallel (map), then a single reduce step synthesizes all summaries into one coherent report.
+
+## Examples
+
+### Example 1
+
+**Input:** 20 quarterly reports covering topics A through T
+
+**Current (bad) output:** The final report is correct, but processing takes ~22 seconds because each document is summarized sequentially before the reduce step runs.
+
+**Expected (good) output:** The map phase processes all 20 documents in parallel (~2s), then the reduce step synthesizes a report (~1s), for a total of ~3 seconds. The report identifies cross-cutting themes: *"Across 20 reports, recurring themes include Q1 budget overruns, Q3 product launches, and organizational restructuring in Q4."*
+
+### Example 2
+
+**Input:** 5 research papers on different subtopics
+
+**Current (bad) output:** Takes ~7 seconds to sequentially summarize and combine 5 papers.
+
+**Expected (good) output:** Map phase completes in ~1.5s, reduce in ~1s. The report synthesizes: *"The five papers converge on two themes: improved efficiency through automation and the need for human oversight in critical decision-making."*
+
+## Your Task
+
+Refactor the starter code so that:
+
+- The **map phase** summarizes each document individually and in **parallel**.
+- The **reduce phase** waits for all summaries, then synthesizes them into a **cohesive executive report**.
+- The report identifies **themes and patterns** across documents rather than just listing summaries.
+- The pipeline handles **at least 20 documents** efficiently.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Parallel map phase:** Documents are summarized in parallel, not sequentially.
+- **Individual summaries:** Each document receives its own summary before aggregation.
+- **Coherent reduce output:** The final report synthesizes themes across summaries rather than concatenating them.
+- **Handles 20 documents:** The pipeline successfully processes at least 20 documents.

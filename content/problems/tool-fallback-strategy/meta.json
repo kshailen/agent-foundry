@@ -1,0 +1,57 @@
+{
+  "number": 22,
+  "title": "Tool Fallback Strategy",
+  "difficulty": "medium",
+  "categories": [
+    "tool-calling",
+    "error-recovery"
+  ],
+  "frameworks": [
+    "langchain",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "The primary search tool must be tried first",
+    "Fallback to the secondary search only when the primary fails or returns no results",
+    "The agent must not call both tools simultaneously on every query",
+    "Error messages from the primary tool must be caught, not surfaced raw to the user"
+  ],
+  "hints": [
+    "Wrap the primary tool call in error handling that catches exceptions and triggers the fallback",
+    "In LangGraph, model this as a conditional edge: if primary search fails, route to the backup search node",
+    "Consider having the primary tool return a sentinel value on failure so the agent knows to try the fallback"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain.agents import AgentExecutor, create_tool_calling_agent\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom langchain_core.tools import tool\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n@tool\ndef primary_search(query: str) -> str:\n    \"\"\"Search using the primary search engine (sometimes fails).\"\"\"\n    # BUG: This tool intermittently fails and there is no fallback\n    import random\n    if random.random() < 0.5:\n        raise ConnectionError(\"Primary search service is temporarily unavailable\")\n    return f\"Primary results for '{query}': Article about {query} from TechNews, Research paper on {query} from ArXiv\"\n\n@tool\ndef backup_search(query: str) -> str:\n    \"\"\"Search using the backup search engine (always works).\"\"\"\n    return f\"Backup results for '{query}': Blog post about {query}, Wikipedia article on {query}\"\n\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a research assistant. Search for information to answer questions.\"),\n    (\"human\", \"{input}\"),\n    (\"placeholder\", \"{agent_scratchpad}\"),\n])\n\n# BUG: Only primary_search is registered — when it fails, the agent crashes\n# TODO: Add fallback logic so backup_search is used when primary fails\nagent = create_tool_calling_agent(llm, [primary_search], prompt)\nexecutor = AgentExecutor(agent=agent, tools=[primary_search])\n\nresult = executor.invoke({\"input\": \"Find recent research on transformer architectures\"})\nprint(result[\"output\"])",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai import LLM\nfrom crewai.tools import tool\n\nllm = LLM(model=\"gpt-4o-mini\")\n\n@tool\ndef primary_search(query: str) -> str:\n    \"\"\"Search using the primary search engine (sometimes fails).\"\"\"\n    # BUG: This tool intermittently fails and there is no fallback\n    import random\n    if random.random() < 0.5:\n        raise ConnectionError(\"Primary search service is temporarily unavailable\")\n    return f\"Primary results for '{query}': Article about {query} from TechNews, Research paper on {query} from ArXiv\"\n\n@tool\ndef backup_search(query: str) -> str:\n    \"\"\"Search using the backup search engine (always works).\"\"\"\n    return f\"Backup results for '{query}': Blog post about {query}, Wikipedia article on {query}\"\n\n# BUG: Only primary_search is registered — when it fails, the agent crashes\n# TODO: Add fallback logic so backup_search is used when primary fails\nagent = Agent(\n    role=\"Research Assistant\",\n    goal=\"Search for information to answer questions\",\n    backstory=\"You are a research assistant. Search for information to answer questions.\",\n    tools=[primary_search],\n    llm=llm,\n)\n\ntask = Task(\n    description=\"Find recent research on transformer architectures\",\n    expected_output=\"Search results about transformer architectures\",\n    agent=agent,\n)\n\ncrew = Crew(agents=[agent], tasks=[task])\nresult = crew.kickoff()\nprint(result)",
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom agents.tool import function_tool\n\n@function_tool\ndef primary_search(query: str) -> str:\n    \"\"\"Search using the primary search engine (sometimes fails).\"\"\"\n    # BUG: This tool intermittently fails and there is no fallback\n    import random\n    if random.random() < 0.5:\n        raise ConnectionError(\"Primary search service is temporarily unavailable\")\n    return f\"Primary results for '{query}': Article about {query} from TechNews, Research paper on {query} from ArXiv\"\n\n@function_tool\ndef backup_search(query: str) -> str:\n    \"\"\"Search using the backup search engine (always works).\"\"\"\n    return f\"Backup results for '{query}': Blog post about {query}, Wikipedia article on {query}\"\n\n# BUG: Only primary_search is registered — when it fails, the agent crashes\n# TODO: Add fallback logic so backup_search is used when primary fails\nagent = Agent(\n    name=\"Research Assistant\",\n    instructions=\"You are a research assistant. Search for information to answer questions.\",\n    tools=[primary_search],\n)\n\nresult = Runner.run_sync(agent, \"Find recent research on transformer architectures\")\nprint(result.final_output)"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/tool-fallback-strategy-langchain.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/tool-fallback-strategy-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/tool-fallback-strategy-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "primary-first",
+      "label": "Primary search is tried first",
+      "description": "The agent always attempts the primary search tool before considering the fallback"
+    },
+    {
+      "id": "fallback-on-failure",
+      "label": "Fallback triggers on failure",
+      "description": "When the primary search fails, the backup search is automatically called"
+    },
+    {
+      "id": "no-crash",
+      "label": "Agent never crashes",
+      "description": "Primary search failures are caught gracefully — the agent always returns a result"
+    },
+    {
+      "id": "no-double-call",
+      "label": "No unnecessary double calls",
+      "description": "The backup is only called when the primary actually fails, not on every request"
+    }
+  ]
+}

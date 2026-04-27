@@ -1,0 +1,194 @@
+## Approach
+
+The root cause of this bug is that the system prompt gives the agent no guidance on how to handle multiple data sources. A generic instruction like "look up product information" leaves the LLM free to call just one tool and present its result as the final answer. Even when the agent happens to call both tools, the prompt does not tell it to compare the results, so it silently picks whichever value it saw first.
+
+The fix is twofold. First, the system prompt must explicitly instruct the agent to always call both `get_price_source_a` and `get_price_source_b` before answering. Second, the prompt must tell the agent to compare the results field by field, highlight any discrepancies to the user, and explain which source it considers more reliable and why. This makes conflict resolution transparent rather than silent.
+
+By encoding the cross-reference and conflict-flagging behavior directly into the system prompt, we ensure the agent follows a consistent protocol regardless of the query. The tools themselves remain unchanged — the intelligence is in the orchestration instructions.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+@tool
+def get_price_source_a(product: str) -> str:
+    """Get product price from Source A (retail aggregator)."""
+    prices = {
+        "laptop x1": {"price": "$999", "in_stock": True, "rating": "4.2/5"},
+        "headphones z3": {"price": "$199", "in_stock": True, "rating": "4.7/5"},
+        "keyboard k5": {"price": "$149", "in_stock": False, "rating": "4.0/5"},
+    }
+    data = prices.get(product.lower())
+    if data:
+        return f"Source A - {product}: Price {data['price']}, In Stock: {data['in_stock']}, Rating: {data['rating']}"
+    return f"Source A: Product '{product}' not found"
+
+@tool
+def get_price_source_b(product: str) -> str:
+    """Get product price from Source B (manufacturer database)."""
+    prices = {
+        "laptop x1": {"price": "$1,049", "in_stock": True, "rating": "4.5/5"},
+        "headphones z3": {"price": "$199", "in_stock": False, "rating": "4.6/5"},
+        "keyboard k5": {"price": "$129", "in_stock": True, "rating": "4.1/5"},
+    }
+    data = prices.get(product.lower())
+    if data:
+        return f"Source B - {product}: Price {data['price']}, In Stock: {data['in_stock']}, Rating: {data['rating']}"
+    return f"Source B: Product '{product}' not found"
+
+SYSTEM_PROMPT = """You are a shopping assistant. For EVERY product query, you MUST:
+
+1. Call BOTH get_price_source_a AND get_price_source_b to retrieve data.
+2. Compare the results field by field (price, stock status, rating).
+3. If the sources AGREE on a field, present that value confidently.
+4. If the sources DISAGREE on any field, explicitly flag the discrepancy:
+   - Show both values with source labels.
+   - Explain possible reasons for the difference (e.g., retailer markdowns, inventory lag).
+   - Do NOT silently pick one value over the other.
+5. Always present data from both sources so the user can make an informed decision."""
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", SYSTEM_PROMPT),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}"),
+])
+
+agent = create_tool_calling_agent(llm, [get_price_source_a, get_price_source_b], prompt)
+executor = AgentExecutor(agent=agent, tools=[get_price_source_a, get_price_source_b])
+
+result = executor.invoke({"input": "What's the price of Laptop X1 and is it in stock?"})
+print(result["output"])
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from agents.tool import function_tool
+
+@function_tool
+def get_price_source_a(product: str) -> str:
+    """Get product price from Source A (retail aggregator)."""
+    prices = {
+        "laptop x1": {"price": "$999", "in_stock": True, "rating": "4.2/5"},
+        "headphones z3": {"price": "$199", "in_stock": True, "rating": "4.7/5"},
+        "keyboard k5": {"price": "$149", "in_stock": False, "rating": "4.0/5"},
+    }
+    data = prices.get(product.lower())
+    if data:
+        return f"Source A - {product}: Price {data['price']}, In Stock: {data['in_stock']}, Rating: {data['rating']}"
+    return f"Source A: Product '{product}' not found"
+
+@function_tool
+def get_price_source_b(product: str) -> str:
+    """Get product price from Source B (manufacturer database)."""
+    prices = {
+        "laptop x1": {"price": "$1,049", "in_stock": True, "rating": "4.5/5"},
+        "headphones z3": {"price": "$199", "in_stock": False, "rating": "4.6/5"},
+        "keyboard k5": {"price": "$129", "in_stock": True, "rating": "4.1/5"},
+    }
+    data = prices.get(product.lower())
+    if data:
+        return f"Source B - {product}: Price {data['price']}, In Stock: {data['in_stock']}, Rating: {data['rating']}"
+    return f"Source B: Product '{product}' not found"
+
+SYSTEM_PROMPT = """You are a shopping assistant. For EVERY product query, you MUST:
+
+1. Call BOTH get_price_source_a AND get_price_source_b to retrieve data.
+2. Compare the results field by field (price, stock status, rating).
+3. If the sources AGREE on a field, present that value confidently.
+4. If the sources DISAGREE on any field, explicitly flag the discrepancy:
+   - Show both values with source labels.
+   - Explain possible reasons for the difference (e.g., retailer markdowns, inventory lag).
+   - Do NOT silently pick one value over the other.
+5. Always present data from both sources so the user can make an informed decision."""
+
+agent = Agent(
+    name="Shopping Assistant",
+    instructions=SYSTEM_PROMPT,
+    tools=[get_price_source_a, get_price_source_b],
+)
+
+result = Runner.run_sync(agent, "What's the price of Laptop X1 and is it in stock?")
+print(result.final_output)
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from crewai.tools import tool
+
+@tool
+def get_price_source_a(product: str) -> str:
+    """Get product price from Source A (retail aggregator)."""
+    prices = {
+        "laptop x1": {"price": "$999", "in_stock": True, "rating": "4.2/5"},
+        "headphones z3": {"price": "$199", "in_stock": True, "rating": "4.7/5"},
+        "keyboard k5": {"price": "$149", "in_stock": False, "rating": "4.0/5"},
+    }
+    data = prices.get(product.lower())
+    if data:
+        return f"Source A - {product}: Price {data['price']}, In Stock: {data['in_stock']}, Rating: {data['rating']}"
+    return f"Source A: Product '{product}' not found"
+
+@tool
+def get_price_source_b(product: str) -> str:
+    """Get product price from Source B (manufacturer database)."""
+    prices = {
+        "laptop x1": {"price": "$1,049", "in_stock": True, "rating": "4.5/5"},
+        "headphones z3": {"price": "$199", "in_stock": False, "rating": "4.6/5"},
+        "keyboard k5": {"price": "$129", "in_stock": True, "rating": "4.1/5"},
+    }
+    data = prices.get(product.lower())
+    if data:
+        return f"Source B - {product}: Price {data['price']}, In Stock: {data['in_stock']}, Rating: {data['rating']}"
+    return f"Source B: Product '{product}' not found"
+
+SYSTEM_PROMPT = """You are a shopping assistant. For EVERY product query, you MUST:
+
+1. Call BOTH get_price_source_a AND get_price_source_b to retrieve data.
+2. Compare the results field by field (price, stock status, rating).
+3. If the sources AGREE on a field, present that value confidently.
+4. If the sources DISAGREE on any field, explicitly flag the discrepancy:
+   - Show both values with source labels.
+   - Explain possible reasons for the difference (e.g., retailer markdowns, inventory lag).
+   - Do NOT silently pick one value over the other.
+5. Always present data from both sources so the user can make an informed decision."""
+
+assistant = Agent(
+    role="Shopping Assistant",
+    goal="Help users find product information from multiple sources",
+    backstory=SYSTEM_PROMPT,
+    tools=[get_price_source_a, get_price_source_b],
+)
+
+task = Task(
+    description="What's the price of Laptop X1 and is it in stock?",
+    expected_output="Product info from both sources with conflicts flagged",
+    agent=assistant,
+)
+
+crew = Crew(agents=[assistant], tasks=[task])
+print(crew.kickoff())
+```
+
+## Why This Works
+
+The original system prompt was too vague — it just said "look up product information," which left the agent free to call one tool and be done. The updated prompt encodes a strict protocol: always call both tools, compare results, and flag differences. LLMs are highly responsive to explicit procedural instructions in the system prompt, so spelling out the five-step process ensures consistent behavior across all queries.
+
+The key insight is that conflict resolution is an orchestration concern, not a tool concern. The tools themselves are correct — they return accurate data from their respective sources. The problem was that the agent had no instructions for what to do when those sources disagree. By making the comparison and disclosure steps mandatory in the prompt, we turn a silent-preference bug into a transparent, user-friendly experience.
+
+## Key Takeaways
+
+- When an agent has multiple tools that return overlapping data, the system prompt must explicitly require cross-referencing all sources.
+- Silent preference — where the agent picks one source without explanation — is a common failure mode that erodes user trust.
+- Conflict resolution logic belongs in the orchestration layer (system prompt or agent instructions), not in the tools themselves.

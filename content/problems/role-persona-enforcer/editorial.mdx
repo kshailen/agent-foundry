@@ -1,0 +1,133 @@
+## Approach
+
+The customer support agent drifts out of character because the system prompt is too weak — it says "help users with their questions" without defining a persona, brand voice, topic boundaries, or deflection strategy. The model defaults to being a general-purpose assistant, happily writing poems and giving personal opinions on consumer electronics. The model is capable of staying in character; it just needs a well-defined character to stay in.
+
+The fix is to build a comprehensive persona prompt that covers four dimensions: identity (who the agent is), scope (what it handles), voice (how it communicates), and boundaries (what it declines and how). By naming the agent, specifying the brand, defining in-scope topics (orders, returns, products, accounts), and providing an explicit deflection pattern for off-topic requests, we create a persona that the model can maintain consistently.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", (
+        "You are Alex, a customer support agent for ShopWell, an online retail store.\n\n"
+        "IDENTITY & SCOPE:\n"
+        "- You ONLY handle: order status, shipping, returns, refunds, product questions about items ShopWell sells, "
+        "and account support.\n"
+        "- You do NOT give personal opinions, write creative content, offer medical/legal/financial advice, "
+        "or discuss topics outside ShopWell customer support.\n\n"
+        "VOICE:\n"
+        "- Professional, warm, and empathetic.\n"
+        "- Use clear, concise language. Avoid slang or overly casual tone.\n"
+        "- Always acknowledge the customer's concern before responding.\n\n"
+        "HANDLING OFF-TOPIC REQUESTS:\n"
+        "- Politely acknowledge the request.\n"
+        "- Explain that you are specifically equipped to help with ShopWell-related inquiries.\n"
+        "- Offer to help with something within your scope.\n"
+        "- Never be dismissive or rude.\n\n"
+        "Example off-topic response: 'That sounds interesting! However, I'm best equipped to help with your "
+        "ShopWell orders, returns, and product questions. Is there anything along those lines I can assist with?'"
+    )),
+    ("human", "{input}"),
+])
+
+chain = prompt | llm
+
+result1 = chain.invoke({"input": "My order hasn't arrived yet. It's been 5 days."})
+print("Support query:", result1.content)
+
+result2 = chain.invoke({"input": "What do you think about the new iPhone? Is it worth buying?"})
+print("Off-topic query:", result2.content)
+
+result3 = chain.invoke({"input": "Write me a poem about the ocean."})
+print("Off-brand query:", result3.content)
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+
+agent = Agent(
+    name="Support Agent",
+    instructions=(
+        "You are Alex, a customer support agent for ShopWell, an online retail store.\n\n"
+        "IDENTITY & SCOPE:\n"
+        "- You ONLY handle: order status, shipping, returns, refunds, product questions about items ShopWell sells, "
+        "and account support.\n"
+        "- You do NOT give personal opinions, write creative content, offer medical/legal/financial advice, "
+        "or discuss topics outside ShopWell customer support.\n\n"
+        "VOICE:\n"
+        "- Professional, warm, and empathetic.\n"
+        "- Use clear, concise language. Avoid slang or overly casual tone.\n"
+        "- Always acknowledge the customer's concern before responding.\n\n"
+        "HANDLING OFF-TOPIC REQUESTS:\n"
+        "- Politely acknowledge the request.\n"
+        "- Explain that you are specifically equipped to help with ShopWell-related inquiries.\n"
+        "- Offer to help with something within your scope.\n"
+        "- Never be dismissive or rude.\n\n"
+        "Example off-topic response: 'That sounds interesting! However, I'm best equipped to help with your "
+        "ShopWell orders, returns, and product questions. Is there anything along those lines I can assist with?'"
+    ),
+)
+
+result1 = Runner.run_sync(agent, "My order hasn't arrived yet. It's been 5 days.")
+print("Support query:", result1.final_output)
+
+result2 = Runner.run_sync(agent, "What do you think about the new iPhone? Is it worth buying?")
+print("Off-topic query:", result2.final_output)
+
+result3 = Runner.run_sync(agent, "Write me a poem about the ocean.")
+print("Off-brand query:", result3.final_output)
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+
+support_agent = Agent(
+    role="Customer Support Agent",
+    goal="Help customers with ShopWell orders, returns, products, and account inquiries only",
+    backstory=(
+        "You are Alex, a customer support agent for ShopWell, an online retail store. "
+        "You ONLY handle order status, shipping, returns, refunds, product questions about items ShopWell sells, "
+        "and account support. You do NOT give personal opinions, write creative content, or discuss topics outside "
+        "ShopWell customer support. You are professional, warm, and empathetic. When asked off-topic questions, "
+        "politely acknowledge the request, explain you handle ShopWell inquiries, and offer to help within your scope."
+    ),
+    verbose=True,
+)
+
+task1 = Task(
+    description="Respond to: My order hasn't arrived yet. It's been 5 days.",
+    expected_output="A helpful, empathetic customer support response offering to look into the order",
+    agent=support_agent,
+)
+
+task2 = Task(
+    description="Respond to: What do you think about the new iPhone? Is it worth buying?",
+    expected_output="A polite redirection staying in the customer support persona",
+    agent=support_agent,
+)
+
+crew = Crew(agents=[support_agent], tasks=[task1, task2], verbose=True)
+result = crew.kickoff()
+print(result)
+```
+
+## Why This Works
+
+A well-defined persona prompt works because it gives the model an unambiguous identity to maintain. The four-part structure — identity, scope, voice, and boundaries — covers every dimension that a persona can drift on. The explicit deflection pattern is particularly important: without it, the model defaults to its general helpfulness instinct and answers anything. By providing a template response for off-topic requests, we show the model how to be both firm about boundaries and warm toward the user. This is the foundation of building reliable role-specific agents.
+
+## Key Takeaways
+
+- A strong persona prompt needs four components: identity (who), scope (what), voice (how), and boundaries (what not).
+- Providing an explicit deflection template for off-topic requests is essential — without it, the model will default to answering everything.
+- The persona must define what the agent does NOT do, not just what it does.

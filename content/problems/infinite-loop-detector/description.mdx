@@ -1,0 +1,47 @@
+## The Problem
+
+Your data analysis agent has a graph that routes between an "analyze" step and a "fetch more data" step. The idea is that the agent keeps refining its analysis until it has a complete answer. In practice, the data is never "sufficient" and the agent loops forever — analyze → fetch → analyze → fetch — burning tokens and never returning. There is **no loop detection or iteration limit**, so the agent runs until it's killed. Your job is to detect when the agent is stuck in a repetitive cycle and break out after a configurable number of iterations with a meaningful message.
+
+## Examples
+
+### Example 1
+
+**User input:** Analyze the Q4 sales data
+
+**Current (bad) output:** *(Agent loops infinitely: analyze → fetch → analyze → fetch → ... never returns)*
+
+**Expected (good) output:** After 5 iterations: *"I've attempted to analyze the sales data 5 times but couldn't reach a complete result. Here's what I found so far: [partial analysis]. The data source may need to be checked."*
+
+### Example 2
+
+**User input:** Summarize customer feedback trends
+
+**Current (bad) output:** *(Infinite loop — the agent never completes.)*
+
+**Expected (good) output:** After hitting the iteration limit: *"I've made 5 analysis attempts without converging on a final answer. Partial findings: [summary]. Consider providing more specific data or constraints."*
+
+### Example 3
+
+**User input:** What is 2 + 2?
+
+**Current (bad) output:** *(Simple queries may also get caught in the loop.)*
+
+**Expected (good) output:** The agent answers `4` on the first pass — no loop triggered, no iteration cap needed.
+
+## Your Task
+
+Add **infinite loop detection** so the agent:
+
+- Tracks the actions it has taken and detects repetitive cycles.
+- Breaks out of the loop after a configurable maximum number of iterations (e.g. 5).
+- Returns a meaningful message describing what was attempted and why it stopped.
+- Does not interfere with queries that complete normally without looping.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Infinite loop is detected:** The agent recognizes when it is repeating the same actions.
+- **Loop is broken after N iterations:** The agent exits after a configurable iteration cap.
+- **Exit message is meaningful:** The agent reports what it tried and why it stopped.
+- **Non-looping flows still work:** Normal queries that resolve without looping are unaffected.

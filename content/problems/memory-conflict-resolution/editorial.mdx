@@ -1,0 +1,243 @@
+## Approach
+
+The bug is that the memory store is append-only — every user statement is added as a new fact, but nothing is ever updated or removed. When the user says "I live in NYC" and later says "I moved to LA," both facts coexist in memory. The next query about location presents the model with contradictory information, leading to confused or incorrect responses.
+
+The fix requires structured memory with conflict detection. Instead of storing raw user statements, use the LLM to extract structured key-value pairs (e.g., `{"location": "New York City"}`). Before inserting a new fact, check if a fact with the same key already exists. If it does, replace the old value with the new one. This ensures the memory store always reflects the latest information without duplicates or contradictions.
+
+The key architectural change is moving from an unstructured list of strings to a dictionary keyed by fact category. This makes conflict detection automatic: if the key already exists, the old value is overwritten.
+
+## Solution
+
+### LangChain
+
+```python
+import json
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+memory_store = {}
+
+EXTRACTION_PROMPT = """Extract factual statements from the user's message as key-value pairs.
+Use descriptive keys like "location", "employer", "favorite_color", "name", "pet", etc.
+Return a JSON object. If no facts are found, return {{}}.
+Only return the JSON object, nothing else.
+
+User message: {message}"""
+
+def extract_and_store(user_message: str):
+    response = llm.invoke([HumanMessage(content=EXTRACTION_PROMPT.format(message=user_message))])
+    try:
+        facts = json.loads(response.content.strip().strip("`").strip("json").strip())
+        for key, value in facts.items():
+            memory_store[key] = value
+    except json.JSONDecodeError:
+        pass
+
+def chat(user_input: str) -> str:
+    extract_and_store(user_input)
+    facts_block = "\n".join(f"- {k}: {v}" for k, v in memory_store.items())
+    system_content = "You are a helpful assistant."
+    if facts_block:
+        system_content += f"\n\nKnown facts about the user:\n{facts_block}"
+    messages = [
+        SystemMessage(content=system_content),
+        HumanMessage(content=user_input),
+    ]
+    response = llm.invoke(messages)
+    return response.content
+
+# Turn 1: User states location
+print(chat("I live in New York City."))
+
+# Turn 2: User updates location
+print(chat("Actually, I just moved to Los Angeles."))
+
+# Turn 3: Where does the user live?
+print(chat("Where do I live?"))
+
+print(f"\nStored facts: {memory_store}")
+```
+
+### LangGraph
+
+```python
+import json
+from langchain_openai import ChatOpenAI
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict
+from langchain_core.messages import HumanMessage, SystemMessage
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+memory_store = {}
+
+EXTRACTION_PROMPT = """Extract factual statements from the user's message as key-value pairs.
+Use descriptive keys like "location", "employer", "favorite_color", "name", "pet", etc.
+Return a JSON object. If no facts are found, return {{}}.
+Only return the JSON object, nothing else.
+
+User message: {message}"""
+
+def extract_and_store(user_message: str):
+    response = llm.invoke([HumanMessage(content=EXTRACTION_PROMPT.format(message=user_message))])
+    try:
+        facts = json.loads(response.content.strip().strip("`").strip("json").strip())
+        for key, value in facts.items():
+            memory_store[key] = value
+    except json.JSONDecodeError:
+        pass
+
+class State(TypedDict):
+    query: str
+    response: str
+
+def answer(state: State) -> State:
+    extract_and_store(state["query"])
+    facts_block = "\n".join(f"- {k}: {v}" for k, v in memory_store.items())
+    system_content = "You are a helpful assistant."
+    if facts_block:
+        system_content += f"\n\nKnown facts about the user:\n{facts_block}"
+    messages = [
+        SystemMessage(content=system_content),
+        HumanMessage(content=state["query"]),
+    ]
+    response = llm.invoke(messages)
+    return {"response": response.content}
+
+graph = StateGraph(State)
+graph.add_node("answer", answer)
+graph.add_edge(START, "answer")
+graph.add_edge("answer", END)
+app = graph.compile()
+
+print(app.invoke({"query": "I live in New York City."})["response"])
+print(app.invoke({"query": "Actually, I just moved to Los Angeles."})["response"])
+print(app.invoke({"query": "Where do I live?"})["response"])
+
+print(f"\nStored facts: {memory_store}")
+```
+
+### CrewAI
+
+```python
+import json
+from crewai import Agent, Task, Crew
+from crewai import LLM
+
+llm = LLM(model="gpt-4o-mini")
+
+memory_store = {}
+
+def extract_and_store(user_message: str):
+    extraction_prompt = (
+        "Extract factual statements from the user's message as key-value pairs. "
+        "Use descriptive keys like 'location', 'employer', 'favorite_color', 'name', 'pet', etc. "
+        "Return a JSON object. If no facts are found, return {}. "
+        "Only return the JSON object, nothing else.\n\n"
+        f"User message: {user_message}"
+    )
+    extractor = Agent(
+        role="Fact Extractor",
+        goal="Extract structured facts from user messages",
+        backstory="You extract key-value pairs from natural language.",
+        llm=llm,
+    )
+    task = Task(
+        description=extraction_prompt,
+        expected_output="A JSON object of key-value pairs",
+        agent=extractor,
+    )
+    crew = Crew(agents=[extractor], tasks=[task])
+    result = str(crew.kickoff())
+    try:
+        facts = json.loads(result.strip().strip("`").strip("json").strip())
+        for key, value in facts.items():
+            memory_store[key] = value
+    except json.JSONDecodeError:
+        pass
+
+assistant = Agent(
+    role="Assistant",
+    goal="Help the user using known facts",
+    backstory="You are a helpful assistant who remembers what users tell you.",
+    llm=llm,
+)
+
+def chat(user_input: str) -> str:
+    extract_and_store(user_input)
+    facts_block = "\n".join(f"- {k}: {v}" for k, v in memory_store.items())
+    description = f"Known facts about the user:\n{facts_block}\n\nRespond to: {user_input}" if facts_block else user_input
+    task = Task(
+        description=description,
+        expected_output="A helpful response",
+        agent=assistant,
+    )
+    crew = Crew(agents=[assistant], tasks=[task])
+    return str(crew.kickoff())
+
+print(chat("I live in New York City."))
+print(chat("Actually, I just moved to Los Angeles."))
+print(chat("Where do I live?"))
+
+print(f"\nStored facts: {memory_store}")
+```
+
+### OpenAI Agents SDK
+
+```python
+import json
+from agents import Agent, Runner
+
+memory_store = {}
+
+extractor = Agent(
+    name="Fact Extractor",
+    instructions=(
+        "Extract factual statements from the user's message as key-value pairs. "
+        "Use descriptive keys like 'location', 'employer', 'favorite_color', 'name', 'pet', etc. "
+        "Return a JSON object. If no facts are found, return {}. "
+        "Only return the JSON object, nothing else."
+    ),
+)
+
+def extract_and_store(user_message: str):
+    result = Runner.run_sync(extractor, user_message)
+    try:
+        facts = json.loads(result.final_output.strip().strip("`").strip("json").strip())
+        for key, value in facts.items():
+            memory_store[key] = value
+    except json.JSONDecodeError:
+        pass
+
+agent = Agent(
+    name="Assistant",
+    instructions="You are a helpful assistant who remembers what users tell you.",
+)
+
+def chat(user_input: str) -> str:
+    extract_and_store(user_input)
+    facts_block = "\n".join(f"- {k}: {v}" for k, v in memory_store.items())
+    prompt = f"Known facts about the user:\n{facts_block}\n\nRespond to: {user_input}" if facts_block else user_input
+    result = Runner.run_sync(agent, prompt)
+    return result.final_output
+
+print(chat("I live in New York City."))
+print(chat("Actually, I just moved to Los Angeles."))
+print(chat("Where do I live?"))
+
+print(f"\nStored facts: {memory_store}")
+```
+
+## Why This Works
+
+Using a dictionary instead of a list fundamentally changes how updates work. When the LLM extracts `{"location": "Los Angeles"}` from "I moved to LA," the dictionary assignment `memory_store["location"] = "Los Angeles"` automatically overwrites the previous value `"New York City"`. There is never a state where both values coexist.
+
+The LLM-based extraction step is critical because users don't say "update key=location to value=LA." They say things like "Actually, I just moved to Los Angeles." The LLM interprets this natural language and produces the same `location` key it used before, enabling the dictionary to detect the conflict and overwrite. This makes the system robust to the variety of ways users express updates.
+
+## Key Takeaways
+
+- Append-only memory stores will accumulate contradictions over time — fact updates must replace old values, not duplicate them.
+- Storing facts as key-value pairs in a dictionary makes conflict detection and resolution automatic via key-based overwriting.
+- Using the LLM to extract structured keys from natural language ensures the system recognizes when a new statement updates an existing fact.

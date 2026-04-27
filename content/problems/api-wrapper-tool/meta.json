@@ -1,0 +1,51 @@
+{
+  "number": 18,
+  "title": "API Wrapper Tool",
+  "difficulty": "easy",
+  "categories": [
+    "tool-calling"
+  ],
+  "frameworks": [
+    "langchain",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "The tool must wrap the GitHub Users API endpoint",
+    "All HTTP errors must be caught and returned as readable messages",
+    "The agent must use the tool instead of raw API calls",
+    "No changes to the agent's core logic besides adding the tool"
+  ],
+  "hints": [
+    "Define a function that takes a username, calls the GitHub API, and returns structured user info",
+    "Wrap the function with the framework's tool decorator so the agent can discover and call it",
+    "Handle non-200 status codes inside the tool so the agent receives a clear error string instead of a traceback"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain.agents import AgentExecutor, create_tool_calling_agent\nfrom langchain_core.prompts import ChatPromptTemplate\nimport requests\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a helpful assistant that looks up GitHub user profiles.\"),\n    (\"human\", \"{input}\"),\n    (\"placeholder\", \"{agent_scratchpad}\"),\n])\n\n# BUG: The agent has no tool — it tries to answer from memory or makes raw API calls inline\n# TODO: Wrap the GitHub user lookup into a proper tool with error handling\n\ndef lookup_github_user(username: str) -> str:\n    response = requests.get(f\"https://api.github.com/users/{username}\")\n    data = response.json()\n    return str(data)\n\nagent = create_tool_calling_agent(llm, [], prompt)\nexecutor = AgentExecutor(agent=agent, tools=[])\n\nresult = executor.invoke({\"input\": \"Tell me about the GitHub user 'octocat'\"})\nprint(result[\"output\"])",
+    "openai-agents-sdk": "from agents import Agent, Runner\nimport requests\n\n# BUG: This function is not registered as a tool — the agent cannot call it\n# TODO: Decorate as a tool, add error handling for missing users / network failures\n\ndef lookup_github_user(username: str) -> str:\n    response = requests.get(f\"https://api.github.com/users/{username}\")\n    data = response.json()\n    return str(data)\n\nagent = Agent(\n    name=\"GitHub Lookup Assistant\",\n    instructions=\"You are a helpful assistant that looks up GitHub user profiles.\",\n    tools=[],\n)\n\nresult = Runner.run_sync(agent, \"Tell me about the GitHub user 'octocat'\")\nprint(result.final_output)",
+    "crewai": "from crewai import Agent, Task, Crew, Process\nfrom crewai import LLM\nimport requests\n\nllm = LLM(model=\"gpt-4o-mini\")\n\n# BUG: This function is not registered as a tool — the agent cannot call it\n# TODO: Decorate as a tool, add error handling for missing users / network failures\n\ndef lookup_github_user(username: str) -> str:\n    response = requests.get(f\"https://api.github.com/users/{username}\")\n    data = response.json()\n    return str(data)\n\nagent = Agent(\n    role=\"GitHub Lookup Assistant\",\n    goal=\"Look up GitHub user profiles\",\n    backstory=\"You are a helpful assistant that looks up GitHub user profiles.\",\n    tools=[],\n    llm=llm,\n)\n\ntask = Task(description=\"Tell me about the GitHub user 'octocat'\", expected_output=\"GitHub profile info\", agent=agent)\ncrew = Crew(agents=[agent], tasks=[task], process=Process.sequential)\nresult = crew.kickoff()\nprint(result)"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/api-wrapper-tool-langchain.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/api-wrapper-tool-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/api-wrapper-tool-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "tool-registered",
+      "label": "Tool is registered with the agent",
+      "description": "The GitHub lookup function is properly decorated and passed to the agent's tool list"
+    },
+    {
+      "id": "error-handling",
+      "label": "Handles API errors gracefully",
+      "description": "Non-200 responses and network errors return a clear message instead of crashing"
+    },
+    {
+      "id": "correct-output",
+      "label": "Returns structured user info",
+      "description": "The tool returns key profile fields (name, bio, repos) in a readable format"
+    }
+  ]
+}

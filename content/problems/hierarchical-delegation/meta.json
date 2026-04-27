@@ -1,0 +1,57 @@
+{
+  "number": 80,
+  "title": "Hierarchical Delegation",
+  "difficulty": "medium",
+  "categories": [
+    "multi-agent",
+    "orchestration"
+  ],
+  "frameworks": [
+    "crewai",
+    "langgraph",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "A manager agent must decompose the task into subtasks",
+    "Each subtask must be delegated to an appropriate specialist agent",
+    "The manager must synthesize specialist outputs into a final answer",
+    "Specialists must not communicate directly with each other"
+  ],
+  "hints": [
+    "In CrewAI, use Process.hierarchical with a manager_llm to enable automatic delegation",
+    "In LangGraph, create a manager node that routes to specialist nodes and collects their outputs",
+    "The manager should break a complex request into distinct sub-questions before delegating"
+  ],
+  "starterCode": {
+    "crewai": "from crewai import Agent, Task, Crew, Process\nfrom crewai import LLM\n\nllm = LLM(model=\"gpt-4o-mini\")\n\n# BUG: A single agent tries to do everything — no delegation\n# TODO: Add specialist agents and a manager that delegates subtasks\ngeneralist = Agent(\n    role=\"Business Consultant\",\n    goal=\"Analyze a business idea covering market, finance, and technical feasibility\",\n    backstory=\"You are a generalist consultant.\",\n    llm=llm,\n)\n\nanalysis_task = Task(\n    description=\"Provide a full business analysis for: {idea}\",\n    expected_output=\"A comprehensive report covering market analysis, financial projections, and technical feasibility\",\n    agent=generalist,\n)\n\ncrew = Crew(\n    agents=[generalist],\n    tasks=[analysis_task],\n    process=Process.sequential,\n)\n\nresult = crew.kickoff(inputs={\"idea\": \"AI-powered personal finance app\"})\nprint(result)",
+    "langgraph": "from langchain_openai import ChatOpenAI\nfrom langgraph.graph import StateGraph, START, END\nfrom typing import TypedDict\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\nclass State(TypedDict):\n    idea: str\n    result: str\n\n# BUG: A single node does all the analysis — no decomposition or delegation\n# TODO: Add a manager that decomposes and delegates to specialist nodes\ndef analyze(state: State) -> dict:\n    prompt = f\"Provide a full business analysis for: {state['idea']}. Cover market analysis, financial projections, and technical feasibility.\"\n    response = llm.invoke(prompt)\n    return {\"result\": response.content}\n\ngraph = StateGraph(State)\ngraph.add_node(\"analyze\", analyze)\ngraph.add_edge(START, \"analyze\")\ngraph.add_edge(\"analyze\", END)\n\napp = graph.compile()\nresult = app.invoke({\"idea\": \"AI-powered personal finance app\", \"result\": \"\"})\nprint(result[\"result\"])",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\n# BUG: A single agent tries to do everything — no delegation\n# TODO: Add specialist agents and a manager that delegates subtasks\nagent = Agent(\n    name=\"Business Consultant\",\n    instructions=\"You are a generalist consultant. Analyze a business idea covering market, finance, and technical feasibility.\",\n)\n\nresult = Runner.run_sync(agent, \"Provide a full business analysis for: AI-powered personal finance app. Cover market analysis, financial projections, and technical feasibility.\")\nprint(result.final_output)"
+  },
+  "colabUrls": {
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/hierarchical-delegation-crewai.ipynb",
+    "langgraph": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/hierarchical-delegation-langgraph.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/hierarchical-delegation-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "manager-decomposes",
+      "label": "Manager decomposes the task",
+      "description": "The manager agent breaks the complex task into distinct subtasks"
+    },
+    {
+      "id": "specialists-exist",
+      "label": "Specialist agents exist",
+      "description": "There are at least two specialist agents with distinct domains (e.g., market, finance, technical)"
+    },
+    {
+      "id": "delegation-works",
+      "label": "Delegation to specialists works",
+      "description": "Each subtask is handled by the appropriate specialist, not the manager"
+    },
+    {
+      "id": "synthesized-output",
+      "label": "Manager synthesizes final output",
+      "description": "The manager combines specialist outputs into a coherent final report"
+    }
+  ]
+}

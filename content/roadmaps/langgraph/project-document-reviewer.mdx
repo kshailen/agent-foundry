@@ -1,0 +1,146 @@
+# Project: Document Reviewer
+
+In this project you will build a **document review agent** that generates a document draft, pauses for human review using `interrupt`, and revises based on feedback. The agent uses checkpointing for persistence and `Command(resume=)` to continue after the human responds.
+
+## Architecture
+
+```
+START → generate_draft → human_review →──┬──→ finalize → END
+                              ↑          │
+                              └──────────┘
+                           (revision loop)
+```
+
+1. **generate_draft** — LLM writes a first draft based on the user's request
+2. **human_review** — pauses execution with `interrupt`, waits for human feedback
+3. **finalize** — formats and returns the approved document
+
+If the human requests changes, the graph loops back to revise the draft.
+
+## Step 1: Define the State
+
+```python
+from typing import TypedDict, Annotated
+from langgraph.graph import add_messages
+
+class State(TypedDict):
+    messages: Annotated[list, add_messages]
+    draft: str
+    feedback: str
+    approved: bool
+```
+
+## Step 2: Generate the Draft
+
+```python
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+def generate_draft(state: State) -> dict:
+    context = []
+    if state.get("feedback"):
+        context.append(("system", f"Previous feedback to address: {state['feedback']}"))
+        context.append(("system", f"Previous draft to revise:\n{state['draft']}"))
+
+    response = llm.invoke([
+        ("system", "You are a professional writer. Write or revise a document based on the request."),
+        *context,
+        *state["messages"],
+    ])
+    return {"draft": response.content}
+```
+
+## Step 3: Human Review with interrupt
+
+```python
+from langgraph.types import interrupt
+
+def human_review(state: State) -> dict:
+    decision = interrupt({
+        "draft": state["draft"],
+        "instruction": "Review the draft. Respond with 'approve' or provide revision feedback.",
+    })
+
+    if decision.strip().lower() == "approve":
+        return {"approved": True, "feedback": ""}
+    return {"approved": False, "feedback": decision}
+```
+
+The `interrupt` pauses the graph and surfaces the draft to the caller. The human's response is returned as the `decision` variable.
+
+## Step 4: Route After Review
+
+```python
+def route_after_review(state: State) -> str:
+    if state["approved"]:
+        return "finalize"
+    return "generate_draft"
+```
+
+## Step 5: Finalize
+
+```python
+def finalize(state: State) -> dict:
+    return {"messages": [("ai", f"Document approved! Final version:\n\n{state['draft']}")]}
+```
+
+## Step 6: Assemble the Graph
+
+```python
+from langgraph.graph import StateGraph, START, END
+from langgraph.checkpoint.memory import InMemorySaver
+
+graph = StateGraph(State)
+graph.add_node("generate_draft", generate_draft)
+graph.add_node("human_review", human_review)
+graph.add_node("finalize", finalize)
+
+graph.add_edge(START, "generate_draft")
+graph.add_edge("generate_draft", "human_review")
+graph.add_conditional_edges("human_review", route_after_review, {
+    "finalize": "finalize",
+    "generate_draft": "generate_draft",
+})
+graph.add_edge("finalize", END)
+
+checkpointer = InMemorySaver()
+app = graph.compile(checkpointer=checkpointer)
+```
+
+## Step 7: Run the Review Loop
+
+```python
+from langgraph.types import Command
+
+config = {"configurable": {"thread_id": "doc-review-1"}}
+
+result = app.invoke(
+    {"messages": [("human", "Write a product announcement for our new AI coding assistant")]},
+    config=config,
+)
+print("Draft generated. Waiting for review...")
+
+state = app.get_state(config)
+print(f"Draft:\n{state.values['draft']}")
+
+result = app.invoke(
+    Command(resume="Make it more concise and add a call-to-action"),
+    config=config,
+)
+print("Revision submitted. Waiting for review...")
+
+state = app.get_state(config)
+print(f"Revised draft:\n{state.values['draft']}")
+
+result = app.invoke(Command(resume="approve"), config=config)
+print(result["messages"][-1].content)
+```
+
+## Key Takeaways
+
+- `interrupt(value)` pauses execution and surfaces data for human review
+- `Command(resume=value)` continues from the exact interrupt point with the human's response
+- A checkpointer is required for human-in-the-loop — it saves state at the interrupt point
+- Conditional edges after the review node create a revision loop until the human approves
+- This pattern applies to any workflow needing human oversight: content review, code review, approval chains, and more

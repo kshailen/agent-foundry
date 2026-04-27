@@ -1,0 +1,36 @@
+## The Problem
+
+Your universal assistant agent has **15 tools** spanning web search, finance, weather, email, calendar, translation, and more. Every query — no matter how simple — sends all 15 tool schemas to the LLM. This wastes tokens, increases latency, and confuses the model (it sometimes picks the wrong tool when overwhelmed with options). Your job is to **dynamically select only the 3-4 most relevant tools** per query before passing them to the agent.
+
+## Examples
+
+### Example 1
+
+**User input:** What's the weather in Paris?
+
+**Current (bad) output:** The LLM receives schemas for all 15 tools. It works, but wastes tokens sending irrelevant tools like `calculate_mortgage`, `translate_text`, and `send_email`. Occasionally it picks the wrong tool.
+
+**Expected (good) output:** The agent receives only `get_weather`, `get_forecast`, and `search_web`. It quickly calls `get_weather("Paris")` and responds accurately.
+
+### Example 2
+
+**User input:** What's AAPL stock price and convert 100 USD to EUR?
+
+**Current (bad) output:** All 15 tools are loaded. The LLM may get confused between `calculate_tip` and `get_exchange_rate`, or miss the stock lookup entirely.
+
+**Expected (good) output:** The agent receives `get_stock_price`, `get_exchange_rate`, `search_web`, and `convert_units` — just the relevant tools. It handles both parts of the query correctly.
+
+## Your Task
+
+- Build a tool selection layer that picks the 3-4 most relevant tools from the registry based on the user's query.
+- The selection mechanism can use keyword matching, semantic similarity, or an LLM-based router.
+- Pass only the selected tools to the agent for each query.
+- Ensure the system still works for queries that span multiple categories.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Only relevant tools are exposed:** The LLM receives 3-4 tools per query, not all 15.
+- **Selection is query-driven:** Tool selection is based on the user's query, not hardcoded.
+- **Selected tools are appropriate:** The exposed tools match the intent of the user's query.

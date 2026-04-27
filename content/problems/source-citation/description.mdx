@@ -1,0 +1,46 @@
+## The Problem
+
+Your RAG pipeline retrieves the right documents and produces correct answers, but there is no way for the user to verify where the information came from. In a business setting—legal, finance, compliance—unattributed answers are worthless. Users need to see which document backs each claim so they can verify, audit, and trust the output. The current pipeline strips source metadata during retrieval and the prompt never asks the LLM to cite anything. Your job is to **preserve source metadata through the pipeline** and **instruct the LLM to cite the source document for every factual claim**.
+
+## Examples
+
+### Example 1
+
+**User input:** What was the revenue growth?
+
+**Current (bad) output:** The company's revenue grew 40% year-over-year in Q3 2024. *(No citation — user has no idea which report this came from.)*
+
+**Expected (good) output:** The company's revenue grew 40% year-over-year in Q3 2024. [Source: earnings_report_q3.pdf]
+
+### Example 2
+
+**User input:** When is the new product launching?
+
+**Current (bad) output:** The new product launch is scheduled for March 2025.
+
+**Expected (good) output:** The new product launch is scheduled for March 2025. [Source: product_roadmap.pdf]
+
+### Example 3
+
+**User input:** How are employees feeling about the company?
+
+**Current (bad) output:** Employee satisfaction scores improved to 4.5 out of 5.
+
+**Expected (good) output:** Employee satisfaction scores improved to 4.5/5 in the latest survey. [Source: hr_annual_review.pdf]
+
+## Your Task
+
+Modify the RAG pipeline so that:
+
+- Source metadata (document name/ID) is preserved when documents are retrieved.
+- Retrieved context passed to the LLM includes source identifiers alongside the content.
+- The LLM prompt instructs the model to cite the source for every factual claim.
+- The final answer is readable and naturally incorporates citations.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Cites sources for claims:** Every factual claim in the answer includes a reference to the source document.
+- **Citations are accurate:** Citations match the actual source documents that contained the information.
+- **Output remains readable:** The answer is still natural and easy to read despite including citations.

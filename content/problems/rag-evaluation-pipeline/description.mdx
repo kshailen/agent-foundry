@@ -1,0 +1,57 @@
+## The Problem
+
+Your RAG pipeline returns answers, but you have **no idea how good they are**. Is the retriever finding the right documents? Is the LLM making up facts not in the context? Is the answer actually complete? Without evaluation metrics, you're flying blind—every prompt tweak or retriever change is a guess. Your job is to build an **automated evaluation pipeline** that measures three key metrics: **retrieval relevance** (are the retrieved docs relevant?), **answer faithfulness** (is the answer grounded in the context?), and **answer completeness** (does the answer fully address the question?).
+
+## Examples
+
+### Example 1
+
+**User input:** What SDKs are available and what are the rate limits?
+
+**Current (bad) output:**
+```
+Answer: We support Python, JavaScript, and Go SDKs. Free tier: 1000 req/min, Enterprise: 10000 req/min.
+(No evaluation — you don't know if this is faithful or complete)
+```
+
+**Expected (good) output:**
+```
+Answer: We support Python, JavaScript, and Go SDKs. Free tier: 1000 req/min, Enterprise: 10000 req/min.
+
+Evaluation:
+  Retrieval Relevance: 0.95 (retrieved docs directly relate to SDKs and rate limits)
+  Answer Faithfulness: 1.0 (all claims are supported by retrieved context)
+  Answer Completeness: 1.0 (both SDKs and rate limits are covered)
+```
+
+### Example 2
+
+**User input:** How do I set up webhooks and authenticate?
+
+**Expected (good) output:**
+```
+Answer: Configure webhooks in Dashboard > Settings > Integrations. Authenticate using an API key in the X-API-Key header.
+
+Evaluation:
+  Retrieval Relevance: 0.9
+  Answer Faithfulness: 1.0
+  Answer Completeness: 1.0
+```
+
+## Your Task
+
+Add an evaluation layer to the RAG pipeline that:
+
+- Scores **retrieval relevance**: how well do the retrieved documents match the question (0-1).
+- Scores **answer faithfulness**: are all claims in the answer supported by the retrieved context (0-1).
+- Scores **answer completeness**: does the answer address all parts of the question (0-1).
+- Uses LLM-as-judge or programmatic checks to produce these scores automatically.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Measures retrieval relevance:** The pipeline scores how relevant the retrieved documents are to the question.
+- **Measures answer faithfulness:** The pipeline scores whether the answer is faithful to the retrieved context without hallucination.
+- **Measures answer completeness:** The pipeline scores whether the answer addresses all parts of the user's question.
+- **Produces numeric scores:** Each metric produces a score between 0 and 1 for quantitative comparison.

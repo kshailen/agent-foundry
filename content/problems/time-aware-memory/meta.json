@@ -1,0 +1,56 @@
+{
+  "number": 40,
+  "title": "Time-Aware Memory",
+  "difficulty": "hard",
+  "categories": [
+    "memory"
+  ],
+  "frameworks": [
+    "langchain",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "Every stored fact must include a timestamp",
+    "Relative time references (yesterday, last week) must resolve to actual dates",
+    "The agent must use current date/time to interpret temporal queries",
+    "Facts must be retrievable by time range"
+  ],
+  "hints": [
+    "Attach a datetime to every fact when it is stored, and include the current date/time in the system prompt",
+    "When the user says 'yesterday,' compute the actual date relative to now and use it for lookup",
+    "Build a retrieval function that can filter facts by time range (e.g., 'last 7 days') before injecting them into context"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain_core.messages import HumanMessage, SystemMessage\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# BUG: Facts stored without timestamps — \"yesterday\" is meaningless\nmemory = []\n\ndef store_fact(fact: str):\n    memory.append(fact)\n\ndef chat(user_input: str) -> str:\n    store_fact(f\"User said: {user_input}\")\n    facts_block = \"\\n\".join(memory)\n    messages = [\n        SystemMessage(content=f\"You are a helpful assistant. Known facts:\\n{facts_block}\"),\n        HumanMessage(content=user_input),\n    ]\n    response = llm.invoke(messages)\n    return response.content\n\n# Monday\nprint(chat(\"I had a meeting with the design team today.\"))\n\n# Tuesday\nprint(chat(\"I submitted the Q3 report today.\"))\n\n# Wednesday — \"yesterday\" should mean Tuesday, not Monday\nprint(chat(\"What did I do yesterday?\"))\n\n# Query by range\nprint(chat(\"What happened in the last 3 days?\"))\n\nprint(f\"\\nStored memory: {memory}\")",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai import LLM\n\nllm = LLM(model=\"gpt-4o-mini\")\n\n# BUG: Facts stored without timestamps — \"yesterday\" is meaningless\nmemory = []\n\ndef store_fact(fact: str):\n    memory.append(fact)\n\ndef chat(user_input: str) -> str:\n    store_fact(f\"User said: {user_input}\")\n    facts_block = \"\\n\".join(memory)\n    agent = Agent(\n        role=\"Helpful Assistant\",\n        goal=\"Answer questions using known facts\",\n        backstory=f\"You are a helpful assistant. Known facts:\\n{facts_block}\",\n        llm=llm,\n    )\n    task = Task(description=user_input, expected_output=\"A helpful response\", agent=agent)\n    crew = Crew(agents=[agent], tasks=[task])\n    return str(crew.kickoff())\n\n# Monday\nprint(chat(\"I had a meeting with the design team today.\"))\n# Tuesday\nprint(chat(\"I submitted the Q3 report today.\"))\n# Wednesday — \"yesterday\" should mean Tuesday, not Monday\nprint(chat(\"What did I do yesterday?\"))\n# Query by range\nprint(chat(\"What happened in the last 3 days?\"))\nprint(f\"\\nStored memory: {memory}\")",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\n# BUG: Facts stored without timestamps — \"yesterday\" is meaningless\nmemory = []\n\ndef store_fact(fact: str):\n    memory.append(fact)\n\ndef chat(user_input: str) -> str:\n    store_fact(f\"User said: {user_input}\")\n    facts_block = \"\\n\".join(memory)\n    agent = Agent(\n        name=\"Assistant\",\n        instructions=f\"You are a helpful assistant. Known facts:\\n{facts_block}\",\n    )\n    result = Runner.run_sync(agent, user_input)\n    return result.final_output\n\n# Monday\nprint(chat(\"I had a meeting with the design team today.\"))\n# Tuesday\nprint(chat(\"I submitted the Q3 report today.\"))\n# Wednesday — \"yesterday\" should mean Tuesday, not Monday\nprint(chat(\"What did I do yesterday?\"))\n# Query by range\nprint(chat(\"What happened in the last 3 days?\"))\nprint(f\"\\nStored memory: {memory}\")"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/time-aware-memory-langchain.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/time-aware-memory-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/time-aware-memory-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "timestamped-facts",
+      "label": "Facts are timestamped",
+      "description": "Every stored fact includes the date/time when it was recorded"
+    },
+    {
+      "id": "relative-time-resolved",
+      "label": "Relative time references resolved",
+      "description": "Queries like 'yesterday' or 'last week' are correctly resolved to actual dates"
+    },
+    {
+      "id": "time-range-retrieval",
+      "label": "Time-range retrieval works",
+      "description": "The agent can filter and return facts from a specific time window"
+    },
+    {
+      "id": "current-date-aware",
+      "label": "Agent knows current date",
+      "description": "The agent uses the current date/time to interpret temporal references correctly"
+    }
+  ]
+}

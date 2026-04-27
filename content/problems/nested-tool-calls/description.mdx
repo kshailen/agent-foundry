@@ -1,0 +1,36 @@
+## The Problem
+
+Your customer service agent has two tools: `find_user` (looks up a user by name, returns their ID) and `get_orders` (fetches orders by user ID). The correct flow is: call `find_user` to get the ID, then pass that ID to `get_orders`. However, the agent frequently **fails to chain these calls** — it either skips `find_user` and hallucinates a user ID, or passes the user's name directly to `get_orders` (which expects an ID). Your job is to **ensure the agent correctly chains the output of the first tool into the second**.
+
+## Examples
+
+### Example 1
+
+**User input:** Show me Alice's recent orders
+
+**Current (bad) output:** The agent calls `get_orders("alice")` directly — passing a name instead of an ID. The tool returns "No orders found" because it doesn't recognize "alice" as a valid user ID.
+
+**Expected (good) output:** The agent first calls `find_user("alice")` → gets `USR-001`, then calls `get_orders("USR-001")` → gets the actual orders. Responds: *Alice has 2 recent orders: Order #1234 (Laptop, $999) and Order #1235 (Mouse, $29).*
+
+### Example 2
+
+**User input:** What did Bob order recently?
+
+**Current (bad) output:** The agent hallucinates `get_orders("USR-123")` — an invented ID that returns no results.
+
+**Expected (good) output:** The agent calls `find_user("bob")` → gets `USR-002`, then `get_orders("USR-002")` → returns Bob's real orders.
+
+## Your Task
+
+- Ensure the agent always calls `find_user` first to obtain the user ID.
+- The returned user ID must be correctly extracted and passed to `get_orders`.
+- The agent must never guess, invent, or hardcode user IDs.
+- Do not modify the tool implementations.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **find_user is called first:** The agent always looks up the user to get their ID before fetching orders.
+- **Correct ID is passed to get_orders:** The user ID from find_user is properly extracted and used.
+- **No hallucinated IDs:** The agent never invents or guesses user IDs.

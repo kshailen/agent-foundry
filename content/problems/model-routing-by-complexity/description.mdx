@@ -1,0 +1,46 @@
+## The Problem
+
+Your assistant sends every query—from "What is 2+2?" to complex architecture design questions—to `gpt-4o`, the most expensive model. Simple queries that a cheaper model handles perfectly well are wasting budget. Your job is to **add an intelligent routing layer** that classifies query complexity and dispatches simple queries to `gpt-4o-mini` while reserving `gpt-4o` for queries that genuinely need its reasoning power.
+
+## Examples
+
+### Example 1
+
+**User input:** What is 2 + 2?
+
+**Current (bad) output:** Correct answer, but served by `gpt-4o` at ~10x the cost of `gpt-4o-mini`.
+
+**Expected (good) output:** The classifier scores this as complexity 1/5. Routed to `gpt-4o-mini`. Answer: *"4"*. Log: `model=gpt-4o-mini, est_cost=$0.0001`.
+
+### Example 2
+
+**User input:** Design a database schema for a multi-tenant SaaS platform that needs to handle row-level security, audit logging, and cross-tenant analytics.
+
+**Current (bad) output:** Good answer, correctly uses `gpt-4o`—but there is no routing logic, so this is accidental.
+
+**Expected (good) output:** The classifier scores this as complexity 5/5. Routed to `gpt-4o`. Answer includes a detailed schema design. Log: `model=gpt-4o, est_cost=$0.03`.
+
+### Example 3
+
+**User input:** Convert 100 Fahrenheit to Celsius.
+
+**Current (bad) output:** `gpt-4o` handles a trivial arithmetic conversion.
+
+**Expected (good) output:** Routed to `gpt-4o-mini`. Answer: *"37.78°C"*. Cost is minimal.
+
+## Your Task
+
+Modify the starter code so that:
+
+- A **lightweight classifier** (using the cheap model) scores each query's complexity.
+- Simple queries **route to `gpt-4o-mini`**; complex queries **route to `gpt-4o`**.
+- Each query **logs which model** handled it and the estimated cost.
+- The routing is **automatic**—no manual intervention per query.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Correct routing:** Simple queries go to the cheap model and complex queries go to the capable model.
+- **Cheap classifier:** The complexity classifier itself uses the cheaper model.
+- **Model logging:** Each query logs which model handled it and the estimated cost.

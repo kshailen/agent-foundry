@@ -1,0 +1,204 @@
+## Approach
+
+The starter code has a fixed two-agent pipeline (researcher + writer) that handles every task identically, regardless of what the task actually requires. A task that needs coding gets no coder. A task that only needs translation wastes time on unnecessary research and writing stages. The fix is to introduce a planner step that analyzes the incoming task, determines what agent roles are needed, and dynamically creates agents at runtime with tailored instructions.
+
+The planner uses an LLM call to inspect the task description and output a list of required roles (e.g., "researcher, coder, writer" for a tutorial task, or just "translator" for a translation task). The system then creates agent objects on the fly based on this plan, assigns them appropriate subtasks, and runs them in sequence. This means different tasks produce different agent configurations — the system adapts rather than forcing a one-size-fits-all pipeline.
+
+In LangGraph, the planner outputs a list of roles, and a runner function dynamically creates and executes nodes for each role. In CrewAI, agents and tasks are created programmatically from the planner's output and assembled into a crew.
+
+## Solution
+
+### LangGraph
+
+```python
+from langchain_openai import ChatOpenAI
+from pydantic import BaseModel
+from typing import TypedDict
+import json
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+class AgentPlan(BaseModel):
+    roles: list[dict]
+
+class State(TypedDict):
+    task: str
+    result: str
+
+def plan_agents(task: str) -> list[dict]:
+    structured_llm = llm.with_structured_output(AgentPlan)
+    result = structured_llm.invoke(
+        f"Analyze this task and decide what specialist agents are needed to complete it. "
+        f"For each agent, provide a 'role' (short name) and a 'goal' (what they should do). "
+        f"Only include agents that are genuinely needed — don't add unnecessary ones.\n\n"
+        f"Task: {task}"
+    )
+    return result.roles
+
+def execute_agents(task: str, agent_plans: list[dict]) -> str:
+    results = []
+    for i, plan in enumerate(agent_plans):
+        role = plan.get("role", f"Agent {i+1}")
+        goal = plan.get("goal", "Complete the assigned subtask")
+
+        if results:
+            prior_context = "\n\n".join(
+                f"[{r['role']}]: {r['output']}" for r in results
+            )
+            prompt = (
+                f"You are a {role}. Your goal: {goal}\n\n"
+                f"Task: {task}\n\n"
+                f"Previous agents' work:\n{prior_context}\n\n"
+                f"Build on the previous work and contribute your expertise."
+            )
+        else:
+            prompt = f"You are a {role}. Your goal: {goal}\n\nTask: {task}"
+
+        response = llm.invoke(prompt)
+        results.append({"role": role, "output": response.content})
+
+    final_parts = [f"## {r['role']}\n{r['output']}" for r in results]
+    return "\n\n".join(final_parts)
+
+task = "Research Python async patterns, write example code, and create a tutorial"
+agent_plans = plan_agents(task)
+print("Planned agents:", [p.get("role") for p in agent_plans])
+
+result = execute_agents(task, agent_plans)
+print(result)
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai import LLM
+from langchain_openai import ChatOpenAI
+from pydantic import BaseModel
+
+llm = LLM(model="gpt-4o-mini")
+planning_llm = ChatOpenAI(model="gpt-4o-mini")
+
+class AgentPlan(BaseModel):
+    roles: list[dict]
+
+def plan_agents(task: str) -> list[dict]:
+    structured_llm = planning_llm.with_structured_output(AgentPlan)
+    result = structured_llm.invoke(
+        f"Analyze this task and decide what specialist agents are needed to complete it. "
+        f"For each agent, provide a 'role' (short name like 'Researcher', 'Coder', 'Writer') "
+        f"and a 'goal' (what they should accomplish). "
+        f"Only include agents that are genuinely needed.\n\n"
+        f"Task: {task}"
+    )
+    return result.roles
+
+def execute_dynamic_crew(task: str, agent_plans: list[dict]) -> str:
+    agents = []
+    tasks = []
+
+    for plan in agent_plans:
+        role = plan.get("role", "Specialist")
+        goal = plan.get("goal", "Complete the assigned subtask")
+
+        agent = Agent(
+            role=role,
+            goal=goal,
+            backstory=f"You are a specialist {role.lower()} focused on: {goal}",
+            llm=llm,
+        )
+        agents.append(agent)
+
+        agent_task = Task(
+            description=f"As the {role}, work on the following task: {task}. Your specific focus: {goal}",
+            expected_output=f"High-quality output from the {role} perspective",
+            agent=agent,
+        )
+        tasks.append(agent_task)
+
+    crew = Crew(
+        agents=agents,
+        tasks=tasks,
+        process=Process.sequential,
+    )
+
+    return str(crew.kickoff())
+
+task = "Research Python async patterns, write example code, and create a tutorial"
+agent_plans = plan_agents(task)
+print("Planned agents:", [p.get("role") for p in agent_plans])
+
+result = execute_dynamic_crew(task, agent_plans)
+print(result)
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from langchain_openai import ChatOpenAI
+from pydantic import BaseModel
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+class AgentPlan(BaseModel):
+    roles: list[dict]
+
+def plan_agents(task: str) -> list[dict]:
+    structured_llm = llm.with_structured_output(AgentPlan)
+    result = structured_llm.invoke(
+        f"Analyze this task and decide what specialist agents are needed to complete it. "
+        f"For each agent, provide a 'role' (short name) and a 'goal' (what they should do). "
+        f"Only include agents that are genuinely needed — don't add unnecessary ones.\n\n"
+        f"Task: {task}"
+    )
+    return result.roles
+
+def execute_agents(task: str, agent_plans: list[dict]) -> str:
+    results = []
+    for i, plan in enumerate(agent_plans):
+        role = plan.get("role", f"Agent {i+1}")
+        goal = plan.get("goal", "Complete the assigned subtask")
+
+        agent = Agent(
+            name=role,
+            instructions=f"You are a {role}. Your goal: {goal}",
+        )
+
+        if results:
+            prior_context = "\n\n".join(
+                f"[{r['role']}]: {r['output']}" for r in results
+            )
+            prompt = (
+                f"Task: {task}\n\n"
+                f"Previous agents' work:\n{prior_context}\n\n"
+                f"Build on the previous work and contribute your expertise."
+            )
+        else:
+            prompt = f"Task: {task}"
+
+        response = Runner.run_sync(agent, prompt)
+        results.append({"role": role, "output": response.final_output})
+
+    final_parts = [f"## {r['role']}\n{r['output']}" for r in results]
+    return "\n\n".join(final_parts)
+
+task = "Research Python async patterns, write example code, and create a tutorial"
+agent_plans = plan_agents(task)
+print("Planned agents:", [p.get("role") for p in agent_plans])
+
+result = execute_agents(task, agent_plans)
+print(result)
+```
+
+## Why This Works
+
+The planner acts as a meta-agent that understands what skills a task demands. By using structured output from the LLM, the planner produces a typed list of roles and goals that can be directly used to construct agents programmatically. Different tasks produce different plans: a tutorial task might spawn a researcher, coder, and writer, while a translation task spawns only a translator. This adaptability is impossible with a hard-coded pipeline.
+
+Each dynamically spawned agent gets a tailored system prompt based on its planned role and goal, so it performs as well as a hand-crafted specialist would — just without requiring the developer to anticipate every possible task type in advance.
+
+## Key Takeaways
+
+- Dynamic agent spawning lets a system adapt to arbitrary tasks by planning the right agents at runtime instead of hard-coding a fixed pipeline.
+- The planner should use structured output (Pydantic models) to produce machine-readable agent specifications, not free-text descriptions.
+- Sequential execution with context passing between dynamically created agents ensures each builds on the previous one's work.

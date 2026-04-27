@@ -1,0 +1,51 @@
+{
+  "number": 14,
+  "title": "Dynamic Prompt Assembly",
+  "difficulty": "medium",
+  "categories": [
+    "prompt-design",
+    "orchestration"
+  ],
+  "frameworks": [
+    "langgraph",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "The prompt must change based on user tier (free/pro) and user type (new/returning)",
+    "Free-tier users must not receive pro-tier features in their prompt",
+    "The prompt assembly logic must be clear and maintainable"
+  ],
+  "hints": [
+    "Build a function that constructs the system prompt from modular blocks based on user context",
+    "Use a dictionary to map tier + user-type combinations to prompt segments",
+    "Test all four combinations: free+new, free+returning, pro+new, pro+returning"
+  ],
+  "starterCode": {
+    "langgraph": "from langchain_openai import ChatOpenAI\nfrom langgraph.graph import StateGraph, MessagesState, START, END\nfrom langchain_core.messages import SystemMessage, HumanMessage\nfrom typing import TypedDict\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\nclass AgentState(TypedDict):\n    messages: list\n    user_tier: str\n    is_returning_user: bool\n\n# BUG: Static prompt \u2014 doesn't adapt based on user tier or context\nSTATIC_PROMPT = \"You are a helpful AI assistant. Answer the user's question.\"\n\ndef assemble_prompt(state: AgentState) -> AgentState:\n    # BUG: Ignores user_tier and is_returning_user entirely\n    system_msg = SystemMessage(content=STATIC_PROMPT)\n    state[\"messages\"] = [system_msg] + state[\"messages\"]\n    return state\n\ndef respond(state: AgentState) -> AgentState:\n    response = llm.invoke(state[\"messages\"])\n    state[\"messages\"].append(response)\n    return state\n\ngraph = StateGraph(AgentState)\ngraph.add_node(\"assemble_prompt\", assemble_prompt)\ngraph.add_node(\"respond\", respond)\ngraph.add_edge(START, \"assemble_prompt\")\ngraph.add_edge(\"assemble_prompt\", \"respond\")\ngraph.add_edge(\"respond\", END)\n\napp = graph.compile()\n\n# Test\nresult = app.invoke({\n    \"messages\": [HumanMessage(content=\"How do I analyze my data?\")],\n    \"user_tier\": \"pro\",\n    \"is_returning_user\": True,\n})\nprint(result[\"messages\"][-1].content)",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai import LLM\n\nllm = LLM(model=\"gpt-4o-mini\")\n\n# BUG: Static prompt \u2014 doesn't adapt based on user tier or context\nSTATIC_BACKSTORY = \"You are a helpful AI assistant. Answer the user's question.\"\n\nagent = Agent(\n    role=\"AI Assistant\",\n    goal=\"Help users\",\n    # BUG: Ignores user_tier and is_returning_user entirely\n    backstory=STATIC_BACKSTORY,\n    llm=llm,\n)\n\n# Test\ntask = Task(\n    description=\"How do I analyze my data?\",\n    expected_output=\"A helpful answer\",\n    agent=agent,\n)\n\ncrew = Crew(agents=[agent], tasks=[task])\nresult = crew.kickoff()\nprint(result)",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\n# BUG: Static prompt \u2014 doesn't adapt based on user tier or context\nagent = Agent(\n    name=\"AI Assistant\",\n    instructions=\"You are a helpful AI assistant. Answer the user's question.\",\n)\n\n# Test\nresult = Runner.run_sync(agent, \"How do I analyze my data?\")\nprint(result.final_output)"
+  },
+  "colabUrls": {
+    "langgraph": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/dynamic-prompt-assembly-langgraph.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/dynamic-prompt-assembly-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/dynamic-prompt-assembly-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "different-per-tier",
+      "label": "Different behavior per tier",
+      "description": "Free and pro users get different capabilities and instructions in their prompts"
+    },
+    {
+      "id": "recognizes-returning",
+      "label": "Recognizes returning users",
+      "description": "Returning users get personalized greetings or skipped onboarding instructions"
+    },
+    {
+      "id": "prompt-changes-correct",
+      "label": "Prompt changes are correct",
+      "description": "Each tier/user-type combination produces the appropriate prompt without leaking pro features to free users"
+    }
+  ]
+}

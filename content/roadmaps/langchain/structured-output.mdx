@@ -1,0 +1,191 @@
+# Structured Output
+
+Structured output lets you force an LLM to return data in a specific format — a Pydantic model, dataclass, TypedDict, or JSON Schema. Instead of parsing free-form text, you get validated, typed responses every time.
+
+## response_format on create_react_agent
+
+The `create_react_agent` function accepts a `response_format` parameter that tells the agent to return structured data:
+
+```python
+from pydantic import BaseModel, Field
+from langchain.chat_models import init_chat_model
+from langgraph.prebuilt import create_react_agent
+
+class WeatherReport(BaseModel):
+    city: str = Field(description="The city name")
+    temperature: float = Field(description="Temperature in Fahrenheit")
+    conditions: str = Field(description="Weather conditions description")
+    recommendation: str = Field(description="What to wear or bring")
+
+model = init_chat_model("gpt-4o-mini", model_provider="openai")
+
+agent = create_react_agent(
+    model=model,
+    tools=[],
+    response_format=WeatherReport,
+)
+```
+
+When `response_format` is set, the agent will always return data matching that schema.
+
+## Pydantic BaseModel Schemas
+
+Pydantic models are the most common way to define structured output. Each field includes a type and description that guides the LLM:
+
+```python
+from pydantic import BaseModel, Field
+from typing import List, Optional
+
+class MovieReview(BaseModel):
+    title: str = Field(description="The movie title")
+    rating: float = Field(description="Rating from 1.0 to 10.0")
+    pros: List[str] = Field(description="List of positive aspects")
+    cons: List[str] = Field(description="List of negative aspects")
+    recommended: bool = Field(description="Whether you'd recommend this movie")
+    summary: Optional[str] = Field(default=None, description="Brief summary")
+```
+
+Field descriptions are critical — they tell the LLM what each field should contain.
+
+## Accessing the Structured Response
+
+When you use `response_format`, the result includes a `structured_response` key containing the parsed object:
+
+```python
+from langchain_core.messages import HumanMessage
+
+result = agent.invoke({
+    "messages": [HumanMessage(content="Give me a weather report for San Francisco")]
+})
+
+response = result["structured_response"]
+print(f"City: {response.city}")
+print(f"Temperature: {response.temperature}°F")
+print(f"Conditions: {response.conditions}")
+print(f"Recommendation: {response.recommendation}")
+```
+
+The `structured_response` is a fully validated Pydantic object — you can access fields directly with dot notation.
+
+## ToolStrategy vs ProviderStrategy
+
+LangChain supports two strategies for producing structured output:
+
+| Strategy | How It Works | Pros | Cons |
+|----------|-------------|------|------|
+| `ToolStrategy` | Wraps the schema as a tool call the LLM invokes | Works with more models, flexible | Slightly slower due to tool call overhead |
+| `ProviderStrategy` | Uses the LLM provider's native structured output API | Faster, provider-optimized | Requires provider support |
+
+You can specify the strategy explicitly:
+
+```python
+from langgraph.prebuilt.chat_agent_executor import ToolStrategy, ProviderStrategy
+
+agent = create_react_agent(
+    model=model,
+    tools=[],
+    response_format=(WeatherReport, ToolStrategy),
+)
+```
+
+Or use the provider's native format:
+
+```python
+agent = create_react_agent(
+    model=model,
+    tools=[],
+    response_format=(WeatherReport, ProviderStrategy),
+)
+```
+
+## Supported Schema Types
+
+LangChain supports multiple schema formats for structured output:
+
+| Type | Example | Notes |
+|------|---------|-------|
+| Pydantic BaseModel | `class Foo(BaseModel): ...` | Most common, full validation |
+| dataclass | `@dataclass class Foo: ...` | Lightweight Python dataclasses |
+| TypedDict | `class Foo(TypedDict): ...` | Dictionary-style with typed keys |
+| JSON Schema | `{"type": "object", ...}` | Raw JSON Schema dict |
+
+### Using a TypedDict
+
+```python
+from typing import TypedDict, List
+
+class ExtractedInfo(TypedDict):
+    name: str
+    age: int
+    hobbies: List[str]
+
+agent = create_react_agent(
+    model=model,
+    tools=[],
+    response_format=ExtractedInfo,
+)
+```
+
+### Using a dataclass
+
+```python
+from dataclasses import dataclass, field
+
+@dataclass
+class SentimentResult:
+    text: str
+    sentiment: str
+    confidence: float
+    keywords: list = field(default_factory=list)
+
+agent = create_react_agent(
+    model=model,
+    tools=[],
+    response_format=SentimentResult,
+)
+```
+
+## Structured Output with Tools
+
+Structured output works alongside tools. The agent can call tools to gather information, then format the final response according to the schema:
+
+```python
+from langchain_core.tools import tool
+
+@tool
+def lookup_product(name: str) -> dict:
+    """Look up product details by name."""
+    products = {
+        "laptop": {"price": 999.99, "stock": 45, "category": "electronics"},
+        "headphones": {"price": 79.99, "stock": 120, "category": "audio"},
+    }
+    return products.get(name.lower(), {"error": "Product not found"})
+
+class ProductReport(BaseModel):
+    product_name: str = Field(description="Name of the product")
+    price: float = Field(description="Price in USD")
+    in_stock: bool = Field(description="Whether the product is available")
+    recommendation: str = Field(description="Purchase recommendation")
+
+agent = create_react_agent(
+    model=model,
+    tools=[lookup_product],
+    response_format=ProductReport,
+)
+
+result = agent.invoke({
+    "messages": [HumanMessage(content="Tell me about the laptop")]
+})
+
+report = result["structured_response"]
+print(f"{report.product_name}: ${report.price} - {report.recommendation}")
+```
+
+## Key Takeaways
+
+- Use `response_format` on `create_react_agent` to enforce structured LLM output
+- Pydantic `BaseModel` is the most common schema type with full validation support
+- Access parsed results via `result["structured_response"]`
+- `ToolStrategy` works broadly across models; `ProviderStrategy` uses native provider APIs
+- Supported types include Pydantic, dataclass, TypedDict, and raw JSON Schema
+- Structured output works alongside tools — the agent gathers data, then formats it

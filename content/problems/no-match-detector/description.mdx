@@ -1,0 +1,47 @@
+## The Problem
+
+Your RAG-based support agent has a knowledge base about returns, shipping, and support hours. When a user asks a question that the knowledge base **doesn't cover**—like API documentation or programming languages—the agent still retrieves the closest (but irrelevant) document and confidently generates a fabricated answer. This is worse than saying "I don't know" because the user trusts the answer and acts on bad information. Your job is to make the agent **detect when retrieval results are not relevant** and respond honestly with "I don't have information on that" instead of hallucinating.
+
+## Examples
+
+### Example 1
+
+**User input:** What programming languages does your API support?
+
+**Current (bad) output:** Our API supports Python, JavaScript, and Go. *(Completely fabricated — the knowledge base has nothing about APIs.)*
+
+**Expected (good) output:** I don't have information about API programming language support in my knowledge base. Please contact our technical team or check our developer documentation for details.
+
+### Example 2
+
+**User input:** What is your return policy?
+
+**Current (bad) output:** *(This one actually works correctly since the knowledge base has the answer.)*
+
+**Expected (good) output:** Our return policy allows returns within 30 days of purchase.
+
+### Example 3
+
+**User input:** Do you offer international shipping to Japan?
+
+**Current (bad) output:** Yes, we ship to Japan with standard delivery in 7-10 business days. *(Fabricated — the knowledge base only mentions continental US shipping.)*
+
+**Expected (good) output:** I don't have specific information about international shipping to Japan. I can tell you that shipping is free for orders over $50 within the continental US. For international shipping inquiries, please contact our support team.
+
+## Your Task
+
+Modify the pipeline so the agent:
+
+- Checks retrieval quality (e.g., similarity scores) before generating an answer.
+- Sets a relevance threshold to distinguish useful retrievals from noise.
+- Responds with a clear "I don't have information" message when no relevant documents match.
+- Still answers correctly and helpfully when relevant documents are found.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Detects irrelevant retrievals:** The agent identifies when retrieved documents are not relevant to the query.
+- **Does not hallucinate answers:** The agent does not fabricate information when no relevant documents exist.
+- **Returns clear no-info message:** The agent clearly communicates that it doesn't have the requested information.
+- **Still answers relevant queries:** The agent correctly answers questions when relevant documents are found.

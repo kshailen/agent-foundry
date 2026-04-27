@@ -1,0 +1,277 @@
+## Approach
+
+The starter code stores documents with rich metadata (year, category) but the retriever ignores it entirely. When a user asks for "2024 HR policies," the retriever returns semantically similar documents from any year and any category — mixing 2022 safety training with 2024 PTO policies. The user gets outdated, incorrect information because the retrieval is purely semantic with no metadata awareness.
+
+The fix requires two steps. First, parse the user's natural language query to extract metadata filters (year and category). An LLM can do this reliably by extracting structured filter criteria from the question. Second, apply those filters during retrieval using the vector store's metadata filtering capabilities. FAISS supports metadata filtering through its `similarity_search` method with a `filter` parameter, ensuring only documents matching the specified year and category are returned.
+
+## Solution
+
+### LangChain
+
+```python
+import json
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="Employees must complete safety training annually.", metadata={"year": 2022, "category": "hr"}),
+    Document(page_content="Remote work is allowed up to 3 days per week.", metadata={"year": 2023, "category": "hr"}),
+    Document(page_content="All employees receive 20 days of PTO per year.", metadata={"year": 2024, "category": "hr"}),
+    Document(page_content="Travel expenses must be submitted within 30 days.", metadata={"year": 2022, "category": "finance"}),
+    Document(page_content="The company matches 401k contributions up to 6%.", metadata={"year": 2024, "category": "finance"}),
+    Document(page_content="Data must be encrypted at rest and in transit.", metadata={"year": 2024, "category": "security"}),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+
+filter_prompt = ChatPromptTemplate.from_messages([
+    ("system",
+     "Extract metadata filters from the user's question. "
+     "Return a JSON object with optional keys: 'year' (integer) and 'category' "
+     "(one of: hr, finance, security). Only include keys that are clearly specified "
+     "in the query. Return empty object {{}} if no filters are found.\n"
+     "Return ONLY valid JSON, nothing else."),
+    ("human", "{question}"),
+])
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system",
+     "Answer the question based only on the context below.\n\nContext:\n{context}"),
+    ("human", "{question}"),
+])
+
+def extract_filters(question: str) -> dict:
+    chain = filter_prompt | llm
+    result = chain.invoke({"question": question})
+    return json.loads(result.content)
+
+def ask(question: str) -> str:
+    filters = extract_filters(question)
+
+    if filters:
+        docs = vectorstore.similarity_search(question, k=4, filter=filters)
+    else:
+        docs = vectorstore.similarity_search(question, k=4)
+
+    context = "\n".join([doc.page_content for doc in docs])
+    chain = prompt | llm
+    result = chain.invoke({"context": context, "question": question})
+    return result.content
+
+print(ask("What are the 2024 HR policies?"))
+```
+
+### LangGraph
+
+```python
+import json
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict, Optional
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="Employees must complete safety training annually.", metadata={"year": 2022, "category": "hr"}),
+    Document(page_content="Remote work is allowed up to 3 days per week.", metadata={"year": 2023, "category": "hr"}),
+    Document(page_content="All employees receive 20 days of PTO per year.", metadata={"year": 2024, "category": "hr"}),
+    Document(page_content="Travel expenses must be submitted within 30 days.", metadata={"year": 2022, "category": "finance"}),
+    Document(page_content="The company matches 401k contributions up to 6%.", metadata={"year": 2024, "category": "finance"}),
+    Document(page_content="Data must be encrypted at rest and in transit.", metadata={"year": 2024, "category": "security"}),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+
+class State(TypedDict):
+    question: str
+    filters: dict
+    context: str
+    answer: str
+
+def extract_filters(state: State) -> State:
+    response = llm.invoke(
+        f"Extract metadata filters from this question. "
+        f"Return a JSON object with optional keys: 'year' (integer) and 'category' "
+        f"(one of: hr, finance, security). Only include keys clearly specified in the query. "
+        f"Return empty object {{{}}} if no filters found. Return ONLY valid JSON.\n\n"
+        f"Question: {state['question']}"
+    )
+    filters = json.loads(response.content)
+    return {"filters": filters}
+
+def retrieve(state: State) -> State:
+    filters = state.get("filters", {})
+    if filters:
+        docs = vectorstore.similarity_search(state["question"], k=4, filter=filters)
+    else:
+        docs = vectorstore.similarity_search(state["question"], k=4)
+    context = "\n".join([doc.page_content for doc in docs])
+    return {"context": context}
+
+def answer(state: State) -> State:
+    response = llm.invoke(
+        f"Answer the question based only on the context below.\n\n"
+        f"Context:\n{state['context']}\n\nQuestion: {state['question']}"
+    )
+    return {"answer": response.content}
+
+graph = StateGraph(State)
+graph.add_node("extract_filters", extract_filters)
+graph.add_node("retrieve", retrieve)
+graph.add_node("answer", answer)
+graph.add_edge(START, "extract_filters")
+graph.add_edge("extract_filters", "retrieve")
+graph.add_edge("retrieve", "answer")
+graph.add_edge("answer", END)
+
+app = graph.compile()
+result = app.invoke({"question": "What are the 2024 HR policies?"})
+print(result["answer"])
+```
+
+### CrewAI
+
+```python
+import json
+from crewai import Agent, Task, Crew
+from crewai import LLM
+from crewai.tools import tool
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+
+llm = LLM(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="Employees must complete safety training annually.", metadata={"year": 2022, "category": "hr"}),
+    Document(page_content="Remote work is allowed up to 3 days per week.", metadata={"year": 2023, "category": "hr"}),
+    Document(page_content="All employees receive 20 days of PTO per year.", metadata={"year": 2024, "category": "hr"}),
+    Document(page_content="Travel expenses must be submitted within 30 days.", metadata={"year": 2022, "category": "finance"}),
+    Document(page_content="The company matches 401k contributions up to 6%.", metadata={"year": 2024, "category": "finance"}),
+    Document(page_content="Data must be encrypted at rest and in transit.", metadata={"year": 2024, "category": "security"}),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+
+def extract_filters(question: str) -> dict:
+    extractor = Agent(
+        role="Filter Extractor",
+        goal="Extract metadata filters from questions",
+        backstory="You extract structured filter criteria from natural language queries.",
+        llm=llm,
+    )
+    task = Task(
+        description=(
+            f"Extract metadata filters from this question. "
+            f"Return a JSON object with optional keys: 'year' (integer) and 'category' "
+            f"(one of: hr, finance, security). Only include keys clearly specified. "
+            f"Return empty object {{}} if no filters found. Return ONLY valid JSON.\n\n"
+            f"Question: {question}"
+        ),
+        expected_output="A JSON object with filter criteria",
+        agent=extractor,
+    )
+    crew = Crew(agents=[extractor], tasks=[task])
+    result = str(crew.kickoff())
+    return json.loads(result.strip())
+
+@tool
+def search_policies(question: str) -> str:
+    """Search company policies with metadata filtering."""
+    filters = extract_filters(question)
+    if filters:
+        docs = vectorstore.similarity_search(question, k=4, filter=filters)
+    else:
+        docs = vectorstore.similarity_search(question, k=4)
+    return "\n".join([doc.page_content for doc in docs])
+
+analyst = Agent(
+    role="Policy Analyst",
+    goal="Answer questions about company policies accurately",
+    backstory="You are an expert on company policies across all departments.",
+    tools=[search_policies],
+    llm=llm,
+)
+
+task = Task(
+    description="What are the 2024 HR policies?",
+    expected_output="A summary of matching policies",
+    agent=analyst,
+)
+
+crew = Crew(agents=[analyst], tasks=[task])
+print(crew.kickoff())
+```
+
+### OpenAI Agents SDK
+
+```python
+import json
+from agents import Agent, Runner
+from agents.tool import function_tool
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="Employees must complete safety training annually.", metadata={"year": 2022, "category": "hr"}),
+    Document(page_content="Remote work is allowed up to 3 days per week.", metadata={"year": 2023, "category": "hr"}),
+    Document(page_content="All employees receive 20 days of PTO per year.", metadata={"year": 2024, "category": "hr"}),
+    Document(page_content="Travel expenses must be submitted within 30 days.", metadata={"year": 2022, "category": "finance"}),
+    Document(page_content="The company matches 401k contributions up to 6%.", metadata={"year": 2024, "category": "finance"}),
+    Document(page_content="Data must be encrypted at rest and in transit.", metadata={"year": 2024, "category": "security"}),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+
+filter_extractor = Agent(
+    name="Filter Extractor",
+    instructions=(
+        "Extract metadata filters from the user's question. "
+        "Return a JSON object with optional keys: 'year' (integer) and 'category' "
+        "(one of: hr, finance, security). Only include keys clearly specified. "
+        "Return empty object {} if no filters found. Return ONLY valid JSON."
+    ),
+)
+
+@function_tool
+def search_policies(question: str) -> str:
+    """Search company policies with metadata filtering."""
+    filter_result = Runner.run_sync(filter_extractor, question)
+    filters = json.loads(filter_result.final_output.strip())
+    if filters:
+        docs = vectorstore.similarity_search(question, k=4, filter=filters)
+    else:
+        docs = vectorstore.similarity_search(question, k=4)
+    return "\n".join([doc.page_content for doc in docs])
+
+agent = Agent(
+    name="Policy Analyst",
+    instructions="You are an expert on company policies. Answer questions accurately using the search tool.",
+    tools=[search_policies],
+)
+
+result = Runner.run_sync(agent, "What are the 2024 HR policies?")
+print(result.final_output)
+```
+
+## Why This Works
+
+By extracting metadata filters before retrieval, the pipeline narrows the search space to only documents matching the user's criteria. The vector store's built-in filtering ensures that semantic search operates within the correct subset (e.g., only 2024 HR documents), eliminating cross-year and cross-category contamination. The LLM-based filter extraction handles natural language variations gracefully.
+
+## Key Takeaways
+
+- Semantic similarity alone cannot distinguish between documents that discuss similar topics but differ in metadata like year or category.
+- Use an LLM to parse structured filter criteria from natural language queries before retrieval.
+- FAISS and most vector stores support metadata filtering natively — use it to combine structured and semantic search.

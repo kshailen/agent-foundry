@@ -1,0 +1,57 @@
+{
+  "number": 83,
+  "title": "Agent Handoff with Context",
+  "difficulty": "medium",
+  "categories": [
+    "multi-agent",
+    "memory"
+  ],
+  "frameworks": [
+    "openai-agents-sdk",
+    "langgraph",
+    "crewai"
+  ],
+  "constraints": [
+    "The full conversation history must be preserved during handoff",
+    "Agent B must be aware of what Agent A discussed with the user",
+    "You may not ask the user to repeat information after a handoff",
+    "The handoff mechanism must be explicit, not implicit"
+  ],
+  "hints": [
+    "Pass the conversation history as part of the handoff payload to Agent B",
+    "In OpenAI Agents SDK, handoffs automatically carry context — make sure you're using them correctly",
+    "In LangGraph, store conversation messages in the state so they persist across node transitions"
+  ],
+  "starterCode": {
+    "openai-agents-sdk": "from agents import Agent, Runner\n\nsales_agent = Agent(\n    name=\"Sales Agent\",\n    instructions=\"You are a sales agent. Help customers choose the right product plan.\",\n)\n\nonboarding_agent = Agent(\n    name=\"Onboarding Agent\",\n    instructions=\"You are an onboarding specialist. Help new customers set up their account.\",\n)\n\n# BUG: When sales hands off to onboarding, conversation context is lost\n# TODO: Preserve conversation history during the handoff\n\n# Simulate a multi-turn conversation\nresult = Runner.run_sync(sales_agent, \"I'm interested in the Pro plan for my team of 10\")\nprint(\"Sales:\", result.final_output)\n\n# User is ready to onboard — but onboarding agent has no context\nresult = Runner.run_sync(onboarding_agent, \"Great, I'd like to set up my account now\")\nprint(\"Onboarding:\", result.final_output)",
+    "langgraph": "from langchain_openai import ChatOpenAI\nfrom langgraph.graph import StateGraph, START, END\nfrom typing import TypedDict\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\nclass State(TypedDict):\n    user_message: str\n    sales_response: str\n    onboarding_response: str\n\ndef sales_node(state: State) -> dict:\n    prompt = f\"You are a sales agent. The customer says: {state['user_message']}\"\n    response = llm.invoke(prompt)\n    return {\"sales_response\": response.content}\n\ndef onboarding_node(state: State) -> dict:\n    # BUG: No context from sales conversation is passed\n    # TODO: Include the sales conversation in the prompt\n    prompt = f\"You are an onboarding specialist. The customer says: Set up my account now.\"\n    response = llm.invoke(prompt)\n    return {\"onboarding_response\": response.content}\n\ngraph = StateGraph(State)\ngraph.add_node(\"sales\", sales_node)\ngraph.add_node(\"onboarding\", onboarding_node)\ngraph.add_edge(START, \"sales\")\ngraph.add_edge(\"sales\", \"onboarding\")\ngraph.add_edge(\"onboarding\", END)\n\napp = graph.compile()\nresult = app.invoke({\"user_message\": \"I'm interested in the Pro plan for my team of 10\", \"sales_response\": \"\", \"onboarding_response\": \"\"})\nprint(\"Onboarding:\", result[\"onboarding_response\"])",
+    "crewai": "from crewai import Agent, Task, Crew, Process\nfrom crewai import LLM\n\nllm = LLM(model=\"gpt-4o-mini\")\n\nsales_agent = Agent(\n    role=\"Sales Agent\",\n    goal=\"Help customers choose the right product plan\",\n    backstory=\"You are a sales agent.\",\n    llm=llm,\n)\n\nonboarding_agent = Agent(\n    role=\"Onboarding Agent\",\n    goal=\"Help new customers set up their account\",\n    backstory=\"You are an onboarding specialist.\",\n    llm=llm,\n)\n\nsales_task = Task(\n    description=\"Customer says: I'm interested in the Pro plan for my team of 10\",\n    expected_output=\"A sales response about the Pro plan\",\n    agent=sales_agent,\n)\n\n# BUG: Onboarding task has no context from the sales conversation\n# TODO: Pass sales conversation context to the onboarding task\nonboarding_task = Task(\n    description=\"Help the customer set up their account\",\n    expected_output=\"Onboarding steps for the customer\",\n    agent=onboarding_agent,\n)\n\ncrew = Crew(agents=[sales_agent, onboarding_agent], tasks=[sales_task, onboarding_task], process=Process.sequential)\nresult = crew.kickoff()\nprint(result)"
+  },
+  "colabUrls": {
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/agent-handoff-with-context-openai.ipynb",
+    "langgraph": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/agent-handoff-with-context-langgraph.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/agent-handoff-with-context-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "context-preserved",
+      "label": "Conversation context preserved",
+      "description": "The full conversation history from Agent A is available to Agent B after handoff"
+    },
+    {
+      "id": "no-repeat",
+      "label": "No repeated questions",
+      "description": "Agent B does not ask the user to repeat information already provided to Agent A"
+    },
+    {
+      "id": "seamless-handoff",
+      "label": "Seamless handoff experience",
+      "description": "The transition between agents feels continuous to the user"
+    },
+    {
+      "id": "explicit-mechanism",
+      "label": "Explicit handoff mechanism",
+      "description": "The handoff is done through an explicit mechanism, not accidental state sharing"
+    }
+  ]
+}

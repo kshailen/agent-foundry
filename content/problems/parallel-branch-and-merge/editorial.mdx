@@ -1,0 +1,204 @@
+## Approach
+
+The starter code runs sentiment analysis and entity extraction sequentially — one LLM call finishes before the next begins. Since these two tasks are completely independent (neither needs the other's output), this sequential execution doubles the latency for no reason. The fix is to run both analyses in parallel and merge their results once both complete.
+
+In LangGraph, the solution uses a fan-out/fan-in pattern: the input node fans out to two parallel branches (sentiment and entity extraction), each writing to its own key in the shared state, and a merge node waits for both to complete before combining results into a single structured output. In CrewAI, the solution uses `async_execution=True` on both tasks so they run concurrently within the crew, with a final merge task that depends on both.
+
+The parallel approach cuts processing time roughly in half — instead of waiting ~2 seconds (1s per LLM call sequentially), both calls execute simultaneously and the total time is determined by the slower of the two, typically ~1 second.
+
+## Solution
+
+### LangGraph
+
+```python
+from langgraph.graph import StateGraph, START, END
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage
+from typing import TypedDict, Optional
+import time
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+
+class State(TypedDict):
+    text: str
+    sentiment: Optional[str]
+    entities: Optional[str]
+    merged_result: Optional[dict]
+
+
+def analyze_sentiment(state: State) -> dict:
+    response = llm.invoke([
+        SystemMessage(content="Analyze the sentiment of this text. Reply with: positive, negative, or neutral, followed by a brief explanation."),
+        HumanMessage(content=state["text"]),
+    ])
+    return {"sentiment": response.content}
+
+
+def extract_entities(state: State) -> dict:
+    response = llm.invoke([
+        SystemMessage(content="Extract all named entities (people, organizations, locations, products) from this text. Return as a JSON list."),
+        HumanMessage(content=state["text"]),
+    ])
+    return {"entities": response.content}
+
+
+def merge_results(state: State) -> dict:
+    return {
+        "merged_result": {
+            "sentiment": state["sentiment"],
+            "entities": state["entities"],
+        }
+    }
+
+
+graph = StateGraph(State)
+graph.add_node("analyze_sentiment", analyze_sentiment)
+graph.add_node("extract_entities", extract_entities)
+graph.add_node("merge_results", merge_results)
+
+graph.add_edge(START, "analyze_sentiment")
+graph.add_edge(START, "extract_entities")
+graph.add_edge("analyze_sentiment", "merge_results")
+graph.add_edge("extract_entities", "merge_results")
+graph.add_edge("merge_results", END)
+
+app = graph.compile()
+
+texts = [
+    "Apple CEO Tim Cook announced the new iPhone at their Cupertino headquarters. Customers loved it.",
+    "The project in Berlin failed miserably. Google and Microsoft both pulled out of the partnership.",
+]
+
+for text in texts:
+    start = time.time()
+    result = app.invoke({"text": text})
+    elapsed = time.time() - start
+    print(f"Text: {text[:50]}...")
+    print(f"Result: {result['merged_result']}")
+    print(f"Processing time: {elapsed:.2f}s\n")
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+import time
+
+sentiment_analyst = Agent(
+    role="Sentiment Analyst",
+    goal="Analyze the sentiment of text",
+    backstory="You are a sentiment analysis specialist.",
+)
+
+entity_extractor = Agent(
+    role="Entity Extractor",
+    goal="Extract named entities from text",
+    backstory="You are a named entity recognition specialist.",
+)
+
+merger = Agent(
+    role="Results Merger",
+    goal="Combine analysis results into a structured report",
+    backstory="You combine parallel analysis results into a single coherent output.",
+)
+
+
+def analyze_text(text: str) -> dict:
+    start = time.time()
+
+    sentiment_task = Task(
+        description=f"Analyze the sentiment of this text: '{text}'. Reply with positive, negative, or neutral and a brief explanation.",
+        expected_output="Sentiment label and explanation",
+        agent=sentiment_analyst,
+        async_execution=True,
+    )
+
+    entity_task = Task(
+        description=f"Extract all named entities (people, organizations, locations, products) from: '{text}'. Return as a JSON list.",
+        expected_output="JSON list of entities",
+        agent=entity_extractor,
+        async_execution=True,
+    )
+
+    merge_task = Task(
+        description="Combine the sentiment analysis and entity extraction results into a single structured JSON output with keys 'sentiment' and 'entities'.",
+        expected_output="JSON with sentiment and entities",
+        agent=merger,
+        context=[sentiment_task, entity_task],
+    )
+
+    crew = Crew(
+        agents=[sentiment_analyst, entity_extractor, merger],
+        tasks=[sentiment_task, entity_task, merge_task],
+    )
+    result = crew.kickoff()
+
+    elapsed = time.time() - start
+    return {"result": str(result), "processing_time": f"{elapsed:.2f}s"}
+
+
+texts = [
+    "Apple CEO Tim Cook announced the new iPhone at their Cupertino headquarters. Customers loved it.",
+    "The project in Berlin failed miserably. Google and Microsoft both pulled out of the partnership.",
+]
+for text in texts:
+    result = analyze_text(text)
+    print(f"Text: {text[:50]}...\nResult: {result}\n")
+```
+
+### OpenAI Agents SDK
+
+```python
+import asyncio
+import time
+from agents import Agent, Runner
+
+sentiment_agent = Agent(
+    name="Sentiment Analyst",
+    instructions="Analyze the sentiment of the given text. Reply with: positive, negative, or neutral, followed by a brief explanation.",
+)
+
+entity_agent = Agent(
+    name="Entity Extractor",
+    instructions="Extract all named entities (people, organizations, locations, products) from the given text. Return as a JSON list.",
+)
+
+merger_agent = Agent(
+    name="Results Merger",
+    instructions="Combine the sentiment analysis and entity extraction results into a single structured JSON output with keys 'sentiment' and 'entities'. Use only the data provided.",
+)
+
+
+async def analyze_text(text: str) -> dict:
+    start = time.time()
+
+    sentiment_coro = Runner.run(sentiment_agent, text)
+    entity_coro = Runner.run(entity_agent, text)
+    sentiment_result, entity_result = await asyncio.gather(sentiment_coro, entity_coro)
+
+    merge_input = f"Sentiment: {sentiment_result.final_output}\nEntities: {entity_result.final_output}"
+    merge_result = await Runner.run(merger_agent, merge_input)
+
+    elapsed = time.time() - start
+    return {"result": merge_result.final_output, "processing_time": f"{elapsed:.2f}s"}
+
+
+texts = [
+    "Apple CEO Tim Cook announced the new iPhone at their Cupertino headquarters. Customers loved it.",
+    "The project in Berlin failed miserably. Google and Microsoft both pulled out of the partnership.",
+]
+for text in texts:
+    result = asyncio.run(analyze_text(text))
+    print(f"Text: {text[:50]}...\nResult: {result}\n")
+```
+
+## Why This Works
+
+The fan-out/fan-in pattern exploits the independence of the two analyses. In LangGraph, connecting both analysis nodes to `START` causes them to execute in parallel automatically — the graph runtime schedules both concurrently and the merge node only fires when both upstream nodes have written their results to the shared state. Each branch writes to a separate state key (`sentiment` and `entities`), preventing conflicts. In CrewAI, `async_execution=True` tells the framework to run those tasks concurrently, and the `context` parameter on the merge task creates an implicit dependency that blocks until both async tasks complete.
+
+## Key Takeaways
+
+- Independent LLM calls should always run in parallel — sequential execution of independent tasks is wasted latency.
+- Use separate state keys for parallel branches to avoid write conflicts, and let the merge node read from both keys.
+- In LangGraph, connecting multiple nodes to the same source node creates automatic fan-out; connecting multiple nodes to the same target creates a fan-in barrier.

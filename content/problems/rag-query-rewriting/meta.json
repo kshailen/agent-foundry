@@ -1,0 +1,52 @@
+{
+  "number": 55,
+  "title": "RAG Query Rewriting",
+  "difficulty": "medium",
+  "categories": [
+    "rag",
+    "prompt-design"
+  ],
+  "frameworks": [
+    "langchain",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "The user's original query must be rewritten before retrieval",
+    "The rewritten query must improve retrieval relevance",
+    "The original user intent must be preserved in the rewrite",
+    "The rewriting step must use an LLM to reformulate the query"
+  ],
+  "hints": [
+    "Add a query rewriting step before retrieval that uses the LLM to generate a better search query",
+    "The rewritten query should be more specific and use terminology likely to appear in the documents",
+    "Consider generating multiple query variations and retrieving for each to improve recall"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI, OpenAIEmbeddings\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom langchain_community.vectorstores import FAISS\nfrom langchain_core.documents import Document\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\nembeddings = OpenAIEmbeddings()\n\ndocuments = [\n    Document(page_content=\"Authentication uses OAuth 2.0 with JWT tokens. Tokens expire after 24 hours.\"),\n    Document(page_content=\"Rate limiting: API allows 1000 requests per minute per API key.\"),\n    Document(page_content=\"Error handling: 4xx errors return JSON with 'error' and 'message' fields.\"),\n    Document(page_content=\"Pagination: Use 'cursor' parameter for paginated endpoints. Max page size is 100.\"),\n    Document(page_content=\"Webhook events are signed with HMAC-SHA256. Verify the X-Signature header.\"),\n]\n\nvectorstore = FAISS.from_documents(documents, embeddings)\nretriever = vectorstore.as_retriever()\n\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"Answer based on context.\\n\\nContext: {context}\"),\n    (\"human\", \"{question}\"),\n])\n\n# BUG: User's vague query is passed directly to retriever with no rewriting\ndef ask(question: str) -> str:\n    docs = retriever.invoke(question)\n    context = \"\\n\".join([doc.page_content for doc in docs])\n    chain = prompt | llm\n    result = chain.invoke({\"context\": context, \"question\": question})\n    return result.content\n\n# Vague query \u2014 retriever may not find the right docs\nprint(ask(\"How do I log in?\"))",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom langchain_openai import OpenAIEmbeddings\nfrom langchain_community.vectorstores import FAISS\nfrom langchain_core.documents import Document\n\nembeddings = OpenAIEmbeddings()\n\ndocuments = [\n    Document(page_content=\"Authentication uses OAuth 2.0 with JWT tokens. Tokens expire after 24 hours.\"),\n    Document(page_content=\"Rate limiting: API allows 1000 requests per minute per API key.\"),\n    Document(page_content=\"Error handling: 4xx errors return JSON with 'error' and 'message' fields.\"),\n    Document(page_content=\"Pagination: Use 'cursor' parameter for paginated endpoints. Max page size is 100.\"),\n    Document(page_content=\"Webhook events are signed with HMAC-SHA256. Verify the X-Signature header.\"),\n]\n\nvectorstore = FAISS.from_documents(documents, embeddings)\nretriever = vectorstore.as_retriever()\n\n# BUG: User's vague query is passed directly to retriever with no rewriting\ndef ask(question: str) -> str:\n    docs = retriever.invoke(question)\n    context = \"\\n\".join([doc.page_content for doc in docs])\n    answerer = Agent(\n        role=\"Q&A Assistant\",\n        goal=\"Answer questions based on provided context\",\n        backstory=f\"Answer based on this context:\\n{context}\",\n    )\n    task = Task(description=question, expected_output=\"A helpful answer\", agent=answerer)\n    crew = Crew(agents=[answerer], tasks=[task])\n    return str(crew.kickoff())\n\n# Vague query \u2014 retriever may not find the right docs\nprint(ask(\"How do I log in?\"))",
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom langchain_openai import OpenAIEmbeddings\nfrom langchain_community.vectorstores import FAISS\nfrom langchain_core.documents import Document\n\nembeddings = OpenAIEmbeddings()\n\ndocuments = [\n    Document(page_content=\"Authentication uses OAuth 2.0 with JWT tokens. Tokens expire after 24 hours.\"),\n    Document(page_content=\"Rate limiting: API allows 1000 requests per minute per API key.\"),\n    Document(page_content=\"Error handling: 4xx errors return JSON with 'error' and 'message' fields.\"),\n    Document(page_content=\"Pagination: Use 'cursor' parameter for paginated endpoints. Max page size is 100.\"),\n    Document(page_content=\"Webhook events are signed with HMAC-SHA256. Verify the X-Signature header.\"),\n]\n\nvectorstore = FAISS.from_documents(documents, embeddings)\nretriever = vectorstore.as_retriever()\n\n# BUG: User's vague query is passed directly to retriever with no rewriting\ndef ask(question: str) -> str:\n    docs = retriever.invoke(question)\n    context = \"\\n\".join([doc.page_content for doc in docs])\n    agent = Agent(\n        name=\"Q&A Assistant\",\n        instructions=f\"Answer the question based on this context:\\n{context}\",\n    )\n    result = Runner.run_sync(agent, question)\n    return result.final_output\n\n# Vague query \u2014 retriever may not find the right docs\nprint(ask(\"How do I log in?\"))"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/rag-query-rewriting-langchain.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/rag-query-rewriting-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/rag-query-rewriting-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "rewrites-query",
+      "label": "Rewrites vague queries",
+      "description": "The agent reformulates vague user queries into more specific search queries before retrieval"
+    },
+    {
+      "id": "improves-retrieval",
+      "label": "Improves retrieval relevance",
+      "description": "The rewritten query retrieves more relevant documents than the original vague query"
+    },
+    {
+      "id": "preserves-intent",
+      "label": "Preserves user intent",
+      "description": "The rewritten query preserves the original meaning and intent of the user's question"
+    }
+  ]
+}

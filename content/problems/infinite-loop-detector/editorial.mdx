@@ -1,0 +1,218 @@
+## Approach
+
+The bug is that the agent has a cyclic graph (analyze -> fetch_data -> analyze -> ...) where the conditional edge always routes back to "analyze" because the result is never "Done." This creates an infinite loop that burns tokens forever and never returns a response. The LLM version has the same problem — tools always return "incomplete" results, so the agent keeps calling them indefinitely.
+
+The fix has two parts. First, add a hard iteration cap (e.g., 5) that breaks the loop regardless of the result. Second, track the actions taken so far and detect when the agent is repeating the same sequence. When the cap is reached or a repetitive cycle is detected, the agent breaks out of the loop and returns a meaningful message explaining what it tried and why it stopped, including any partial results gathered along the way.
+
+In LangGraph, this is implemented by checking the length of the `actions` list in the conditional edge function and routing to END when it exceeds the limit. In LangChain, the `AgentExecutor` already has a `max_iterations` parameter that provides a built-in circuit breaker. In both cases, the key is ensuring the agent exits gracefully with useful information rather than silently dying or crashing.
+
+## Solution
+
+### LangGraph
+
+```python
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict, Annotated
+import operator
+
+MAX_ITERATIONS = 5
+
+class State(TypedDict):
+    query: str
+    result: str
+    actions: Annotated[list[str], operator.add]
+
+def analyze(state: State) -> State:
+    iteration = len([a for a in state["actions"] if a == "analyze"]) + 1
+    return {"actions": ["analyze"], "result": f"Analysis iteration {iteration}: partial findings available"}
+
+def fetch_data(state: State) -> State:
+    return {"actions": ["fetch_data"], "result": "Data insufficient"}
+
+def should_continue(state: State) -> str:
+    total_actions = len(state["actions"])
+    if total_actions >= MAX_ITERATIONS * 2:
+        return "end"
+
+    recent_actions = state["actions"][-4:] if len(state["actions"]) >= 4 else []
+    if len(recent_actions) == 4:
+        if recent_actions[:2] == recent_actions[2:]:
+            return "end"
+
+    if state["result"] == "Done":
+        return "end"
+    return "analyze"
+
+def format_exit(state: State) -> State:
+    iterations = len([a for a in state["actions"] if a == "analyze"])
+    return {
+        "result": (
+            f"I've attempted to analyze the data {iterations} times but couldn't reach a "
+            f"complete result. Here's what I found so far: {state['result']}. "
+            f"The data source may need to be checked or more specific constraints provided."
+        )
+    }
+
+graph = StateGraph(State)
+graph.add_node("analyze", analyze)
+graph.add_node("fetch_data", fetch_data)
+graph.add_node("format_exit", format_exit)
+
+graph.add_edge(START, "analyze")
+graph.add_edge("analyze", "fetch_data")
+graph.add_conditional_edges("fetch_data", should_continue, {
+    "analyze": "analyze",
+    "end": "format_exit",
+})
+graph.add_edge("format_exit", END)
+
+app = graph.compile()
+
+result = app.invoke({"query": "Analyze sales data", "result": "", "actions": []})
+print(result["result"])
+```
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+
+MAX_ITERATIONS = 5
+
+@tool
+def analyze_data(query: str) -> str:
+    """Analyze the given data query."""
+    return "Analysis incomplete — need to re-analyze with more context"
+
+@tool
+def fetch_more_data(query: str) -> str:
+    """Fetch additional data for analysis."""
+    return "Additional data fetched but still insufficient"
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system",
+     "You are a data analyst. Try to analyze the data, but if after a few attempts "
+     "you cannot reach a complete answer, summarize what you found so far and stop. "
+     "Do not keep repeating the same analysis indefinitely."),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}"),
+])
+
+agent = create_tool_calling_agent(llm, [analyze_data, fetch_more_data], prompt)
+executor = AgentExecutor(
+    agent=agent,
+    tools=[analyze_data, fetch_more_data],
+    max_iterations=MAX_ITERATIONS,
+    handle_parsing_errors=True,
+)
+
+result = executor.invoke({"input": "Analyze the Q4 sales data"})
+print(result["output"])
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from crewai.tools import tool
+
+MAX_ITERATIONS = 5
+call_count = {"analyze": 0, "fetch": 0}
+
+
+@tool
+def analyze_data(query: str) -> str:
+    """Analyze the given data query."""
+    call_count["analyze"] += 1
+    if call_count["analyze"] + call_count["fetch"] >= MAX_ITERATIONS:
+        return f"Analysis complete after {call_count['analyze']} attempts. Partial findings: Data shows positive Q4 trends."
+    return "Analysis incomplete — need to re-analyze with more context"
+
+
+@tool
+def fetch_more_data(query: str) -> str:
+    """Fetch additional data for analysis."""
+    call_count["fetch"] += 1
+    if call_count["analyze"] + call_count["fetch"] >= MAX_ITERATIONS:
+        return "All available data has been fetched. Proceed with current findings."
+    return "Additional data fetched but still insufficient"
+
+
+assistant = Agent(
+    role="Data Analyst",
+    goal=(
+        "Analyze the data. If after a few attempts you cannot reach a complete answer, "
+        "summarize what you found so far and stop. Do not keep repeating the same analysis indefinitely."
+    ),
+    backstory="You are a data analyst who knows when to stop and report partial findings.",
+    tools=[analyze_data, fetch_more_data],
+    max_iter=MAX_ITERATIONS,
+)
+
+task = Task(
+    description="Analyze the Q4 sales data",
+    expected_output="A complete or partial analysis of Q4 sales data with a summary of findings",
+    agent=assistant,
+)
+
+crew = Crew(agents=[assistant], tasks=[task])
+result = crew.kickoff()
+print(result)
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from agents.tool import function_tool
+
+MAX_ITERATIONS = 5
+call_count = {"analyze": 0, "fetch": 0}
+
+
+@function_tool
+def analyze_data(query: str) -> str:
+    """Analyze the given data query."""
+    call_count["analyze"] += 1
+    if call_count["analyze"] + call_count["fetch"] >= MAX_ITERATIONS:
+        return f"Analysis complete after {call_count['analyze']} attempts. Partial findings: Data shows positive Q4 trends."
+    return "Analysis incomplete — need to re-analyze with more context"
+
+
+@function_tool
+def fetch_more_data(query: str) -> str:
+    """Fetch additional data for analysis."""
+    call_count["fetch"] += 1
+    if call_count["analyze"] + call_count["fetch"] >= MAX_ITERATIONS:
+        return "All available data has been fetched. Proceed with current findings."
+    return "Additional data fetched but still insufficient"
+
+
+agent = Agent(
+    name="Data Analyst",
+    instructions=(
+        "You are a data analyst. Try to analyze the data, but if after a few attempts "
+        "you cannot reach a complete answer, summarize what you found so far and stop. "
+        "Do not keep repeating the same analysis indefinitely."
+    ),
+    tools=[analyze_data, fetch_more_data],
+)
+
+result = Runner.run_sync(agent, "Analyze the Q4 sales data")
+print(result.final_output)
+```
+
+## Why This Works
+
+In the LangGraph solution, the `should_continue` function checks two conditions before routing back to "analyze": (1) whether the total number of actions has exceeded the iteration cap, and (2) whether the last few actions form a repeating cycle. If either condition is met, the graph routes to a `format_exit` node that constructs a human-readable summary of what was attempted. This guarantees the graph terminates in bounded time. In the LangChain solution, `max_iterations=5` on the `AgentExecutor` provides a built-in hard stop — after 5 tool-calling rounds, the executor stops and returns whatever the agent has produced. The updated system prompt also guides the LLM to recognize when it's stuck and summarize partial findings instead of looping.
+
+## Key Takeaways
+
+- Always set a hard iteration cap on agent loops — LLMs cannot be trusted to self-terminate on cyclic tasks.
+- Detect repetitive action patterns (same tool calls with same arguments) as an additional signal that the agent is stuck.
+- When breaking out of a loop, return a meaningful message that includes partial results and explains why the agent stopped — don't just silently truncate.

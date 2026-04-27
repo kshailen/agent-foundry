@@ -1,0 +1,242 @@
+## Approach
+
+The starter code runs the entire pipeline (research, processing, decision) within a single framework. While this works, it does not leverage the unique strengths of different frameworks: CrewAI excels at role-based multi-agent collaboration, LangGraph provides stateful graph-based workflows, LangChain offers flexible chain composition, and OpenAI Agents SDK provides a clean agent interface. The task is to split the pipeline across at least two frameworks, with data flowing correctly between framework boundaries.
+
+The key challenge is bridging frameworks — each framework has its own input/output format. The solution is to extract plain strings (or dictionaries) at each framework boundary. When one framework's stage completes, you pull out the string output and pass it as input to the next framework's stage. This "lowest common denominator" interface (plain text) is universally compatible.
+
+The editorial shows two combinations: CrewAI for research (leveraging its role-based agent setup) paired with LangGraph for processing and decision-making (leveraging its stateful graph), and LangChain for research paired with OpenAI Agents SDK for processing and decisions.
+
+## Solution
+
+### CrewAI + LangGraph
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai import LLM
+from langchain_openai import ChatOpenAI
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict
+
+crewai_llm = LLM(model="gpt-4o-mini")
+langgraph_llm = ChatOpenAI(model="gpt-4o-mini")
+
+# Stage 1: Research using CrewAI
+researcher = Agent(
+    role="Research Analyst",
+    goal="Gather comprehensive data on the topic",
+    backstory="You are a senior research analyst with deep expertise in technology evaluation.",
+    llm=crewai_llm,
+)
+
+research_task = Task(
+    description="Research: {topic}. Gather key data points, comparisons, and expert opinions.",
+    expected_output="Comprehensive research findings with data points and comparisons",
+    agent=researcher,
+)
+
+research_crew = Crew(
+    agents=[researcher],
+    tasks=[research_task],
+    process=Process.sequential,
+)
+
+# Stage 2 & 3: Processing and Decision using LangGraph
+class State(TypedDict):
+    research: str
+    analysis: str
+    recommendation: str
+
+def process_node(state: State) -> dict:
+    prompt = (
+        f"You are a data processing specialist. Organize and structure these research findings "
+        f"into clear categories with key insights:\n\n{state['research']}"
+    )
+    response = langgraph_llm.invoke(prompt)
+    return {"analysis": response.content}
+
+def decide_node(state: State) -> dict:
+    prompt = (
+        f"You are a strategic decision advisor. Based on this structured analysis, "
+        f"provide clear actionable recommendations:\n\n{state['analysis']}"
+    )
+    response = langgraph_llm.invoke(prompt)
+    return {"recommendation": response.content}
+
+graph = StateGraph(State)
+graph.add_node("process", process_node)
+graph.add_node("decide", decide_node)
+graph.add_edge(START, "process")
+graph.add_edge("process", "decide")
+graph.add_edge("decide", END)
+processing_app = graph.compile()
+
+# Cross-framework pipeline execution
+research_output = str(research_crew.kickoff(inputs={"topic": "Best cloud provider for AI workloads"}))
+
+result = processing_app.invoke({
+    "research": research_output,
+    "analysis": "",
+    "recommendation": "",
+})
+print(result["recommendation"])
+```
+
+### LangChain + OpenAI Agents SDK
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+from agents import Agent, Runner
+
+langchain_llm = ChatOpenAI(model="gpt-4o-mini")
+
+# Stage 1: Research using LangChain
+research_prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a senior research analyst. Gather comprehensive data on the topic."),
+    ("human", "Research: {topic}. Provide key data points, comparisons, and expert opinions."),
+])
+research_chain = research_prompt | langchain_llm
+
+# Stage 2: Processing using OpenAI Agents SDK
+processor = Agent(
+    name="Data Processor",
+    instructions="You are a data processing specialist. Organize research findings into clear categories with key insights.",
+)
+
+# Stage 3: Decision using OpenAI Agents SDK
+advisor = Agent(
+    name="Decision Advisor",
+    instructions="You are a strategic decision advisor. Provide clear, actionable recommendations based on structured analysis.",
+)
+
+# Cross-framework pipeline execution
+research_result = research_chain.invoke({"topic": "Best cloud provider for AI workloads"})
+research_text = research_result.content
+
+processed = Runner.run_sync(processor, f"Organize and structure these research findings:\n\n{research_text}")
+
+decision = Runner.run_sync(advisor, f"Based on this analysis, provide recommendations:\n\n{processed.final_output}")
+print(decision.final_output)
+```
+
+### LangGraph (with CrewAI research stage)
+
+```python
+from crewai import Agent as CrewAgent, Task, Crew, Process
+from crewai import LLM
+from langchain_openai import ChatOpenAI
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict
+
+crewai_llm = LLM(model="gpt-4o-mini")
+lg_llm = ChatOpenAI(model="gpt-4o-mini")
+
+def crewai_research(topic: str) -> str:
+    researcher = CrewAgent(
+        role="Research Analyst",
+        goal="Gather comprehensive data on the topic",
+        backstory="You are a senior research analyst.",
+        llm=crewai_llm,
+    )
+    research_task = Task(
+        description=f"Research: {topic}",
+        expected_output="Comprehensive research findings",
+        agent=researcher,
+    )
+    crew = Crew(agents=[researcher], tasks=[research_task], process=Process.sequential)
+    return str(crew.kickoff())
+
+class PipelineState(TypedDict):
+    topic: str
+    research: str
+    analysis: str
+    recommendation: str
+
+def research_node(state: PipelineState) -> dict:
+    result = crewai_research(state["topic"])
+    return {"research": result}
+
+def process_node(state: PipelineState) -> dict:
+    response = lg_llm.invoke(f"Organize these findings:\n\n{state['research']}")
+    return {"analysis": response.content}
+
+def decide_node(state: PipelineState) -> dict:
+    response = lg_llm.invoke(f"Provide recommendations based on:\n\n{state['analysis']}")
+    return {"recommendation": response.content}
+
+graph = StateGraph(PipelineState)
+graph.add_node("research", research_node)
+graph.add_node("process", process_node)
+graph.add_node("decide", decide_node)
+graph.add_edge(START, "research")
+graph.add_edge("research", "process")
+graph.add_edge("process", "decide")
+graph.add_edge("decide", END)
+
+app = graph.compile()
+result = app.invoke({
+    "topic": "Best cloud provider for AI workloads",
+    "research": "",
+    "analysis": "",
+    "recommendation": "",
+})
+print(result["recommendation"])
+```
+
+### CrewAI (with LangChain processing stage)
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai import LLM
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+
+crewai_llm = LLM(model="gpt-4o-mini")
+langchain_llm = ChatOpenAI(model="gpt-4o-mini")
+
+# Stage 1: Research using CrewAI
+researcher = Agent(
+    role="Research Analyst",
+    goal="Gather comprehensive data on the topic",
+    backstory="You are a senior research analyst.",
+    llm=crewai_llm,
+)
+
+research_task = Task(
+    description="Research: {topic}",
+    expected_output="Comprehensive research findings",
+    agent=researcher,
+)
+
+research_crew = Crew(agents=[researcher], tasks=[research_task], process=Process.sequential)
+research_output = str(research_crew.kickoff(inputs={"topic": "Best cloud provider for AI workloads"}))
+
+# Stage 2: Processing using LangChain
+process_prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a data processing specialist. Organize research into clear categories."),
+    ("human", "Process this research:\n\n{research}"),
+])
+process_chain = process_prompt | langchain_llm
+processed = process_chain.invoke({"research": research_output})
+
+# Stage 3: Decision using LangChain
+decision_prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a strategic decision advisor. Provide actionable recommendations."),
+    ("human", "Based on this analysis, provide recommendations:\n\n{analysis}"),
+])
+decision_chain = decision_prompt | langchain_llm
+decision = decision_chain.invoke({"analysis": processed.content})
+print(decision.content)
+```
+
+## Why This Works
+
+The bridge between frameworks is plain text. Every agent framework ultimately produces string output, and every framework can accept string input. By extracting `.content`, `.final_output`, or `str()` at each boundary, you create a universal interface. CrewAI's research output becomes a plain string that LangGraph can store in its state. OpenAI Agents SDK's output becomes a string that LangChain can accept as a prompt variable.
+
+This approach lets you choose the best framework for each stage: CrewAI's role-based agents for research, LangGraph's stateful graphs for multi-step processing, and so on — without being locked into a single framework for the entire pipeline.
+
+## Key Takeaways
+
+- Plain text (or dictionaries) is the universal interface between frameworks — extract string output from one framework and pass it as string input to the next.
+- Choose each framework for its strengths: CrewAI for role-based collaboration, LangGraph for stateful workflows, LangChain for chain composition, OpenAI Agents SDK for clean single-agent interfaces.
+- Cross-framework pipelines require no special adapters — just explicit extraction of outputs at framework boundaries.

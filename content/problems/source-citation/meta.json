@@ -1,0 +1,51 @@
+{
+  "number": 48,
+  "title": "Source Citation",
+  "difficulty": "medium",
+  "categories": [
+    "rag"
+  ],
+  "frameworks": [
+    "langchain",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "Every factual claim in the answer must include a source citation",
+    "Citations must reference the actual document name or ID",
+    "The retrieval mechanism itself must not be removed or bypassed",
+    "The agent must still produce natural, readable answers"
+  ],
+  "hints": [
+    "Attach metadata (source name, document ID) to each document before storing in the vector store",
+    "Pass the source metadata along with retrieved chunks to the LLM prompt",
+    "Instruct the LLM to cite the source document for every factual claim it makes"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI, OpenAIEmbeddings\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom langchain_community.vectorstores import FAISS\nfrom langchain_core.documents import Document\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\nembeddings = OpenAIEmbeddings()\n\ndocuments = [\n    Document(page_content=\"The company's revenue grew 40% year-over-year in Q3 2024.\", metadata={\"source\": \"earnings_report_q3.pdf\"}),\n    Document(page_content=\"The new product launch is scheduled for March 2025.\", metadata={\"source\": \"product_roadmap.pdf\"}),\n    Document(page_content=\"Employee satisfaction scores improved to 4.5/5 in the latest survey.\", metadata={\"source\": \"hr_annual_review.pdf\"}),\n]\n\nvectorstore = FAISS.from_documents(documents, embeddings)\nretriever = vectorstore.as_retriever()\n\n# BUG: The prompt does not ask the LLM to cite sources — answers have no attribution\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"Answer the question based on the context below.\\n\\nContext: {context}\"),\n    (\"human\", \"{question}\"),\n])\n\ndef ask(question: str) -> str:\n    docs = retriever.invoke(question)\n    context = \"\\n\".join([doc.page_content for doc in docs])\n    chain = prompt | llm\n    result = chain.invoke({\"context\": context, \"question\": question})\n    return result.content\n\nprint(ask(\"What was the revenue growth?\"))",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai import LLM\n\nllm = LLM(model=\"gpt-4o-mini\")\n\ndocuments = [\n    {\"content\": \"The company's revenue grew 40% year-over-year in Q3 2024.\", \"source\": \"earnings_report_q3.pdf\"},\n    {\"content\": \"The new product launch is scheduled for March 2025.\", \"source\": \"product_roadmap.pdf\"},\n    {\"content\": \"Employee satisfaction scores improved to 4.5/5 in the latest survey.\", \"source\": \"hr_annual_review.pdf\"},\n]\n\n# BUG: The prompt does not ask the LLM to cite sources — answers have no attribution\ncontext = \"\\n\".join([doc[\"content\"] for doc in documents])\n\ndef ask(question: str) -> str:\n    agent = Agent(\n        role=\"Research Assistant\",\n        goal=\"Answer questions based on provided documents\",\n        backstory=f\"Answer the question based on the context below.\\n\\nContext: {context}\",\n        llm=llm,\n    )\n    task = Task(\n        description=question,\n        expected_output=\"An answer based on the provided context\",\n        agent=agent,\n    )\n    crew = Crew(agents=[agent], tasks=[task])\n    return str(crew.kickoff())\n\nprint(ask(\"What was the revenue growth?\"))",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\ndocuments = [\n    {\"content\": \"The company's revenue grew 40% year-over-year in Q3 2024.\", \"source\": \"earnings_report_q3.pdf\"},\n    {\"content\": \"The new product launch is scheduled for March 2025.\", \"source\": \"product_roadmap.pdf\"},\n    {\"content\": \"Employee satisfaction scores improved to 4.5/5 in the latest survey.\", \"source\": \"hr_annual_review.pdf\"},\n]\n\n# BUG: The prompt does not ask the LLM to cite sources — answers have no attribution\ncontext = \"\\n\".join([doc[\"content\"] for doc in documents])\n\nagent = Agent(\n    name=\"Research Assistant\",\n    instructions=f\"Answer the question based on the context below.\\n\\nContext: {context}\",\n)\n\ndef ask(question: str) -> str:\n    result = Runner.run_sync(agent, question)\n    return result.final_output\n\nprint(ask(\"What was the revenue growth?\"))"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/source-citation-langchain.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/source-citation-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/source-citation-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "cites-sources",
+      "label": "Cites sources for claims",
+      "description": "Every factual claim in the answer includes a reference to the source document"
+    },
+    {
+      "id": "accurate-citations",
+      "label": "Citations are accurate",
+      "description": "Citations match the actual source documents that contained the information"
+    },
+    {
+      "id": "readable-output",
+      "label": "Output remains readable",
+      "description": "The answer is still natural and easy to read despite including citations"
+    }
+  ]
+}

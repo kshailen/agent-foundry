@@ -1,0 +1,174 @@
+## Approach
+
+The current pipeline always generates an answer regardless of whether the retrieved documents are actually relevant to the query. When a user asks about API programming languages but the knowledge base only covers returns, shipping, and support hours, the retriever returns the closest (but irrelevant) document and the LLM confidently fabricates an answer from it. This is worse than saying "I don't know" because the user trusts and acts on bad information.
+
+The fix is to check retrieval quality before generating an answer. With FAISS, you can use `similarity_search_with_score` to get distance scores alongside documents. If the best match exceeds a distance threshold (meaning low relevance), the agent should return a clear "I don't have information on that" message instead of passing irrelevant context to the LLM. The prompt should also instruct the model to admit when the context does not contain relevant information.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="Our return policy allows returns within 30 days of purchase."),
+    Document(page_content="Shipping is free for orders over $50 within the continental US."),
+    Document(page_content="Our customer support hours are 9 AM to 5 PM EST, Monday through Friday."),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+
+RELEVANCE_THRESHOLD = 0.5
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system",
+     "Answer the question based on the context below. "
+     "If the context does not contain relevant information, say "
+     "'I don't have information on that topic in my knowledge base.'\n\n"
+     "Context:\n{context}"),
+    ("human", "{question}"),
+])
+
+def ask(question: str) -> str:
+    docs_with_scores = vectorstore.similarity_search_with_score(question, k=3)
+
+    relevant_docs = [(doc, score) for doc, score in docs_with_scores if score <= RELEVANCE_THRESHOLD]
+
+    if not relevant_docs:
+        return (
+            "I don't have information on that topic in my knowledge base. "
+            "Please contact our support team for further assistance."
+        )
+
+    context = "\n".join([doc.page_content for doc, _ in relevant_docs])
+    chain = prompt | llm
+    result = chain.invoke({"context": context, "question": question})
+    return result.content
+
+print(ask("What programming languages does your API support?"))
+print(ask("What is your return policy?"))
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from agents.tool import function_tool
+from openai import OpenAI
+import numpy as np
+
+client = OpenAI()
+
+knowledge_base = [
+    "Our return policy allows returns within 30 days of purchase.",
+    "Shipping is free for orders over $50 within the continental US.",
+    "Our customer support hours are 9 AM to 5 PM EST, Monday through Friday.",
+]
+
+RELEVANCE_THRESHOLD = 0.82
+
+def get_embedding(text: str) -> list[float]:
+    response = client.embeddings.create(input=text, model="text-embedding-3-small")
+    return response.data[0].embedding
+
+kb_embeddings = [get_embedding(doc) for doc in knowledge_base]
+
+@function_tool
+def search_knowledge_base(query: str) -> str:
+    """Search the knowledge base for relevant information."""
+    query_embedding = get_embedding(query)
+    similarities = [
+        np.dot(query_embedding, doc_emb)
+        / (np.linalg.norm(query_embedding) * np.linalg.norm(doc_emb))
+        for doc_emb in kb_embeddings
+    ]
+
+    best_idx = int(np.argmax(similarities))
+    best_score = similarities[best_idx]
+
+    if best_score < RELEVANCE_THRESHOLD:
+        return "NO_RELEVANT_RESULTS: No documents in the knowledge base match this query."
+
+    return knowledge_base[best_idx]
+
+agent = Agent(
+    name="Support Agent",
+    instructions=(
+        "You are a customer support agent. Use the search tool to answer questions. "
+        "If the tool returns NO_RELEVANT_RESULTS, tell the user you don't have "
+        "information on that topic and suggest contacting the support team."
+    ),
+    tools=[search_knowledge_base],
+)
+
+result = Runner.run_sync(agent, "What programming languages does your API support?")
+print(result.final_output)
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from crewai.tools import tool
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="Our return policy allows returns within 30 days of purchase."),
+    Document(page_content="Shipping is free for orders over $50 within the continental US."),
+    Document(page_content="Our customer support hours are 9 AM to 5 PM EST, Monday through Friday."),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+
+RELEVANCE_THRESHOLD = 0.5
+
+@tool
+def search_knowledge_base(question: str) -> str:
+    """Search the knowledge base for relevant information."""
+    docs_with_scores = vectorstore.similarity_search_with_score(question, k=3)
+    relevant_docs = [(doc, score) for doc, score in docs_with_scores if score <= RELEVANCE_THRESHOLD]
+    if not relevant_docs:
+        return "NO_RELEVANT_RESULTS: No documents in the knowledge base match this query."
+    return "\n".join([doc.page_content for doc, _ in relevant_docs])
+
+support_agent = Agent(
+    role="Support Agent",
+    goal="Answer customer questions using the knowledge base",
+    backstory=(
+        "You are a customer support agent. Use the search tool to answer questions. "
+        "If the tool returns NO_RELEVANT_RESULTS, tell the user you don't have "
+        "information on that topic and suggest contacting the support team."
+    ),
+    tools=[search_knowledge_base],
+)
+
+task = Task(
+    description="What programming languages does your API support?",
+    expected_output="An honest answer based on available knowledge",
+    agent=support_agent,
+)
+
+crew = Crew(agents=[support_agent], tasks=[task])
+print(crew.kickoff())
+```
+
+## Why This Works
+
+By checking similarity scores before passing context to the LLM, the agent can distinguish between relevant retrievals (where the answer exists in the knowledge base) and noise (where the closest document is still too far away). The threshold acts as a gate: above it, the agent generates a grounded answer; below it, the agent honestly admits it lacks the information. This prevents hallucination on out-of-scope queries while still answering in-scope questions correctly.
+
+## Key Takeaways
+
+- Vector stores always return results — even when nothing is relevant. You must check similarity scores to detect irrelevant retrievals.
+- A distance or similarity threshold is the simplest and most effective gate for no-match detection.
+- The prompt should include a fallback instruction telling the model to say "I don't know" when the context is insufficient.

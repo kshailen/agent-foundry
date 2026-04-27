@@ -1,0 +1,93 @@
+# Knowledge Sources & RAG
+
+**Knowledge** in CrewAI lets you attach external documents or data to agents or crews. During task execution, the runtime indexes that content and retrieves relevant chunks when the LLM needs context—this pattern is **RAG** (Retrieval Augmented Generation): the model answers using retrieved passages, not only its training data.
+
+## Knowledge source types
+
+CrewAI ships with several built-in sources. File-based sources typically live under a `knowledge` folder at your project root; use paths relative to that directory.
+
+| Source | Use case |
+|--------|----------|
+| `StringKnowledgeSource` | Inline text you pass in code |
+| `TextFileKnowledgeSource` | Plain text files |
+| `PDFKnowledgeSource` | PDF documents |
+| `CSVKnowledgeSource` | CSV files |
+| `JSONKnowledgeSource` | JSON files |
+| `ExcelKnowledgeSource` | Excel spreadsheets |
+
+## Crew-level knowledge
+
+Pass `knowledge_sources` on the **Crew**. Every agent in that crew can query the same shared knowledge (along with any agent-specific sources you add later). The sketch below assumes `support_agent` and `answer_task` are already defined.
+
+```python
+from crewai import Agent, Crew, Task
+from crewai.knowledge.source.string_knowledge_source import StringKnowledgeSource
+
+company_info = StringKnowledgeSource(
+    content="Our company was founded in 2020. We specialize in AI solutions for healthcare...",
+)
+
+crew = Crew(
+    agents=[support_agent],
+    tasks=[answer_task],
+    knowledge_sources=[company_info],
+)
+```
+
+## Agent-level knowledge
+
+Pass `knowledge_sources` on an **Agent** when only that role should see certain material. Those sources are scoped to that agent’s retrieval index. Here `product_docs` is any knowledge source instance (for example `StringKnowledgeSource` or a file-based source).
+
+```python
+agent = Agent(
+    role="Product Expert",
+    goal="Answer product questions accurately",
+    backstory="...",
+    knowledge_sources=[product_docs],
+)
+```
+
+## Crew knowledge vs agent knowledge
+
+- **Crew knowledge** is shared: all agents in the crew can retrieve from those sources.
+- **Agent knowledge** is private to that agent: other agents do not automatically get it.
+
+An agent with both crew-wide and agent-only sources effectively searches **crew knowledge plus its own** agent sources.
+
+## Fine-tuning retrieval with `KnowledgeConfig`
+
+Tune how many chunks are returned and how strict similarity filtering is using `KnowledgeConfig`. Pass it via `knowledge_config` on an `Agent` or `Crew` (depending on your setup).
+
+```python
+from crewai.knowledge.knowledge_config import KnowledgeConfig
+
+knowledge_config = KnowledgeConfig(results_limit=10, score_threshold=0.5)
+
+agent = Agent(
+    # ...
+    knowledge_config=knowledge_config,
+)
+```
+
+- **`results_limit`**: maximum number of relevant chunks to return (default is often around 3 in recent versions; check your CrewAI release notes).
+- **`score_threshold`**: minimum similarity score for a chunk to be included (higher = stricter).
+
+## Embedder configuration
+
+Knowledge is embedded for vector search. By default CrewAI often uses OpenAI embeddings (for example `text-embedding-3-small`), which requires an API key even if your chat LLM is another provider. You can set a different **embedder** per agent or crew—for example OpenAI, Ollama, or Azure OpenAI—using a dict with `provider` and `config` (model name, endpoint, and so on per provider docs).
+
+```python
+agent = Agent(
+    # ...
+    embedder={"provider": "openai", "config": {"model": "text-embedding-3-small"}},
+)
+```
+
+Agents without their own embedder can fall back to the crew’s embedder when one is configured.
+
+## Key takeaways
+
+- Knowledge gives agents **grounded, retrievable context** (RAG) instead of stuffing everything into prompts.
+- Choose **crew** sources for policies and facts everyone needs; use **agent** sources for role-specific manuals or data.
+- **`KnowledgeConfig`** controls **how much** and **how selective** retrieval is via `results_limit` and `score_threshold`.
+- **Embedders** are configurable per provider; align embedding setup with your LLM and compliance constraints.

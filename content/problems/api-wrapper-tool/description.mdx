@@ -1,0 +1,36 @@
+## The Problem
+
+You have an agent that is supposed to look up GitHub user profiles. The raw API call logic exists in the codebase, but it is **not wired up as a tool** the agent can invoke. As a result, the agent either hallucinates profile data from memory or tells the user it cannot help. Your job is to **wrap the GitHub Users API call into a proper agent tool** with error handling, so the agent can reliably fetch and present real profile data.
+
+## Examples
+
+### Example 1
+
+**User input:** Tell me about the GitHub user 'octocat'
+
+**Current (bad) output:** The agent guesses: *Octocat is GitHub's mascot with about 8 repositories* — none of the numbers are verified because no API call was made.
+
+**Expected (good) output:** The agent calls the GitHub lookup tool, receives real data, and responds: *octocat (The Octocat) has 8 public repos, 0 followers, and no bio listed. Their profile is at https://github.com/octocat.*
+
+### Example 2
+
+**User input:** Look up GitHub user 'nonexistent-user-xyz-12345'
+
+**Current (bad) output:** The code crashes with an unhandled `KeyError` when trying to read fields from an error response.
+
+**Expected (good) output:** The tool catches the 404 and returns a clear message: *User 'nonexistent-user-xyz-12345' was not found on GitHub.* The agent relays this gracefully to the user.
+
+## Your Task
+
+- Convert the existing `lookup_github_user` function into a framework-compatible tool.
+- Add error handling for non-200 status codes (e.g., 404 for missing users, 403 for rate limits).
+- Register the tool with the agent so it is discoverable and callable.
+- Return key profile fields (name, bio, public repos, followers) in a readable format.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Tool is registered with the agent:** The GitHub lookup function is properly decorated and listed in the agent's tools.
+- **Handles API errors gracefully:** Non-200 responses and network errors return a human-readable message instead of a traceback.
+- **Returns structured user info:** The tool returns key profile fields in a clear, readable format.

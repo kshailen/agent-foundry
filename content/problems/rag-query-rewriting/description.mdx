@@ -1,0 +1,46 @@
+## The Problem
+
+Users don't always phrase questions in the same terminology as your documents. A user asks "How do I log in?" but your documentation uses "OAuth 2.0 authentication with JWT tokens." The vector search for "log in" has weak similarity to the authentication document, so the retriever returns irrelevant results or misses the best match entirely. The fix is **query rewriting**: before searching, use an LLM to reformulate the user's vague question into a more specific query that uses terminology likely to appear in your documents.
+
+## Examples
+
+### Example 1
+
+**User input:** How do I log in?
+
+**Current (bad) output:** The retriever finds weak matches because "log in" doesn't appear in any document. The agent returns a vague or incorrect answer.
+
+**Expected (good) output:** After rewriting the query to something like "authentication OAuth JWT token," the retriever finds the authentication document and answers: Authentication uses OAuth 2.0 with JWT tokens. Tokens expire after 24 hours.
+
+### Example 2
+
+**User input:** What happens when something goes wrong?
+
+**Current (bad) output:** Too vague — the retriever returns random documents.
+
+**Expected (good) output:** After rewriting to "error handling API error responses," the agent answers: 4xx errors return JSON with 'error' and 'message' fields.
+
+### Example 3
+
+**User input:** How do I get notified of changes?
+
+**Current (bad) output:** Retriever misses the webhook document because "notified of changes" doesn't match "webhook events."
+
+**Expected (good) output:** After rewriting to "webhook event notifications," the agent answers: Webhook events are signed with HMAC-SHA256. Verify the X-Signature header.
+
+## Your Task
+
+Add a query rewriting step to the RAG pipeline:
+
+- Before retrieval, use an LLM to reformulate the user's query into a more specific search query.
+- The rewritten query should use technical terminology likely found in the documents.
+- The original user intent must be preserved in the rewrite.
+- Pass the rewritten query to the retriever for improved results.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Rewrites vague queries:** The agent reformulates vague user queries into more specific search queries before retrieval.
+- **Improves retrieval relevance:** The rewritten query retrieves more relevant documents than the original vague query.
+- **Preserves user intent:** The rewritten query preserves the original meaning and intent of the user's question.

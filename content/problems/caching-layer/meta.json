@@ -1,0 +1,56 @@
+{
+  "number": 97,
+  "title": "Caching Layer",
+  "difficulty": "medium",
+  "categories": [
+    "cost-optimization"
+  ],
+  "frameworks": [
+    "langchain",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "Semantically similar queries must return cached responses without calling the LLM",
+    "The cache must store and retrieve based on semantic similarity, not exact string match",
+    "Cache hits must be significantly faster than LLM calls and incur zero token cost",
+    "The cache must have a configurable TTL or max size to prevent unbounded growth"
+  ],
+  "hints": [
+    "Use an embedding model to convert queries to vectors, then check cosine similarity against cached query vectors before calling the LLM",
+    "Set a similarity threshold (e.g., 0.95) \u2014 above it, return the cached response; below it, call the LLM and cache the new result",
+    "LangChain has built-in caching support via SQLiteCache or InMemoryCache for exact-match caching, but semantic caching requires embeddings"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain_core.messages import HumanMessage, SystemMessage\nimport time\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# BUG: Every query calls the LLM, even repeated or near-identical questions\n# TODO: Add a caching layer that serves cached responses for similar queries\ndef answer_question(question: str) -> str:\n    start = time.time()\n    response = llm.invoke([\n        SystemMessage(content=\"You are a helpful customer support agent. Answer concisely.\"),\n        HumanMessage(content=question),\n    ])\n    elapsed = time.time() - start\n    return f\"[{elapsed:.2f}s] {response.content}\"\n\nquestions = [\n    \"What is your return policy?\",\n    \"How do I return an item?\",\n    \"What's your policy on returns?\",\n    \"Do you offer free shipping?\",\n    \"Is shipping free?\",\n    \"What is your return policy?\",\n    \"Do you ship for free?\",\n    \"How can I return a product?\",\n]\nfor q in questions:\n    result = answer_question(q)\n    print(f\"Q: {q}\\nA: {result}\\n\")",
+    "crewai": "from crewai import Agent, Task, Crew, Process\nfrom crewai import LLM\nimport time\n\nllm = LLM(model=\"gpt-4o-mini\")\n\nsupport_agent = Agent(\n    role=\"Customer Support\",\n    goal=\"Answer customer questions concisely\",\n    backstory=\"You are a helpful customer support agent. Answer concisely.\",\n    llm=llm,\n)\n\n# BUG: Every query calls the LLM, even repeated or near-identical questions\n# TODO: Add a caching layer that serves cached responses for similar queries\nquestions = [\n    \"What is your return policy?\",\n    \"How do I return an item?\",\n    \"What's your policy on returns?\",\n    \"Do you offer free shipping?\",\n    \"Is shipping free?\",\n    \"What is your return policy?\",\n    \"Do you ship for free?\",\n    \"How can I return a product?\",\n]\nfor q in questions:\n    start = time.time()\n    task = Task(description=q, expected_output=\"A concise answer\", agent=support_agent)\n    crew = Crew(agents=[support_agent], tasks=[task], process=Process.sequential)\n    result = crew.kickoff()\n    elapsed = time.time() - start\n    print(f\"Q: {q}\\nA: [{elapsed:.2f}s] {result}\\n\")",
+    "openai-agents-sdk": "from agents import Agent, Runner\nimport time\n\nagent = Agent(\n    name=\"Customer Support\",\n    instructions=\"You are a helpful customer support agent. Answer concisely.\",\n    model=\"gpt-4o-mini\",\n)\n\n# BUG: Every query calls the LLM, even repeated or near-identical questions\n# TODO: Add a caching layer that serves cached responses for similar queries\nquestions = [\n    \"What is your return policy?\",\n    \"How do I return an item?\",\n    \"What's your policy on returns?\",\n    \"Do you offer free shipping?\",\n    \"Is shipping free?\",\n    \"What is your return policy?\",\n    \"Do you ship for free?\",\n    \"How can I return a product?\",\n]\nfor q in questions:\n    start = time.time()\n    result = Runner.run_sync(agent, q)\n    elapsed = time.time() - start\n    print(f\"Q: {q}\\nA: [{elapsed:.2f}s] {result.final_output}\\n\")"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/caching-layer-langchain.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/caching-layer-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/caching-layer-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "cache-hit-on-similar",
+      "label": "Cache hit on similar queries",
+      "description": "Semantically similar queries return cached responses without calling the LLM"
+    },
+    {
+      "id": "faster-on-hit",
+      "label": "Faster on cache hit",
+      "description": "Cache hits are significantly faster than LLM calls"
+    },
+    {
+      "id": "zero-cost-on-hit",
+      "label": "Zero token cost on hit",
+      "description": "Cached responses incur no LLM token cost"
+    },
+    {
+      "id": "bounded-cache",
+      "label": "Bounded cache size",
+      "description": "The cache has a configurable TTL or max size to prevent unbounded growth"
+    }
+  ]
+}

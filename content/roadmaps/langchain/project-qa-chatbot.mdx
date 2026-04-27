@@ -1,0 +1,172 @@
+# Project: Q&A Chatbot
+
+In this project, you'll build a conversational Q&A chatbot that remembers previous messages across turns. You'll combine everything from the beginner tier: chat models, messages, tools, and agents — plus add memory with a checkpointer.
+
+## What You'll Build
+
+A chatbot that can:
+
+- Answer general questions using an LLM
+- Check the weather using a tool
+- Remember conversation history across multiple turns
+- Maintain separate conversations using thread IDs
+
+## Step 1: Define a Tool
+
+Create a weather tool the agent can use:
+
+```python
+from langchain_core.tools import tool
+
+@tool
+def get_weather(city: str) -> str:
+    """Get the current weather for a city. Use this when the user asks about weather conditions."""
+    weather_data = {
+        "new york": "65°F, partly cloudy",
+        "london": "55°F, rainy",
+        "tokyo": "78°F, sunny",
+        "paris": "62°F, overcast",
+    }
+    return weather_data.get(city.lower(), f"Weather data not available for {city}")
+```
+
+## Step 2: Create an Agent with Memory
+
+Use `InMemorySaver` as a checkpointer to persist conversation state:
+
+```python
+from langchain.chat_models import init_chat_model
+from langgraph.prebuilt import create_react_agent
+from langgraph.checkpoint.memory import InMemorySaver
+
+model = init_chat_model("gpt-4o-mini", model_provider="openai")
+memory = InMemorySaver()
+
+agent = create_react_agent(
+    model=model,
+    tools=[get_weather],
+    prompt="You are a friendly assistant. You can check the weather for users. Be conversational and remember what the user has told you.",
+    checkpointer=memory,
+)
+```
+
+The `InMemorySaver` stores the conversation state in memory, allowing the agent to recall previous messages within the same thread.
+
+## Step 3: Multi-Turn Conversation
+
+Use a `thread_id` in the config to maintain a conversation thread:
+
+```python
+from langchain_core.messages import HumanMessage
+
+config = {"configurable": {"thread_id": "user-1"}}
+
+result = agent.invoke(
+    {"messages": [HumanMessage(content="Hi! My name is Alice.")]},
+    config=config,
+)
+print(result["messages"][-1].content)
+```
+
+Continue the same conversation:
+
+```python
+result = agent.invoke(
+    {"messages": [HumanMessage(content="What's the weather in Tokyo?")]},
+    config=config,
+)
+print(result["messages"][-1].content)
+```
+
+Ask a question that requires memory:
+
+```python
+result = agent.invoke(
+    {"messages": [HumanMessage(content="Do you remember my name?")]},
+    config=config,
+)
+print(result["messages"][-1].content)
+```
+
+The agent remembers that the user's name is Alice because all three calls share the same `thread_id`.
+
+## Step 4: Separate Threads
+
+Different `thread_id` values create independent conversations:
+
+```python
+config_2 = {"configurable": {"thread_id": "user-2"}}
+
+result = agent.invoke(
+    {"messages": [HumanMessage(content="What's the weather in London?")]},
+    config=config_2,
+)
+print(result["messages"][-1].content)
+
+result = agent.invoke(
+    {"messages": [HumanMessage(content="Do you know my name?")]},
+    config=config_2,
+)
+print(result["messages"][-1].content)
+```
+
+Thread `"user-2"` has no knowledge of Alice from thread `"user-1"`.
+
+## Full Code
+
+Here's the complete chatbot in one block:
+
+```python
+from langchain.chat_models import init_chat_model
+from langchain_core.messages import HumanMessage
+from langchain_core.tools import tool
+from langgraph.prebuilt import create_react_agent
+from langgraph.checkpoint.memory import InMemorySaver
+
+@tool
+def get_weather(city: str) -> str:
+    """Get the current weather for a city. Use this when the user asks about weather conditions."""
+    weather_data = {
+        "new york": "65°F, partly cloudy",
+        "london": "55°F, rainy",
+        "tokyo": "78°F, sunny",
+        "paris": "62°F, overcast",
+    }
+    return weather_data.get(city.lower(), f"Weather data not available for {city}")
+
+model = init_chat_model("gpt-4o-mini", model_provider="openai")
+memory = InMemorySaver()
+
+agent = create_react_agent(
+    model=model,
+    tools=[get_weather],
+    prompt="You are a friendly assistant. You can check the weather for users. Be conversational and remember what the user has told you.",
+    checkpointer=memory,
+)
+
+config = {"configurable": {"thread_id": "session-1"}}
+
+questions = [
+    "Hi! My name is Alice.",
+    "What's the weather like in Tokyo?",
+    "How about Paris?",
+    "What was the first city I asked about?",
+]
+
+for question in questions:
+    result = agent.invoke(
+        {"messages": [HumanMessage(content=question)]},
+        config=config,
+    )
+    print(f"User: {question}")
+    print(f"Bot: {result['messages'][-1].content}")
+    print()
+```
+
+## Key Takeaways
+
+- `InMemorySaver` provides conversation memory by checkpointing agent state
+- The `thread_id` in the config groups messages into a conversation thread
+- Different thread IDs create independent, isolated conversations
+- Combining `create_react_agent` with a checkpointer gives you a stateful, tool-using chatbot
+- This pattern is the foundation for building production chat applications

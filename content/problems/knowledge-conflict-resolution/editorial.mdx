@@ -1,0 +1,192 @@
+## Approach
+
+The knowledge base contains documents from different sources that sometimes contradict each other: the investor report says $150M revenue, the audited financials say $142M. The current pipeline silently picks whichever version appears first and presents it as fact. In regulated industries, this is dangerous — users need to know when sources disagree so they can investigate.
+
+The fix adds a conflict detection step after retrieval. Before generating the final answer, the agent uses the LLM to analyze the retrieved documents for contradictory claims on the same topic. If a conflict is detected, the response explicitly flags the disagreement, presents both versions with their source citations, and lets the user decide which is authoritative. When documents agree, the agent answers normally without unnecessary warnings.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="The company's annual revenue for 2024 was $150M, a 20% increase.", metadata={"source": "investor_report_q4.pdf"}),
+    Document(page_content="Total 2024 revenue reached $142M according to the audited financial statements.", metadata={"source": "audited_financials_2024.pdf"}),
+    Document(page_content="The company has 500 employees across 5 global offices.", metadata={"source": "company_overview.pdf"}),
+    Document(page_content="Current headcount stands at 480 full-time employees.", metadata={"source": "hr_report_dec2024.pdf"}),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
+
+conflict_prompt = ChatPromptTemplate.from_messages([
+    ("system",
+     "Analyze the following documents for contradictory information about the same topic. "
+     "If documents disagree on specific facts (numbers, dates, claims), reply 'CONFLICT' "
+     "followed by a brief description. If they agree or discuss different topics, reply 'NO_CONFLICT'."),
+    ("human", "{documents}"),
+])
+
+answer_prompt = ChatPromptTemplate.from_messages([
+    ("system",
+     "Answer the question based on the context below. "
+     "For every factual claim, cite the source in square brackets.\n\n"
+     "Context:\n{context}"),
+    ("human", "{question}"),
+])
+
+conflict_answer_prompt = ChatPromptTemplate.from_messages([
+    ("system",
+     "The retrieved documents contain conflicting information. "
+     "Present BOTH versions with their source citations. Explicitly state that "
+     "there is a conflict and let the user know they should verify.\n\n"
+     "Documents:\n{context}"),
+    ("human", "{question}"),
+])
+
+def ask(question: str) -> str:
+    docs = retriever.invoke(question)
+    doc_texts = "\n\n".join(
+        [f"[{doc.metadata['source']}]: {doc.page_content}" for doc in docs]
+    )
+
+    conflict_chain = conflict_prompt | llm
+    conflict_result = conflict_chain.invoke({"documents": doc_texts})
+    has_conflict = "CONFLICT" in conflict_result.content.upper()
+
+    if has_conflict:
+        chain = conflict_answer_prompt | llm
+    else:
+        chain = answer_prompt | llm
+
+    result = chain.invoke({"context": doc_texts, "question": question})
+    return result.content
+
+print(ask("What was the company's 2024 revenue?"))
+print(ask("How many offices does the company have?"))
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from agents.tool import function_tool
+
+knowledge_base = {
+    "investor_report_q4.pdf": "The company's annual revenue for 2024 was $150M, a 20% increase.",
+    "audited_financials_2024.pdf": "Total 2024 revenue reached $142M according to the audited financial statements.",
+    "company_overview.pdf": "The company has 500 employees across 5 global offices.",
+    "hr_report_dec2024.pdf": "Current headcount stands at 480 full-time employees.",
+}
+
+@function_tool
+def search_documents(query: str) -> str:
+    """Search company documents for relevant information. Returns all matching documents with sources."""
+    results = []
+    for source, content in knowledge_base.items():
+        if any(word in content.lower() for word in query.lower().split()):
+            results.append(f"[{source}]: {content}")
+    return "\n".join(results) if results else "No relevant documents found."
+
+agent = Agent(
+    name="Knowledge Agent",
+    instructions=(
+        "You are a helpful assistant that answers questions using the search tool. "
+        "IMPORTANT: After retrieving documents, check if they contain conflicting "
+        "information about the same topic (e.g., different numbers for the same metric). "
+        "If you find a conflict:\n"
+        "1. Explicitly state that you found conflicting information\n"
+        "2. Present BOTH versions with their source document names\n"
+        "3. Suggest the user verify with the appropriate team\n\n"
+        "If documents agree, answer normally with source citations."
+    ),
+    tools=[search_documents],
+)
+
+result = Runner.run_sync(agent, "What was the company's 2024 revenue?")
+print(result.final_output)
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from crewai.tools import tool
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="The company's annual revenue for 2024 was $150M, a 20% increase.", metadata={"source": "investor_report_q4.pdf"}),
+    Document(page_content="Total 2024 revenue reached $142M according to the audited financial statements.", metadata={"source": "audited_financials_2024.pdf"}),
+    Document(page_content="The company has 500 employees across 5 global offices.", metadata={"source": "company_overview.pdf"}),
+    Document(page_content="Current headcount stands at 480 full-time employees.", metadata={"source": "hr_report_dec2024.pdf"}),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+retriever = vectorstore.as_retriever(search_kwargs={"k": 4})
+
+
+@tool
+def search_documents(query: str) -> str:
+    """Search company documents for relevant information. Returns all matching documents with sources."""
+    docs = retriever.invoke(query)
+    results = []
+    for doc in docs:
+        source = doc.metadata.get("source", "unknown")
+        results.append(f"[{source}]: {doc.page_content}")
+    return "\n".join(results) if results else "No relevant documents found."
+
+
+assistant = Agent(
+    role="Knowledge Agent",
+    goal=(
+        "Answer questions using the search tool. "
+        "IMPORTANT: After retrieving documents, check if they contain conflicting "
+        "information about the same topic (e.g., different numbers for the same metric). "
+        "If you find a conflict:\n"
+        "1. Explicitly state that you found conflicting information\n"
+        "2. Present BOTH versions with their source document names\n"
+        "3. Suggest the user verify with the appropriate team\n\n"
+        "If documents agree, answer normally with source citations."
+    ),
+    backstory="You are a helpful assistant that detects and reports conflicting information from documents.",
+    tools=[search_documents],
+)
+
+task1 = Task(
+    description="What was the company's 2024 revenue?",
+    expected_output="The revenue with conflict detection if applicable",
+    agent=assistant,
+)
+crew1 = Crew(agents=[assistant], tasks=[task1])
+print(crew1.kickoff())
+
+task2 = Task(
+    description="How many offices does the company have?",
+    expected_output="The number of offices",
+    agent=assistant,
+)
+crew2 = Crew(agents=[assistant], tasks=[task2])
+print(crew2.kickoff())
+```
+
+## Why This Works
+
+The conflict detection step explicitly compares retrieved documents for disagreements before generating the final answer. When documents contradict, the agent presents both versions with their sources, making the conflict transparent to the user. This prevents the dangerous pattern of silently choosing one version over another. When documents agree, the agent answers normally without unnecessary warnings, keeping the user experience clean.
+
+## Key Takeaways
+
+- Multiple sources in a knowledge base can contradict each other — the agent must detect and surface these conflicts.
+- Silently choosing one version over another is dangerous, especially in regulated industries.
+- A two-step approach (detect conflict, then generate appropriate response) cleanly separates conflict analysis from answer generation.

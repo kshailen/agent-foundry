@@ -1,0 +1,133 @@
+# Built-in Tools
+
+In CrewAI, **tools** extend what an agent can do beyond raw LLM reasoning. They are callable capabilities—search APIs, file readers, scrapers, interpreters—that let agents gather facts, read documents, and interact with external systems instead of only generating text from training data.
+
+## Assigning Tools to an Agent
+
+Pass a list of tool instances to the agent’s `tools` parameter. The LLM can invoke these tools when a task requires real data or side effects.
+
+```python
+from crewai import Agent
+from crewai_tools import SerperDevTool
+
+researcher = Agent(
+    role="Research Analyst",
+    goal="Find accurate, up-to-date information on the web",
+    backstory="You are meticulous about citing sources and verifying facts.",
+    tools=[SerperDevTool()],
+    verbose=True,
+)
+```
+
+## Assigning Tools to a Task
+
+You can also set `tools` on a **Task**. For that task only, the task’s tool list **overrides** the agent’s default tools. Use this when one step needs search but another should stay “LLM-only,” or when different tasks need different integrations.
+
+```python
+from crewai import Task
+
+task_search = Task(
+    description="Search the web for the latest CrewAI release notes.",
+    expected_output="A short summary with links or titles found.",
+    agent=researcher,
+    tools=[SerperDevTool()],
+)
+
+task_summarize = Task(
+    description="Summarize the previous task’s output in two sentences.",
+    expected_output="Two-sentence summary.",
+    agent=researcher,
+    tools=[],  # no tools for this task — overrides agent tools
+)
+```
+
+## Major Built-in Tools (`crewai_tools`)
+
+These ship in the `crewai-tools` package and cover common research and document workflows.
+
+| Tool | Description |
+|------|-------------|
+| `SerperDevTool` | Web search via the [Serper](https://serper.dev) API |
+| `ScrapeWebsiteTool` | Scrape webpage content |
+| `WebsiteSearchTool` | RAG-based search on websites |
+| `FileReadTool` | Read files from disk |
+| `DirectoryReadTool` | List directory contents |
+| `PDFSearchTool` | Search PDF documents |
+| `CSVSearchTool` | Search CSV files |
+| `JSONSearchTool` | Search JSON files |
+| `CodeInterpreterTool` | Execute Python code in a sandboxed environment |
+| `DOCXSearchTool` | Search DOCX files |
+
+Install extras as needed; many tools depend on API keys or local paths you configure in the environment.
+
+## Example: Researcher with `SerperDevTool`
+
+Set your Serper API key (and model provider key) before running:
+
+```python
+import os
+
+os.environ["SERPER_API_KEY"] = "your-serper-api-key"
+# e.g. OPENAI_API_KEY for the default LLM
+```
+
+Full crew sketch:
+
+```python
+from crewai import Agent, Crew, Process, Task
+from crewai_tools import SerperDevTool
+
+search_tool = SerperDevTool()
+
+researcher = Agent(
+    role="Web Researcher",
+    goal="Answer questions using current web results",
+    backstory="You search first, then synthesize; you never invent URLs.",
+    tools=[search_tool],
+    verbose=True,
+)
+
+task = Task(
+    description=(
+        "Search for what CrewAI is and list three bullet points: "
+        "what it is, one main use case, and the official site or docs URL if found."
+    ),
+    expected_output="Three markdown bullets with factual, search-backed points.",
+    agent=researcher,
+    tools=[search_tool],
+)
+
+crew = Crew(
+    agents=[researcher],
+    tasks=[task],
+    process=Process.sequential,
+    verbose=True,
+)
+
+result = crew.kickoff()
+print(result)
+```
+
+## Tool Errors and Caching
+
+- **Errors**: Tools call real APIs and filesystems. Network failures, rate limits, missing keys, or invalid paths surface as tool errors. The agent may retry or adjust depending on your LLM and crew settings; design tasks so failures produce a clear `expected_output` (e.g. “state that search failed and why”).
+- **Caching**: On `Agent`, set `cache=True` to cache tool results for identical invocations within a run, which can reduce duplicate API calls and cost. Use it when repeated reads or searches would otherwise hit the same inputs.
+
+```python
+efficient_agent = Agent(
+    role="Analyst",
+    goal="Analyze without redundant tool calls",
+    backstory="You reuse prior tool output when the question repeats.",
+    tools=[SerperDevTool()],
+    cache=True,
+    verbose=True,
+)
+```
+
+## Key Takeaways
+
+- Tools bridge agents to **external systems** (search, files, code execution, documents).
+- **`tools=[...]` on `Agent`** defines the default toolkit for that agent.
+- **`tools` on `Task`** **overrides** the agent’s tools for that task only.
+- **`crewai_tools`** provides many ready-made tools; pair each with the right **API keys** and paths.
+- **`cache=True`** on an agent can cut duplicate tool work; handle **tool errors** explicitly in task descriptions and expected outputs.

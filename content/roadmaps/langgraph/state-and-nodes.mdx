@@ -1,0 +1,97 @@
+# State, Nodes & Edges
+
+Understanding state flow is the foundation of building effective LangGraph workflows. This topic covers how state is defined, how nodes transform it, and how edges control the flow.
+
+## Defining State
+
+State is a typed dictionary that flows through every node in the graph:
+
+```python
+from typing import TypedDict, Annotated
+from operator import add
+
+class AgentState(TypedDict):
+    messages: Annotated[list[str], add]
+    current_step: str
+    final_answer: str
+```
+
+### Reducers
+
+The `Annotated[list[str], add]` syntax defines a **reducer**. When a node returns `{"messages": ["new message"]}`, the reducer determines how to merge it with existing state:
+
+- `add` — appends to the list (doesn't replace it)
+- Default — overwrites the previous value
+
+This is powerful for accumulating data like message histories.
+
+## Defining Nodes
+
+A node is a Python function that takes state and returns a partial state update:
+
+```python
+def research_node(state: AgentState) -> dict:
+    topic = state["messages"][-1]
+    result = do_research(topic)
+    return {
+        "messages": [f"Research findings: {result}"],
+        "current_step": "research_complete",
+    }
+
+def write_node(state: AgentState) -> dict:
+    findings = state["messages"][-1]
+    draft = write_article(findings)
+    return {
+        "messages": [f"Draft: {draft}"],
+        "final_answer": draft,
+    }
+```
+
+Key rules:
+- Nodes receive the **full** current state
+- Nodes return a **partial** dict with only the fields they want to update
+- Reducers handle merging returned values with existing state
+
+## Connecting Edges
+
+Edges define the flow between nodes:
+
+```python
+from langgraph.graph import StateGraph, START, END
+
+graph = StateGraph(AgentState)
+
+graph.add_node("research", research_node)
+graph.add_node("write", write_node)
+
+graph.add_edge(START, "research")
+graph.add_edge("research", "write")
+graph.add_edge("write", END)
+
+app = graph.compile()
+```
+
+### Edge Types
+
+| Type | Description |
+|------|-------------|
+| `add_edge(a, b)` | Always go from node `a` to node `b` |
+| `add_conditional_edges(a, fn)` | Call `fn(state)` to decide which node to go to next |
+| `START` | Entry point of the graph |
+| `END` | Terminal node — the graph stops here |
+
+## State Flow Diagram
+
+```
+START → research_node → write_node → END
+         ↓ updates:       ↓ updates:
+         messages[]        messages[]
+         current_step      final_answer
+```
+
+## Key Takeaways
+
+- State is a typed dictionary that accumulates data across nodes
+- Reducers (like `add`) control how state fields are merged
+- Nodes receive full state and return partial updates
+- Edges connect nodes and can be conditional

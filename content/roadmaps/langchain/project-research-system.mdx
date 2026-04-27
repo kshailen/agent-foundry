@@ -1,0 +1,227 @@
+# Project: Multi-Agent Research System
+
+In this project, you'll build a multi-agent research system with a router agent that dispatches queries to specialist agents — a web researcher, a summarizer, and a report writer. The system uses handoffs, streaming progress, and structured output to produce cited research reports.
+
+## What You'll Build
+
+A research system that can:
+
+- Route incoming queries to the right specialist agent
+- Search the web for information using a research tool
+- Summarize lengthy content into concise findings
+- Produce structured reports with citations and sections
+
+## Step 1: Define the Search Tool
+
+Create a web search tool that the researcher agent will use:
+
+```python
+from langchain_core.tools import tool
+
+@tool
+def web_search(query: str) -> str:
+    """Search the web for information on a topic."""
+    results = {
+        "machine learning trends 2025": (
+            "[Source: MIT Tech Review] Multimodal models dominate enterprise AI adoption. "
+            "Fine-tuning smaller models outperforms prompting larger ones for specific tasks. "
+            "Agent frameworks emerge as the primary way to build AI applications."
+        ),
+        "climate change solutions": (
+            "[Source: Nature] Carbon capture technology scales to industrial levels. "
+            "Solar energy costs drop below fossil fuels globally. "
+            "Reforestation programs show measurable impact on CO2 levels."
+        ),
+    }
+    for key, value in results.items():
+        if any(word in query.lower() for word in key.split()):
+            return value
+    return f"Search results for '{query}': General information found. Consider refining your query."
+```
+
+## Step 2: Create Specialist Agents
+
+Build three specialist agents with distinct roles:
+
+```python
+from langchain.chat_models import init_chat_model
+from langgraph.prebuilt import create_react_agent
+
+model = init_chat_model("gpt-4o-mini", model_provider="openai")
+
+web_researcher = create_react_agent(
+    model=model,
+    tools=[web_search],
+    name="web_researcher",
+    prompt=(
+        "You are a web researcher. Use the web_search tool to find information. "
+        "Return raw findings with source attributions. Do not summarize."
+    ),
+)
+
+summarizer = create_react_agent(
+    model=model,
+    tools=[],
+    name="summarizer",
+    prompt=(
+        "You are a summarizer. Take lengthy text and condense it into "
+        "3-5 key bullet points. Preserve source citations."
+    ),
+)
+
+report_writer = create_react_agent(
+    model=model,
+    tools=[],
+    name="report_writer",
+    prompt=(
+        "You are a report writer. Take research findings and produce a structured report "
+        "with sections: Overview, Key Findings, and Conclusion. Include citations."
+    ),
+)
+```
+
+## Step 3: Build the Router Agent
+
+Create a router that dispatches to the right specialist using handoffs:
+
+```python
+router = create_react_agent(
+    model=model,
+    tools=[],
+    name="router",
+    prompt=(
+        "You are a research coordinator. Analyze the user's request and route to the right specialist:\n"
+        "- web_researcher: when the user needs new information gathered\n"
+        "- summarizer: when the user has text that needs condensing\n"
+        "- report_writer: when the user has findings ready for a final report\n"
+        "For a full research request, start with web_researcher."
+    ),
+    handoffs=["web_researcher", "summarizer", "report_writer"],
+)
+```
+
+## Step 4: Structured Report Output
+
+Define a structured output schema for the final report:
+
+```python
+from pydantic import BaseModel, Field
+
+class ReportOutput(BaseModel):
+    title: str = Field(description="Report title")
+    overview: str = Field(description="Brief overview of the research topic")
+    key_findings: list[str] = Field(description="List of key findings with citations")
+    conclusion: str = Field(description="Summary conclusion")
+    sources: list[str] = Field(description="List of sources cited")
+
+structured_report_writer = create_react_agent(
+    model=model,
+    tools=[],
+    name="report_writer",
+    prompt=(
+        "You are a report writer. Produce a structured research report. "
+        "Include an overview, key findings with citations, conclusion, and sources list."
+    ),
+    response_format=ReportOutput,
+)
+```
+
+## Step 5: Run the Research Pipeline
+
+Execute a full research workflow:
+
+```python
+from langchain_core.messages import HumanMessage
+
+result = router.invoke({
+    "messages": [HumanMessage(content="Research the latest trends in machine learning")]
+})
+print(result["messages"][-1].content)
+```
+
+## Step 6: Streaming Progress
+
+Stream agent events to show real-time progress:
+
+```python
+async for event in router.astream_events(
+    {"messages": [HumanMessage(content="Research climate change solutions")]},
+    version="v2",
+):
+    if event["event"] == "on_chat_model_stream":
+        chunk = event["data"]["chunk"]
+        if chunk.content:
+            print(chunk.content, end="", flush=True)
+    elif event["event"] == "on_tool_start":
+        print(f"\n[Using tool: {event['name']}]")
+    elif event["event"] == "on_chain_start":
+        if "agent" in event.get("name", ""):
+            print(f"\n[Agent: {event['name']}]")
+```
+
+## Full Code
+
+```python
+from langchain.chat_models import init_chat_model
+from langchain_core.messages import HumanMessage
+from langchain_core.tools import tool
+from langgraph.prebuilt import create_react_agent
+from pydantic import BaseModel, Field
+
+@tool
+def web_search(query: str) -> str:
+    """Search the web for information on a topic."""
+    results = {
+        "machine learning": "[MIT Tech Review] Multimodal models dominate. Fine-tuning outperforms prompting.",
+        "climate change": "[Nature] Carbon capture scales. Solar costs drop below fossil fuels.",
+    }
+    for key, value in results.items():
+        if key in query.lower():
+            return value
+    return f"Results for '{query}': General information found."
+
+model = init_chat_model("gpt-4o-mini", model_provider="openai")
+
+web_researcher = create_react_agent(
+    model=model, tools=[web_search], name="web_researcher",
+    prompt="You are a web researcher. Use web_search to find information. Return raw findings with sources.",
+)
+
+summarizer = create_react_agent(
+    model=model, tools=[], name="summarizer",
+    prompt="You are a summarizer. Condense text into 3-5 key bullet points with citations.",
+)
+
+class ReportOutput(BaseModel):
+    title: str = Field(description="Report title")
+    overview: str = Field(description="Brief overview")
+    key_findings: list[str] = Field(description="Key findings with citations")
+    conclusion: str = Field(description="Summary conclusion")
+    sources: list[str] = Field(description="Sources cited")
+
+report_writer = create_react_agent(
+    model=model, tools=[], name="report_writer",
+    prompt="You are a report writer. Produce structured reports with overview, findings, conclusion, and sources.",
+    response_format=ReportOutput,
+)
+
+router = create_react_agent(
+    model=model, tools=[], name="router",
+    prompt="You are a research coordinator. Route to web_researcher, summarizer, or report_writer as needed.",
+    handoffs=["web_researcher", "summarizer", "report_writer"],
+)
+
+result = router.invoke({
+    "messages": [HumanMessage(content="Research the latest trends in machine learning")]
+})
+print(result["messages"][-1].content)
+```
+
+## Key Takeaways
+
+- A router agent dispatches to specialist agents using the `handoffs` parameter
+- Specialist agents (researcher, summarizer, report writer) each have focused prompts and tools
+- `response_format` with a Pydantic model produces structured output like `ReportOutput`
+- `astream_events` provides real-time streaming of agent progress and tool invocations
+- Handoffs enable clean separation of concerns — each agent does one thing well
+- The pattern scales by adding more specialists without modifying the router's logic

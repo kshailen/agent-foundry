@@ -1,0 +1,47 @@
+## The Problem
+
+Your agent calls an external API that fails roughly 70% of the time with transient errors (connection timeouts, 503s). Right now the agent crashes on the first failure — no retries, no backoff, no fallback message. In reality, transient failures often resolve themselves if you wait a moment and try again. Your job is to implement **exponential backoff retry logic** (1s → 2s → 4s) so the agent automatically retries on transient failures and only gives up after a set number of attempts.
+
+## Examples
+
+### Example 1
+
+**User input:** Get the latest stock price for AAPL
+
+**Current (bad) output:** `ConnectionError: Service temporarily unavailable` *(crash on first failure)*
+
+**Expected (good) output:** The agent retries up to 3 times with increasing delays. If the API recovers on attempt 2 or 3, the user gets the result. If all retries fail: *"I wasn't able to reach the stock price service after multiple attempts. Please try again later."*
+
+### Example 2
+
+**User input:** Check the weather in New York
+
+**Current (bad) output:** Immediate crash with an unhandled exception.
+
+**Expected (good) output:** Retry 1 (wait 1s) → fails. Retry 2 (wait 2s) → succeeds. User sees: `"Current weather in New York: 72°F, partly cloudy."`
+
+### Example 3
+
+**User input:** Fetch the latest exchange rate for USD to EUR
+
+**Current (bad) output:** Unhandled `ConnectionError` stack trace.
+
+**Expected (good) output:** All 3 retries fail → *"The exchange rate service is currently unavailable. Please try again in a few minutes."*
+
+## Your Task
+
+Implement **exponential backoff retry logic** so the agent:
+
+- Retries transient failures up to 3 times with delays of 1s, 2s, and 4s.
+- Returns results normally when a retry succeeds.
+- Returns a user-friendly message after all retries are exhausted.
+- Only retries on transient errors (not on permanent failures like invalid input).
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Uses exponential backoff:** Retry delays double each time (1s, 2s, 4s).
+- **Respects max retry limit:** The agent stops after 3 failed attempts.
+- **Fails gracefully:** After exhausting retries, the user sees a helpful message instead of a crash.
+- **Succeeds when API recovers:** If the API works on a later attempt, the result is returned normally.

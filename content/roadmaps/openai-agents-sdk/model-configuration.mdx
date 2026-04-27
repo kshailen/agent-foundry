@@ -1,0 +1,188 @@
+# Model Configuration & Providers
+
+The OpenAI Agents SDK gives you fine-grained control over which models your agents use and how they behave. You can tune model parameters with `ModelSettings`, swap models per agent or per run, route to multiple providers with `MultiProvider`, and integrate non-OpenAI models through LiteLLM.
+
+## ModelSettings
+
+`ModelSettings` lets you configure inference parameters for any agent:
+
+```python
+from agents import Agent, ModelSettings
+
+agent = Agent(
+    name="Creative Writer",
+    instructions="You write creative fiction with vivid imagery.",
+    model_settings=ModelSettings(
+        temperature=0.9,
+        top_p=0.95,
+        tool_choice="auto",
+        parallel_tool_calls=True,
+    ),
+)
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `temperature` | `float` | Controls randomness (0.0 = deterministic, 2.0 = max creative) |
+| `top_p` | `float` | Nucleus sampling — considers tokens with cumulative probability ≤ top_p |
+| `tool_choice` | `str` | `"auto"`, `"required"`, `"none"`, or a specific tool name |
+| `parallel_tool_calls` | `bool` | Whether the model can call multiple tools in a single turn |
+
+## Setting the Default API Type
+
+By default, the SDK uses the OpenAI Responses API. To switch all agents to the Chat Completions API:
+
+```python
+from agents import set_default_openai_api
+
+set_default_openai_api("chat_completions")
+```
+
+This is useful when you need features specific to the Chat Completions endpoint or when working with providers that only support that format.
+
+## Per-Agent Model with OpenAIChatCompletionsModel
+
+Assign a specific model to an individual agent using `OpenAIChatCompletionsModel`:
+
+```python
+from agents import Agent
+from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
+from openai import AsyncOpenAI
+
+client = AsyncOpenAI()
+
+fast_agent = Agent(
+    name="Fast Responder",
+    instructions="You give quick, concise answers.",
+    model=OpenAIChatCompletionsModel(
+        model="gpt-4o-mini",
+        openai_client=client,
+    ),
+)
+
+smart_agent = Agent(
+    name="Deep Thinker",
+    instructions="You provide thorough, well-reasoned analysis.",
+    model=OpenAIChatCompletionsModel(
+        model="gpt-4o",
+        openai_client=client,
+    ),
+)
+```
+
+## Per-Run Override with RunConfig
+
+Override the model for a specific run without changing the agent definition:
+
+```python
+from agents import Runner, RunConfig
+
+result = await Runner.run(
+    agent,
+    "Summarize this document",
+    run_config=RunConfig(model="gpt-4o-mini"),
+)
+print(result.final_output)
+```
+
+`RunConfig(model=)` takes precedence over the agent's configured model, letting you switch models dynamically — for example, using a cheaper model for simple tasks and a stronger model for complex ones.
+
+## MultiProvider for Prefix Routing
+
+`MultiProvider` routes model requests to different backends based on a prefix in the model name:
+
+```python
+from agents import Agent, Runner, RunConfig
+from agents.models.multi_provider import MultiProvider
+from agents.models.openai_provider import OpenAIProvider
+
+multi = MultiProvider(
+    providers=[
+        OpenAIProvider(prefix="openai/"),
+        OpenAIProvider(
+            prefix="custom/",
+            api_key="your-custom-api-key",
+            base_url="https://your-custom-endpoint.com/v1",
+        ),
+    ],
+)
+
+agent = Agent(
+    name="Router Agent",
+    instructions="You are a helpful assistant.",
+)
+
+result = await Runner.run(
+    agent,
+    "Hello!",
+    run_config=RunConfig(
+        model="openai/gpt-4o-mini",
+        model_provider=multi,
+    ),
+)
+```
+
+## LiteLLM Adapter for Non-OpenAI Providers
+
+Use the LiteLLM adapter to connect to Anthropic, Google, Mistral, and other providers:
+
+```python
+from agents import Agent, Runner, RunConfig
+from agents.extensions.litellm_provider import LitellmModel
+
+anthropic_agent = Agent(
+    name="Claude Agent",
+    instructions="You are a helpful assistant powered by Claude.",
+    model=LitellmModel(model="anthropic/claude-sonnet-4-20250514"),
+)
+
+result = await Runner.run(anthropic_agent, "Explain quantum computing in simple terms.")
+print(result.final_output)
+```
+
+You can also set the model at run time:
+
+```python
+result = await Runner.run(
+    agent,
+    "Hello!",
+    run_config=RunConfig(
+        model=LitellmModel(model="gemini/gemini-2.0-flash"),
+    ),
+)
+```
+
+## Retry Policies
+
+Configure automatic retries for transient API errors:
+
+```python
+from agents import Agent, RunConfig
+
+config = RunConfig(
+    max_retries=3,
+    retry_delay=1.0,
+)
+
+result = await Runner.run(agent, "Analyze this data", run_config=config)
+```
+
+## Model Configuration Hierarchy
+
+The SDK resolves the model in a specific order of precedence:
+
+| Priority | Source | Scope |
+|----------|--------|-------|
+| 1 (highest) | `RunConfig(model=)` | Per-run override |
+| 2 | `Agent(model=)` | Per-agent configuration |
+| 3 | Default SDK model | Global fallback |
+
+## Key Takeaways
+
+- Use `ModelSettings` to tune temperature, top_p, tool_choice, and parallel_tool_calls per agent
+- Call `set_default_openai_api("chat_completions")` to switch all agents to the Chat Completions API
+- Use `OpenAIChatCompletionsModel` to assign a specific model and client to an individual agent
+- Override models per run with `RunConfig(model=)` for dynamic model selection
+- Use `MultiProvider` to route requests to different backends based on model name prefixes
+- Integrate non-OpenAI providers (Anthropic, Google, Mistral) through the LiteLLM adapter
+- Model resolution follows RunConfig → Agent → Default priority

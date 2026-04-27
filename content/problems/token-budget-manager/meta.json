@@ -1,0 +1,56 @@
+{
+  "number": 96,
+  "title": "Token Budget Manager",
+  "difficulty": "medium",
+  "categories": [
+    "cost-optimization"
+  ],
+  "frameworks": [
+    "langchain",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "Each agent run must enforce a $0.05 budget limit",
+    "Token usage must be tracked per call and cumulatively across the run",
+    "The agent must stop gracefully when the budget is exhausted, returning a partial result",
+    "The budget tracker must use actual token counts from API responses, not estimates"
+  ],
+  "hints": [
+    "Use the usage metadata returned by the LLM API (prompt_tokens, completion_tokens) to calculate cost after each call",
+    "Multiply token counts by the model's per-token pricing to get cost; check remaining budget before each new call",
+    "When budget is nearly exhausted, have the agent summarize what it has so far and return that as the final answer"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain_core.messages import HumanMessage, SystemMessage\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# BUG: No cost tracking — the agent can make unlimited LLM calls with no budget awareness\n# TODO: Add token budget tracking with a $0.05 per-run limit\ndef research_and_summarize(topic: str) -> str:\n    sources = []\n    for i in range(10):\n        response = llm.invoke([\n            SystemMessage(content=f\"Research aspect {i+1} of this topic. Provide detailed findings.\"),\n            HumanMessage(content=topic),\n        ])\n        sources.append(response.content)\n\n    summary = llm.invoke([\n        SystemMessage(content=\"Combine these research findings into a comprehensive summary.\"),\n        HumanMessage(content=\"\\n\\n\".join(sources)),\n    ])\n    return summary.content\n\nresult = research_and_summarize(\"The future of renewable energy\")\nprint(result)",
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom agents.tool import function_tool\n\n@function_tool\ndef deep_research(aspect: str) -> str:\n    \"\"\"Research a specific aspect of the topic.\"\"\"\n    return f\"Detailed findings about {aspect}: Lorem ipsum research data...\"\n\n# BUG: No cost tracking — the agent can make unlimited LLM calls with no budget awareness\n# TODO: Add token budget tracking with a $0.05 per-run limit\nagent = Agent(\n    name=\"Researcher\",\n    instructions=\"\"\"You are a thorough researcher. For any topic:\n1. Break it into 10 aspects\n2. Research each aspect using the deep_research tool\n3. Synthesize all findings into a comprehensive report\nBe as thorough as possible.\"\"\",\n    tools=[deep_research],\n)\n\nresult = Runner.run_sync(agent, \"The future of renewable energy\")\nprint(result.final_output)",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai import LLM\n\nllm = LLM(model=\"gpt-4o-mini\")\n\n# BUG: No cost tracking — the agent can make unlimited LLM calls with no budget awareness\n# TODO: Add token budget tracking with a $0.05 per-run limit\ndef research_and_summarize(topic: str) -> str:\n    sources = []\n    for i in range(10):\n        researcher = Agent(\n            role=\"Researcher\",\n            goal=f\"Research aspect {i+1} of the topic\",\n            backstory=f\"Research aspect {i+1} of this topic. Provide detailed findings.\",\n            llm=llm,\n        )\n        task = Task(\n            description=topic,\n            expected_output=\"Detailed research findings\",\n            agent=researcher,\n        )\n        crew = Crew(agents=[researcher], tasks=[task])\n        result = crew.kickoff()\n        sources.append(str(result))\n\n    summarizer = Agent(\n        role=\"Summarizer\",\n        goal=\"Combine research into a comprehensive summary\",\n        backstory=\"Combine these research findings into a comprehensive summary.\",\n        llm=llm,\n    )\n    summary_task = Task(\n        description=\"\\n\\n\".join(sources),\n        expected_output=\"A comprehensive summary\",\n        agent=summarizer,\n    )\n    crew = Crew(agents=[summarizer], tasks=[summary_task])\n    return str(crew.kickoff())\n\nresult = research_and_summarize(\"The future of renewable energy\")\nprint(result)"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/token-budget-manager-langchain.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/token-budget-manager-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/token-budget-manager-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "enforces-budget",
+      "label": "Enforces budget limit",
+      "description": "The agent stops making LLM calls once the $0.05 budget is reached"
+    },
+    {
+      "id": "tracks-usage",
+      "label": "Tracks token usage",
+      "description": "Token usage is tracked per call and cumulatively across the entire run"
+    },
+    {
+      "id": "graceful-stop",
+      "label": "Graceful stop at limit",
+      "description": "When budget is exhausted, the agent returns a partial result rather than crashing"
+    },
+    {
+      "id": "actual-token-counts",
+      "label": "Uses actual token counts",
+      "description": "Cost calculations use real token counts from API responses, not estimates"
+    }
+  ]
+}

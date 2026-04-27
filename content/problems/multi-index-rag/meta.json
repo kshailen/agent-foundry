@@ -1,0 +1,51 @@
+{
+  "number": 57,
+  "title": "Multi-Index RAG",
+  "difficulty": "hard",
+  "categories": [
+    "rag"
+  ],
+  "frameworks": [
+    "langchain",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "FAQ and technical documentation must be stored in separate vector store indexes",
+    "The agent must route queries to the correct index based on query type",
+    "The routing decision must happen before retrieval, not after",
+    "Both indexes must remain searchable for their respective query types"
+  ],
+  "hints": [
+    "Classify the query type (FAQ vs technical) before choosing which index to search",
+    "Use an LLM or rule-based classifier to determine the appropriate index",
+    "Consider that some queries may need results from both indexes"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI, OpenAIEmbeddings\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom langchain_community.vectorstores import FAISS\nfrom langchain_core.documents import Document\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\nembeddings = OpenAIEmbeddings()\n\nfaq_docs = [\n    Document(page_content=\"Q: How do I reset my password? A: Go to Settings > Security > Reset Password.\"),\n    Document(page_content=\"Q: What payment methods do you accept? A: We accept Visa, Mastercard, and PayPal.\"),\n    Document(page_content=\"Q: How do I cancel my subscription? A: Go to Billing > Manage Subscription > Cancel.\"),\n]\n\ntechnical_docs = [\n    Document(page_content=\"POST /api/v2/auth/reset-password - Requires email field. Returns 200 with reset token.\"),\n    Document(page_content=\"GET /api/v2/billing/subscription - Returns subscription object with status, plan, and next_billing_date.\"),\n    Document(page_content=\"Authentication: All API requests require Bearer token in Authorization header.\"),\n]\n\n# BUG: Everything dumped into a single index — FAQ and technical docs get mixed\nall_docs = faq_docs + technical_docs\nvectorstore = FAISS.from_documents(all_docs, embeddings)\nretriever = vectorstore.as_retriever()\n\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"Answer based on context.\\n\\nContext: {context}\"),\n    (\"human\", \"{question}\"),\n])\n\ndef ask(question: str) -> str:\n    docs = retriever.invoke(question)\n    context = \"\\n\".join([doc.page_content for doc in docs])\n    chain = prompt | llm\n    result = chain.invoke({\"context\": context, \"question\": question})\n    return result.content\n\n# FAQ question gets technical API docs mixed in\nprint(ask(\"How do I reset my password?\"))\n# Technical question gets FAQ mixed in\nprint(ask(\"What is the API endpoint for password reset?\"))",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai.tools import tool\nfrom langchain_openai import OpenAIEmbeddings\nfrom langchain_community.vectorstores import FAISS\nfrom langchain_core.documents import Document\n\nembeddings = OpenAIEmbeddings()\n\nfaq_docs = [\n    Document(page_content=\"Q: How do I reset my password? A: Go to Settings > Security > Reset Password.\"),\n    Document(page_content=\"Q: What payment methods do you accept? A: We accept Visa, Mastercard, and PayPal.\"),\n    Document(page_content=\"Q: How do I cancel my subscription? A: Go to Billing > Manage Subscription > Cancel.\"),\n]\n\ntechnical_docs = [\n    Document(page_content=\"POST /api/v2/auth/reset-password - Requires email field. Returns 200 with reset token.\"),\n    Document(page_content=\"GET /api/v2/billing/subscription - Returns subscription object with status, plan, and next_billing_date.\"),\n    Document(page_content=\"Authentication: All API requests require Bearer token in Authorization header.\"),\n]\n\n# BUG: Everything dumped into a single index — FAQ and technical docs get mixed\nall_docs = faq_docs + technical_docs\nvectorstore = FAISS.from_documents(all_docs, embeddings)\nretriever = vectorstore.as_retriever()\n\n@tool\ndef search_docs(question: str) -> str:\n    \"\"\"Search documentation to answer a question.\"\"\"\n    docs = retriever.invoke(question)\n    return \"\\n\".join([doc.page_content for doc in docs])\n\nsupport_agent = Agent(\n    role=\"Support Agent\",\n    goal=\"Answer user and developer questions accurately\",\n    backstory=\"You are a support agent who helps both end users and developers.\",\n    tools=[search_docs],\n)\n\ntask1 = Task(\n    description=\"How do I reset my password?\",\n    expected_output=\"Instructions for resetting password\",\n    agent=support_agent,\n)\ncrew1 = Crew(agents=[support_agent], tasks=[task1])\nprint(crew1.kickoff())\n\ntask2 = Task(\n    description=\"What is the API endpoint for password reset?\",\n    expected_output=\"API endpoint details\",\n    agent=support_agent,\n)\ncrew2 = Crew(agents=[support_agent], tasks=[task2])\nprint(crew2.kickoff())",
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom agents.tool import function_tool\nfrom langchain_openai import OpenAIEmbeddings\nfrom langchain_community.vectorstores import FAISS\nfrom langchain_core.documents import Document\n\nembeddings = OpenAIEmbeddings()\n\nfaq_docs = [\n    Document(page_content=\"Q: How do I reset my password? A: Go to Settings > Security > Reset Password.\"),\n    Document(page_content=\"Q: What payment methods do you accept? A: We accept Visa, Mastercard, and PayPal.\"),\n    Document(page_content=\"Q: How do I cancel my subscription? A: Go to Billing > Manage Subscription > Cancel.\"),\n]\n\ntechnical_docs = [\n    Document(page_content=\"POST /api/v2/auth/reset-password - Requires email field. Returns 200 with reset token.\"),\n    Document(page_content=\"GET /api/v2/billing/subscription - Returns subscription object with status, plan, and next_billing_date.\"),\n    Document(page_content=\"Authentication: All API requests require Bearer token in Authorization header.\"),\n]\n\n# BUG: Everything dumped into a single index — FAQ and technical docs get mixed\nall_docs = faq_docs + technical_docs\nvectorstore = FAISS.from_documents(all_docs, embeddings)\nretriever = vectorstore.as_retriever()\n\n@function_tool\ndef search_docs(question: str) -> str:\n    \"\"\"Search documentation to answer a question.\"\"\"\n    docs = retriever.invoke(question)\n    return \"\\n\".join([doc.page_content for doc in docs])\n\nagent = Agent(\n    name=\"Support Agent\",\n    instructions=\"You are a support agent. Answer questions using the search tool.\",\n    tools=[search_docs],\n)\n\nprint(Runner.run_sync(agent, \"How do I reset my password?\").final_output)\nprint(Runner.run_sync(agent, \"What is the API endpoint for password reset?\").final_output)"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/multi-index-rag-langchain.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/multi-index-rag-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/multi-index-rag-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "separate-indexes",
+      "label": "Uses separate indexes",
+      "description": "FAQ and technical documents are stored in separate vector store indexes"
+    },
+    {
+      "id": "routes-correctly",
+      "label": "Routes queries to correct index",
+      "description": "The agent correctly routes FAQ questions to the FAQ index and technical questions to the technical index"
+    },
+    {
+      "id": "accurate-answers",
+      "label": "Returns accurate answers",
+      "description": "Answers are sourced from the correct index and are accurate for the query type"
+    }
+  ]
+}

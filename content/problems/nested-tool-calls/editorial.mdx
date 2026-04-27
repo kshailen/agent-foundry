@@ -1,0 +1,216 @@
+## Approach
+
+The customer service agent has two tools — `find_user` (looks up a user by name, returns their ID) and `get_orders` (fetches orders by user ID). The correct flow is to call `find_user` first, extract the user ID from its response, then pass that ID to `get_orders`. However, the agent frequently skips `find_user` and either hallucinates a user ID or passes the user's name directly to `get_orders`, which expects an ID format like "USR-001."
+
+The root cause is the system prompt: it says "help users look up their orders" but gives no guidance about the two-step dependency. The LLM sees `get_orders` and tries to call it directly with whatever identifier it has (the user's name). The fix is to update the prompt with explicit instructions about the required tool chaining: always call `find_user` first, extract the ID from the result, then pass that ID to `get_orders`. The tools themselves don't need changes.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+
+@tool
+def find_user(name: str) -> str:
+    """Find a user by name and return their user ID."""
+    users = {"alice": "USR-001", "bob": "USR-002", "charlie": "USR-003"}
+    user_id = users.get(name.lower())
+    if user_id:
+        return f"Found user '{name}' with ID: {user_id}"
+    return f"No user found with name '{name}'"
+
+
+@tool
+def get_orders(user_id: str) -> str:
+    """Get recent orders for a user by their user ID."""
+    orders = {
+        "USR-001": "Order #1234: Laptop ($999), Order #1235: Mouse ($29)",
+        "USR-002": "Order #1236: Keyboard ($79), Order #1237: Monitor ($449)",
+        "USR-003": "No recent orders",
+    }
+    return orders.get(user_id, f"No orders found for user ID: {user_id}")
+
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", (
+        "You are a customer service assistant. To look up a user's orders, you MUST follow these steps:\n\n"
+        "1. ALWAYS call find_user first with the person's name to get their user ID.\n"
+        "2. Extract the user ID (format: USR-XXX) from the find_user result.\n"
+        "3. Call get_orders with that exact user ID.\n\n"
+        "NEVER call get_orders directly with a person's name. "
+        "NEVER guess or invent user IDs. Always look them up with find_user first."
+    )),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}"),
+])
+
+agent = create_tool_calling_agent(llm, [find_user, get_orders], prompt)
+executor = AgentExecutor(agent=agent, tools=[find_user, get_orders])
+
+result = executor.invoke({"input": "Show me Alice's recent orders"})
+print(result["output"])
+```
+
+### LangGraph
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.tools import tool
+from langgraph.prebuilt import create_react_agent
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+
+@tool
+def find_user(name: str) -> str:
+    """Find a user by name and return their user ID."""
+    users = {"alice": "USR-001", "bob": "USR-002", "charlie": "USR-003"}
+    user_id = users.get(name.lower())
+    if user_id:
+        return f"Found user '{name}' with ID: {user_id}"
+    return f"No user found with name '{name}'"
+
+
+@tool
+def get_orders(user_id: str) -> str:
+    """Get recent orders for a user by their user ID."""
+    orders = {
+        "USR-001": "Order #1234: Laptop ($999), Order #1235: Mouse ($29)",
+        "USR-002": "Order #1236: Keyboard ($79), Order #1237: Monitor ($449)",
+        "USR-003": "No recent orders",
+    }
+    return orders.get(user_id, f"No orders found for user ID: {user_id}")
+
+
+agent = create_react_agent(
+    llm,
+    [find_user, get_orders],
+    prompt=(
+        "You are a customer service assistant. To look up a user's orders, you MUST follow these steps:\n\n"
+        "1. ALWAYS call find_user first with the person's name to get their user ID.\n"
+        "2. Extract the user ID (format: USR-XXX) from the find_user result.\n"
+        "3. Call get_orders with that exact user ID.\n\n"
+        "NEVER call get_orders directly with a person's name. "
+        "NEVER guess or invent user IDs. Always look them up with find_user first."
+    ),
+)
+
+result = agent.invoke({"messages": [("human", "Show me Alice's recent orders")]})
+print(result["messages"][-1].content)
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from crewai.tools import tool
+
+
+@tool
+def find_user(name: str) -> str:
+    """Find a user by name and return their user ID."""
+    users = {"alice": "USR-001", "bob": "USR-002", "charlie": "USR-003"}
+    user_id = users.get(name.lower())
+    if user_id:
+        return f"Found user '{name}' with ID: {user_id}"
+    return f"No user found with name '{name}'"
+
+
+@tool
+def get_orders(user_id: str) -> str:
+    """Get recent orders for a user by their user ID."""
+    orders = {
+        "USR-001": "Order #1234: Laptop ($999), Order #1235: Mouse ($29)",
+        "USR-002": "Order #1236: Keyboard ($79), Order #1237: Monitor ($449)",
+        "USR-003": "No recent orders",
+    }
+    return orders.get(user_id, f"No orders found for user ID: {user_id}")
+
+
+assistant = Agent(
+    role="Customer Service Assistant",
+    goal="Help customers look up their orders",
+    backstory=(
+        "You are a customer service assistant. To look up a user's orders, you MUST follow these steps:\n\n"
+        "1. ALWAYS call find_user first with the person's name to get their user ID.\n"
+        "2. Extract the user ID (format: USR-XXX) from the find_user result.\n"
+        "3. Call get_orders with that exact user ID.\n\n"
+        "NEVER call get_orders directly with a person's name. "
+        "NEVER guess or invent user IDs. Always look them up with find_user first."
+    ),
+    tools=[find_user, get_orders],
+)
+
+task = Task(
+    description="Show me Alice's recent orders",
+    expected_output="Alice's recent order details",
+    agent=assistant,
+)
+
+crew = Crew(agents=[assistant], tasks=[task])
+print(crew.kickoff())
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from agents.tool import function_tool
+
+
+@function_tool
+def find_user(name: str) -> str:
+    """Find a user by name and return their user ID."""
+    users = {"alice": "USR-001", "bob": "USR-002", "charlie": "USR-003"}
+    user_id = users.get(name.lower())
+    if user_id:
+        return f"Found user '{name}' with ID: {user_id}"
+    return f"No user found with name '{name}'"
+
+
+@function_tool
+def get_orders(user_id: str) -> str:
+    """Get recent orders for a user by their user ID."""
+    orders = {
+        "USR-001": "Order #1234: Laptop ($999), Order #1235: Mouse ($29)",
+        "USR-002": "Order #1236: Keyboard ($79), Order #1237: Monitor ($449)",
+        "USR-003": "No recent orders",
+    }
+    return orders.get(user_id, f"No orders found for user ID: {user_id}")
+
+
+agent = Agent(
+    name="Customer Service Assistant",
+    instructions=(
+        "You are a customer service assistant. To look up a user's orders, you MUST follow these steps:\n\n"
+        "1. ALWAYS call find_user first with the person's name to get their user ID.\n"
+        "2. Extract the user ID (format: USR-XXX) from the find_user result.\n"
+        "3. Call get_orders with that exact user ID.\n\n"
+        "NEVER call get_orders directly with a person's name. "
+        "NEVER guess or invent user IDs. Always look them up with find_user first."
+    ),
+    tools=[find_user, get_orders],
+)
+
+result = Runner.run_sync(agent, "Show me Alice's recent orders")
+print(result.final_output)
+```
+
+## Why This Works
+
+The updated prompt explicitly tells the LLM about the data dependency: `get_orders` requires a user ID that can only come from `find_user`. Without this guidance, the LLM sees two tools and tries to take the most direct path to the user's goal — calling `get_orders` with whatever identifier it can infer (the name "Alice" or a hallucinated ID like "USR-123"). By stating "NEVER call get_orders directly with a person's name" and "NEVER guess or invent user IDs," the prompt closes both failure modes.
+
+The key insight is that tool descriptions alone aren't enough when tools have data dependencies. The `get_orders` docstring says "by their user ID" but the LLM doesn't always respect that constraint. Explicit chaining instructions in the system prompt are needed to enforce the correct call sequence.
+
+## Key Takeaways
+
+- When one tool's output is required input for another, state the dependency explicitly in the system prompt — tool descriptions alone are insufficient.
+- Use negative constraints ("NEVER guess user IDs") alongside positive instructions ("ALWAYS call find_user first") for reliable enforcement.
+- The LLM will take shortcuts unless explicitly told not to — it optimizes for directness, not correctness of tool chaining.

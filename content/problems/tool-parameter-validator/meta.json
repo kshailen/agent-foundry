@@ -1,0 +1,56 @@
+{
+  "number": 12,
+  "title": "Tool Parameter Validator",
+  "difficulty": "medium",
+  "categories": [
+    "tool-calling",
+    "guardrails"
+  ],
+  "frameworks": [
+    "langchain",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "You must fix the tool schemas and add validation logic",
+    "Error messages must be user-friendly, not raw tracebacks",
+    "The tools must still work correctly with valid input"
+  ],
+  "hints": [
+    "Add type annotations and use Pydantic models or manual checks to validate input before processing",
+    "Check for required fields being None or empty and return clear error messages",
+    "Validate that numeric fields are actually numbers and within reasonable ranges"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain.agents import AgentExecutor, create_tool_calling_agent\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom langchain_core.tools import tool\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# BUG: These tools accept any input without validation — wrong types cause crashes\n@tool\ndef create_invoice(customer_name, amount, items):\n    \"\"\"Create an invoice for a customer.\"\"\"\n    total = amount * 1.1  # crashes if amount is a string\n    return f\"Invoice for {customer_name}: {items} items, total ${total:.2f}\"\n\n@tool\ndef schedule_meeting(title, duration_minutes, attendees):\n    \"\"\"Schedule a meeting.\"\"\"\n    end_time = duration_minutes + 30  # crashes if duration is a string\n    return f\"Meeting '{title}' scheduled for {duration_minutes}min with {len(attendees)} attendees\"\n\n@tool\ndef send_notification(user_id, message, priority):\n    \"\"\"Send a notification to a user.\"\"\"\n    if priority > 5:  # crashes if priority is a string\n        return \"Priority too high\"\n    return f\"Notification sent to user {user_id}: {message} (priority: {priority})\"\n\ntools = [create_invoice, schedule_meeting, send_notification]\n\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a business assistant. Use tools to help with invoices, meetings, and notifications.\"),\n    (\"human\", \"{input}\"),\n    (\"placeholder\", \"{agent_scratchpad}\"),\n])\n\nagent = create_tool_calling_agent(llm, tools, prompt)\nexecutor = AgentExecutor(agent=agent, tools=tools)\n\nresult = executor.invoke({\"input\": \"Create an invoice for John Doe for 150 dollars with 3 items\"})\nprint(result[\"output\"])",
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom agents.tool import function_tool\n\n# BUG: These tools accept any input without validation — wrong types cause crashes\n@function_tool\ndef create_invoice(customer_name, amount, items):\n    \"\"\"Create an invoice for a customer.\"\"\"\n    total = amount * 1.1  # crashes if amount is a string\n    return f\"Invoice for {customer_name}: {items} items, total ${total:.2f}\"\n\n@function_tool\ndef schedule_meeting(title, duration_minutes, attendees):\n    \"\"\"Schedule a meeting.\"\"\"\n    end_time = duration_minutes + 30  # crashes if duration is a string\n    return f\"Meeting '{title}' scheduled for {duration_minutes}min with {len(attendees)} attendees\"\n\n@function_tool\ndef send_notification(user_id, message, priority):\n    \"\"\"Send a notification to a user.\"\"\"\n    if priority > 5:  # crashes if priority is a string\n        return \"Priority too high\"\n    return f\"Notification sent to user {user_id}: {message} (priority: {priority})\"\n\nagent = Agent(\n    name=\"Business Assistant\",\n    instructions=\"You are a business assistant. Use tools to help with invoices, meetings, and notifications.\",\n    tools=[create_invoice, schedule_meeting, send_notification],\n)\n\nresult = Runner.run_sync(agent, \"Create an invoice for John Doe for 150 dollars with 3 items\")\nprint(result.final_output)",
+    "crewai": "from crewai import Agent, Task, Crew, Process\nfrom crewai.tools import tool\n\n# BUG: These tools accept any input without validation — wrong types cause crashes\n@tool\ndef create_invoice(customer_name, amount, items):\n    \"\"\"Create an invoice for a customer.\"\"\"\n    total = amount * 1.1  # crashes if amount is a string\n    return f\"Invoice for {customer_name}: {items} items, total ${total:.2f}\"\n\n@tool\ndef schedule_meeting(title, duration_minutes, attendees):\n    \"\"\"Schedule a meeting.\"\"\"\n    end_time = duration_minutes + 30  # crashes if duration is a string\n    return f\"Meeting '{title}' scheduled for {duration_minutes}min with {len(attendees)} attendees\"\n\n@tool\ndef send_notification(user_id, message, priority):\n    \"\"\"Send a notification to a user.\"\"\"\n    if priority > 5:  # crashes if priority is a string\n        return \"Priority too high\"\n    return f\"Notification sent to user {user_id}: {message} (priority: {priority})\"\n\ntools = [create_invoice, schedule_meeting, send_notification]\n\nbusiness_agent = Agent(\n    role=\"Business Assistant\",\n    goal=\"Help users with invoices, meetings, and notifications using the available tools.\",\n    backstory=\"You are a business assistant that helps with day-to-day business operations.\",\n    tools=tools,\n)\n\ntask = Task(\n    description=\"Create an invoice for John Doe for 150 dollars with 3 items\",\n    expected_output=\"A confirmation that the invoice was created with the correct total.\",\n    agent=business_agent,\n)\n\ncrew = Crew(agents=[business_agent], tasks=[task], process=Process.sequential)\nresult = crew.kickoff()\nprint(result)"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/tool-parameter-validator-langchain.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/tool-parameter-validator-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/tool-parameter-validator-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "validates-types",
+      "label": "Validates parameter types",
+      "description": "The tools check that parameters are the correct type before processing"
+    },
+    {
+      "id": "rejects-invalid",
+      "label": "Rejects invalid input",
+      "description": "Invalid or missing parameters are caught and rejected with clear error messages"
+    },
+    {
+      "id": "helpful-errors",
+      "label": "Provides helpful error messages",
+      "description": "Error messages explain what was wrong and what the correct input should look like"
+    },
+    {
+      "id": "valid-input-works",
+      "label": "Valid input still works",
+      "description": "Tools continue to function correctly when given properly typed input"
+    }
+  ]
+}

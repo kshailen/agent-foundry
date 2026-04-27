@@ -1,0 +1,50 @@
+## The Problem
+
+Your data-processing system runs the same hardcoded three-step pipeline (summarize → translate → format) for every task, regardless of what the user actually needs. A request to "analyze sentiment and extract entities" still gets summarized, translated, and formatted—producing irrelevant output. Your job is to **build a dynamic workflow assembler** that reads the task description, selects the right steps from a registry of available operations, and constructs an executable workflow graph at runtime.
+
+## Examples
+
+### Example 1
+
+**Task:** Analyze sentiment and extract entities
+**Data:** Apple reported record Q4 earnings. Tim Cook praised the iPhone 16 sales.
+
+**Current (bad) output:** The hardcoded pipeline summarizes, translates to Spanish, and formats—none of which match the requested task.
+
+**Expected (good) output:** The planner reads the task and assembles: `sentiment_analysis → entity_extraction → format_report`. The output contains sentiment ("positive") and entities (["Apple", "Tim Cook", "iPhone 16"]) in a structured report.
+
+### Example 2
+
+**Task:** Summarize and translate to French
+**Data:** The climate summit concluded with 40 nations pledging carbon neutrality by 2050.
+
+**Current (bad) output:** The hardcoded pipeline translates to Spanish instead of French.
+
+**Expected (good) output:** The planner assembles: `summarize → translate_to_french`. The output is a French summary of the climate summit.
+
+### Example 3
+
+**Task:** Classify, extract key facts, and generate a briefing
+**Data:** A 7.2 magnitude earthquake struck central Turkey at 4:17 AM local time.
+
+**Current (bad) output:** Generic summarize-translate-format pipeline ignoring the specific requirements.
+
+**Expected (good) output:** The planner assembles: `classify → extract_facts → generate_briefing`. The output classifies the event as "natural disaster," extracts key facts (magnitude, location, time), and generates a concise briefing document.
+
+## Your Task
+
+Modify the starter code so that:
+
+- A **planner** (LLM-based) reads the task description and selects steps from a **registry** of at least 5 available operations.
+- The selected steps are assembled into an **executable workflow graph** at runtime.
+- Different task descriptions produce **different workflow compositions**.
+- The assembled workflow executes and produces **task-appropriate output**.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Runtime graph construction:** The workflow graph is built dynamically based on the task description, not hardcoded.
+- **Step registry:** The planner selects from a registry of at least 5 available step types.
+- **Executable workflow:** The assembled graph is a valid executable workflow, not just a plan.
+- **Task-appropriate steps:** Different task descriptions produce different workflow compositions.

@@ -1,0 +1,50 @@
+{
+  "number": 61,
+  "title": "Input Sanitizer",
+  "difficulty": "easy",
+  "categories": [
+    "guardrails"
+  ],
+  "frameworks": [
+    "openai-agents-sdk",
+    "langchain",
+    "crewai"
+  ],
+  "constraints": [
+    "You must sanitize input before it reaches the LLM",
+    "The agent must still process the cleaned version of the user's request",
+    "Do not reject messages outright — strip dangerous content and proceed"
+  ],
+  "hints": [
+    "Use a regular expression or an HTML parsing library to strip tags from the input",
+    "Apply sanitization as a preprocessing step before passing input to the agent",
+    "Consider edge cases like nested tags, encoded entities, and script attributes"
+  ],
+  "starterCode": {
+    "openai-agents-sdk": "from agents import Agent, Runner\n\nagent = Agent(\n    name=\"Support Assistant\",\n    instructions=\"You are a helpful customer support assistant.\",\n)\n\n# BUG: Raw user input with HTML/script tags is passed directly to the agent\nuser_input = 'Hello <script>alert(\"xss\")</script> can you help me?'\n\nresult = Runner.run_sync(agent, user_input)\nprint(result.final_output)",
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain.agents import AgentExecutor, create_tool_calling_agent\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom langchain_core.tools import tool\n\n@tool\ndef lookup_account(name: str) -> str:\n    \"\"\"Look up a customer account by name.\"\"\"\n    return f\"Account found for {name}\"\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a helpful customer support assistant.\"),\n    (\"human\", \"{input}\"),\n    (\"placeholder\", \"{agent_scratchpad}\"),\n])\n\nagent = create_tool_calling_agent(llm, [lookup_account], prompt)\nexecutor = AgentExecutor(agent=agent, tools=[lookup_account])\n\n# BUG: Raw user input with HTML/script tags is passed directly to the agent\nuser_input = 'Hello <script>alert(\"xss\")</script> can you help me?'\n\nresult = executor.invoke({\"input\": user_input})\nprint(result[\"output\"])",
+    "crewai": "from crewai import Agent, Task, Crew\n\nassistant = Agent(\n    role=\"Support Assistant\",\n    goal=\"Help customers with their questions\",\n    backstory=\"You are a helpful customer support assistant.\",\n)\n\n# BUG: Raw user input with HTML/script tags is passed directly to the agent\nuser_input = 'Hello <script>alert(\"xss\")</script> can you help me?'\n\ntask = Task(\n    description=user_input,\n    expected_output=\"A helpful response\",\n    agent=assistant,\n)\n\ncrew = Crew(agents=[assistant], tasks=[task])\nresult = crew.kickoff()\nprint(result)"
+  },
+  "colabUrls": {
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/input-sanitizer-openai.ipynb",
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/input-sanitizer-langchain.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/input-sanitizer-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "tags-stripped",
+      "label": "HTML and script tags are stripped",
+      "description": "All HTML elements and script tags are removed from user input before processing"
+    },
+    {
+      "id": "message-preserved",
+      "label": "Legitimate message content preserved",
+      "description": "The actual text content of the user's message is kept intact after sanitization"
+    },
+    {
+      "id": "agent-still-responds",
+      "label": "Agent still responds helpfully",
+      "description": "The agent processes the sanitized input and returns a useful response"
+    }
+  ]
+}

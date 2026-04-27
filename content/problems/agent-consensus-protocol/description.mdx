@@ -1,0 +1,47 @@
+## The Problem
+
+You have a single fact-checking agent that verifies claims. Since LLMs can be unreliable on factual questions, relying on one agent's answer is risky. Your task is to implement a **consensus protocol** where **multiple agents** independently verify the same claim, and a **voting mechanism** determines the final answer. This reduces the chance of a single agent's hallucination becoming the accepted answer.
+
+## Examples
+
+### Example 1
+
+**User input:** Claim: "The Great Wall of China is visible from space with the naked eye."
+
+**Current (bad) output:** A single agent answers TRUE (incorrectly) and that answer is accepted without question.
+
+**Expected (good) output:** Three agents independently evaluate the claim. Agent 1 says FALSE, Agent 2 says FALSE, Agent 3 says TRUE. The consensus mechanism tallies the votes (2 FALSE vs 1 TRUE) and returns FALSE with the majority reasoning: "This is a common myth. Astronauts have confirmed it is not visible to the naked eye from low Earth orbit."
+
+### Example 2
+
+**User input:** Claim: "Water boils at 100°C at sea level."
+
+**Current (bad) output:** One agent answers TRUE — happens to be correct, but there's no validation.
+
+**Expected (good) output:** All three agents agree TRUE. The consensus confirms the answer unanimously with supporting reasoning.
+
+### Example 3
+
+**User input:** Claim: "Lightning never strikes the same place twice."
+
+**Current (bad) output:** One agent may answer TRUE (incorrectly).
+
+**Expected (good) output:** Most agents answer FALSE. The consensus mechanism returns FALSE with the explanation that tall structures like the Empire State Building are struck many times per year.
+
+## Your Task
+
+Refactor the starter code so that:
+
+- **At least three agents** independently evaluate the claim.
+- A **voting or consensus mechanism** aggregates the answers and selects the majority.
+- The system handles **disagreements** gracefully (no unanimous requirement).
+- The final answer includes the **consensus result and reasoning**.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Multiple agents produce answers:** At least three agents independently answer the same question.
+- **Voting or consensus mechanism:** A formal mechanism aggregates the agents' answers to determine the final result.
+- **Handles disagreements:** The system correctly resolves cases where agents disagree.
+- **No first-agent bias:** The first agent's answer is not automatically preferred over others.

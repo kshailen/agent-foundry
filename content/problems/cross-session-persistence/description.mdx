@@ -1,0 +1,50 @@
+## The Problem
+
+Your assistant works great within a single session, but the moment the process restarts, **all memory is gone**. A user spends 10 minutes telling the agent their name, project details, and deadlines. They come back a week later and the agent has no idea who they are. The memory is purely in-memory (a Python list) and nothing is persisted to disk. Your job is to add **cross-session persistence** so the agent can pick up where it left off.
+
+## Examples
+
+### Example 1
+
+**Session 1:** User says "My name is Jordan. I'm working on Project Phoenix. The deadline is March 15th."
+
+**Session 2 (after restart):** User asks "What's my name?"
+
+**Current (bad) output:** I don't know your name. Could you introduce yourself?
+
+**Expected (good) output:** Your name is Jordan! You're working on Project Phoenix with a deadline of March 15th.
+
+### Example 2
+
+**Session 1:** User discusses travel plans, sets preferences, shares context.
+
+**Session 2 (one week later):** User says "Continue where we left off."
+
+**Current (bad) output:** I'm not sure what you'd like to continue. How can I help?
+
+**Expected (good) output:** Last time, we were discussing your trip to Japan. You'd decided on a 10-day itinerary starting in Tokyo. Want to pick up from there?
+
+### Example 3
+
+**First-ever session:** No previous data exists.
+
+**Current (bad) behavior with naive persistence:** Crashes with FileNotFoundError trying to load a non-existent file.
+
+**Expected (good) behavior:** Agent starts fresh without errors: "Hi! I don't have any previous context. How can I help?"
+
+## Your Task
+
+Add **cross-session persistence** to the agent:
+
+- Save the memory/conversation state to a file (JSON) after each turn.
+- On startup, check for an existing persistence file and load previous context.
+- Handle cold starts gracefully (no file = start fresh).
+- Use a session or user ID to keep different users' data separate.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Memory survives restart:** The agent can recall information from a previous session after a process restart.
+- **Loads automatically on startup:** Previous session context is loaded without manual intervention.
+- **Handles cold start gracefully:** When no previous session exists, the agent starts fresh without errors.

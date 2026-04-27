@@ -1,0 +1,264 @@
+## Approach
+
+The data analyst agent has a single monolithic `process_data` tool that fetches, cleans, analyzes, and formats data in one function call. This makes it impossible to reuse individual steps — if a user only wants raw data without analysis, or wants to run a different analysis type on already-fetched data, the entire pipeline re-runs from scratch. The agent cannot adapt its workflow to different query types.
+
+The fix decomposes the monolith into four small, single-purpose tools: `fetch_data`, `clean_data`, `analyze_data`, and `format_report`. Each tool accepts the output of the previous step as input and can be called independently. The agent dynamically decides which tools to compose based on the user's query — a full research request chains all four, a "just fetch the data" request uses only the first two, and an "analyze this data I already have" request skips fetching entirely.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+
+@tool
+def fetch_data(source: str) -> str:
+    """Fetch raw data from a named source. Returns unprocessed data."""
+    return f"Raw data from {source}: [revenue: $10M, costs: $6M, employees: 500, growth: 15%, region: US, founded: 2010]"
+
+
+@tool
+def clean_data(raw_data: str) -> str:
+    """Clean and normalize raw data. Removes formatting artifacts and standardizes the structure."""
+    cleaned = raw_data.replace("[", "").replace("]", "").strip()
+    return f"Cleaned data: {cleaned}"
+
+
+@tool
+def analyze_data(cleaned_data: str, analysis_type: str) -> str:
+    """Run analysis on cleaned data. analysis_type can be 'financial', 'growth', or 'general'."""
+    if analysis_type == "financial":
+        analysis = "Profit margin: 40%, Revenue per employee: $20K, Healthy financials."
+    elif analysis_type == "growth":
+        analysis = "15% YoY growth, above industry average of 10%. Strong trajectory."
+    else:
+        analysis = "General overview: mid-size company with solid fundamentals."
+    return f"Analysis ({analysis_type}): {analysis}"
+
+
+@tool
+def format_report(source: str, cleaned_data: str, analysis: str) -> str:
+    """Format cleaned data and analysis into a presentable report."""
+    return f"=== Report for {source} ===\nData: {cleaned_data}\nAnalysis: {analysis}\n=================="
+
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", (
+        "You are a data analyst assistant. You have four composable tools:\n"
+        "- fetch_data: Fetch raw data from a source\n"
+        "- clean_data: Clean and normalize raw data\n"
+        "- analyze_data: Run financial, growth, or general analysis on cleaned data\n"
+        "- format_report: Format data and analysis into a report\n\n"
+        "Chain these tools as needed based on the user's request:\n"
+        "- Full pipeline: fetch_data -> clean_data -> analyze_data -> format_report\n"
+        "- Data only: fetch_data -> clean_data\n"
+        "- Analysis on existing data: analyze_data -> format_report\n"
+        "Use only the tools the user's request requires."
+    )),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}"),
+])
+
+tools = [fetch_data, clean_data, analyze_data, format_report]
+agent = create_tool_calling_agent(llm, tools, prompt)
+executor = AgentExecutor(agent=agent, tools=tools)
+
+result = executor.invoke({"input": "Get financial data for Acme Corp and analyze their growth"})
+print(result["output"])
+```
+
+### LangGraph
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.tools import tool
+from langgraph.prebuilt import create_react_agent
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+
+@tool
+def fetch_data(source: str) -> str:
+    """Fetch raw data from a named source. Returns unprocessed data."""
+    return f"Raw data from {source}: [revenue: $10M, costs: $6M, employees: 500, growth: 15%, region: US, founded: 2010]"
+
+
+@tool
+def clean_data(raw_data: str) -> str:
+    """Clean and normalize raw data. Removes formatting artifacts and standardizes the structure."""
+    cleaned = raw_data.replace("[", "").replace("]", "").strip()
+    return f"Cleaned data: {cleaned}"
+
+
+@tool
+def analyze_data(cleaned_data: str, analysis_type: str) -> str:
+    """Run analysis on cleaned data. analysis_type can be 'financial', 'growth', or 'general'."""
+    if analysis_type == "financial":
+        analysis = "Profit margin: 40%, Revenue per employee: $20K, Healthy financials."
+    elif analysis_type == "growth":
+        analysis = "15% YoY growth, above industry average of 10%. Strong trajectory."
+    else:
+        analysis = "General overview: mid-size company with solid fundamentals."
+    return f"Analysis ({analysis_type}): {analysis}"
+
+
+@tool
+def format_report(source: str, cleaned_data: str, analysis: str) -> str:
+    """Format cleaned data and analysis into a presentable report."""
+    return f"=== Report for {source} ===\nData: {cleaned_data}\nAnalysis: {analysis}\n=================="
+
+
+agent = create_react_agent(
+    llm,
+    [fetch_data, clean_data, analyze_data, format_report],
+    prompt=(
+        "You are a data analyst assistant. You have four composable tools:\n"
+        "- fetch_data: Fetch raw data from a source\n"
+        "- clean_data: Clean and normalize raw data\n"
+        "- analyze_data: Run financial, growth, or general analysis on cleaned data\n"
+        "- format_report: Format data and analysis into a report\n\n"
+        "Chain these tools as needed based on the user's request:\n"
+        "- Full pipeline: fetch_data -> clean_data -> analyze_data -> format_report\n"
+        "- Data only: fetch_data -> clean_data\n"
+        "- Analysis on existing data: analyze_data -> format_report\n"
+        "Use only the tools the user's request requires."
+    ),
+)
+
+result = agent.invoke({"messages": [("human", "Get financial data for Acme Corp and analyze their growth")]})
+print(result["messages"][-1].content)
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from crewai import LLM
+from crewai.tools import tool
+
+llm = LLM(model="gpt-4o-mini")
+
+@tool
+def fetch_data(source: str) -> str:
+    """Fetch raw data from a named source. Returns unprocessed data."""
+    return f"Raw data from {source}: [revenue: $10M, costs: $6M, employees: 500, growth: 15%, region: US, founded: 2010]"
+
+@tool
+def clean_data(raw_data: str) -> str:
+    """Clean and normalize raw data. Removes formatting artifacts."""
+    cleaned = raw_data.replace("[", "").replace("]", "").strip()
+    return f"Cleaned data: {cleaned}"
+
+@tool
+def analyze_data(cleaned_data: str, analysis_type: str) -> str:
+    """Run analysis on cleaned data. analysis_type can be 'financial', 'growth', or 'general'."""
+    if analysis_type == "financial":
+        analysis = "Profit margin: 40%, Revenue per employee: $20K, Healthy financials."
+    elif analysis_type == "growth":
+        analysis = "15% YoY growth, above industry average of 10%. Strong trajectory."
+    else:
+        analysis = "General overview: mid-size company with solid fundamentals."
+    return f"Analysis ({analysis_type}): {analysis}"
+
+@tool
+def format_report(source: str, cleaned_data: str, analysis: str) -> str:
+    """Format cleaned data and analysis into a presentable report."""
+    return f"=== Report for {source} ===\nData: {cleaned_data}\nAnalysis: {analysis}\n=================="
+
+agent = Agent(
+    role="Data Analyst",
+    goal="Analyze data for users using composable tools",
+    backstory=(
+        "You are a data analyst assistant with four composable tools:\n"
+        "- fetch_data: Fetch raw data from a source\n"
+        "- clean_data: Clean and normalize raw data\n"
+        "- analyze_data: Run financial, growth, or general analysis\n"
+        "- format_report: Format data and analysis into a report\n\n"
+        "Chain these tools as needed based on the user's request."
+    ),
+    tools=[fetch_data, clean_data, analyze_data, format_report],
+    llm=llm,
+)
+
+task = Task(
+    description="Get financial data for Acme Corp and analyze their growth",
+    expected_output="A data analysis report",
+    agent=agent,
+)
+
+crew = Crew(agents=[agent], tasks=[task])
+result = crew.kickoff()
+print(result)
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from agents.tool import function_tool
+
+@function_tool
+def fetch_data(source: str) -> str:
+    """Fetch raw data from a named source. Returns unprocessed data."""
+    return f"Raw data from {source}: [revenue: $10M, costs: $6M, employees: 500, growth: 15%, region: US, founded: 2010]"
+
+@function_tool
+def clean_data(raw_data: str) -> str:
+    """Clean and normalize raw data. Removes formatting artifacts."""
+    cleaned = raw_data.replace("[", "").replace("]", "").strip()
+    return f"Cleaned data: {cleaned}"
+
+@function_tool
+def analyze_data(cleaned_data: str, analysis_type: str) -> str:
+    """Run analysis on cleaned data. analysis_type can be 'financial', 'growth', or 'general'."""
+    if analysis_type == "financial":
+        analysis = "Profit margin: 40%, Revenue per employee: $20K, Healthy financials."
+    elif analysis_type == "growth":
+        analysis = "15% YoY growth, above industry average of 10%. Strong trajectory."
+    else:
+        analysis = "General overview: mid-size company with solid fundamentals."
+    return f"Analysis ({analysis_type}): {analysis}"
+
+@function_tool
+def format_report(source: str, cleaned_data: str, analysis: str) -> str:
+    """Format cleaned data and analysis into a presentable report."""
+    return f"=== Report for {source} ===\nData: {cleaned_data}\nAnalysis: {analysis}\n=================="
+
+agent = Agent(
+    name="Data Analyst",
+    instructions=(
+        "You are a data analyst assistant. You have four composable tools:\n"
+        "- fetch_data: Fetch raw data from a source\n"
+        "- clean_data: Clean and normalize raw data\n"
+        "- analyze_data: Run financial, growth, or general analysis on cleaned data\n"
+        "- format_report: Format data and analysis into a report\n\n"
+        "Chain these tools as needed based on the user's request:\n"
+        "- Full pipeline: fetch_data -> clean_data -> analyze_data -> format_report\n"
+        "- Data only: fetch_data -> clean_data\n"
+        "- Analysis on existing data: analyze_data -> format_report\n"
+        "Use only the tools the user's request requires."
+    ),
+    tools=[fetch_data, clean_data, analyze_data, format_report],
+)
+
+result = Runner.run_sync(agent, "Get financial data for Acme Corp and analyze their growth")
+print(result.final_output)
+```
+
+## Why This Works
+
+Decomposing the monolith follows the Unix philosophy: each tool does one thing well and produces output that feeds into the next tool. This gives the agent flexibility to compose different pipelines dynamically. When the user says "just fetch the data," the agent calls only `fetch_data` and `clean_data`. When the user provides their own data, the agent skips straight to `analyze_data`. The monolithic version couldn't do either — it always ran all four stages.
+
+The prompt lists the common pipeline patterns (full pipeline, data-only, analysis-only) to help the LLM understand the intended composition model. Each tool has a clear input/output contract: `fetch_data` returns raw data, `clean_data` returns cleaned data, `analyze_data` returns analysis text, and `format_report` assembles everything. This consistent interface makes the tools snap together like LEGO bricks.
+
+## Key Takeaways
+
+- Decompose monolithic tools into small, single-purpose functions that can be independently called and composed.
+- Design consistent input/output contracts between tools so they chain naturally.
+- List common pipeline patterns in the prompt to guide the agent on which tools to compose for different query types.

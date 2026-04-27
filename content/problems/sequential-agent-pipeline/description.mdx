@@ -1,0 +1,38 @@
+## The Problem
+
+You have two agents — a **researcher** that gathers key facts about a topic and a **writer** that produces a polished summary. Right now they run independently: the writer generates a summary from scratch instead of using the researcher's findings. The result is a summary that doesn't reflect the actual research. Your job is to **wire them into a sequential pipeline** so the researcher runs first and its output feeds directly into the writer.
+
+## Examples
+
+### Example 1
+
+**User input:** Topic: AI agents
+
+**Current (bad) output:** The researcher produces five solid findings about AI agents. The writer independently writes a generic summary that doesn't mention any of those findings.
+
+**Expected (good) output:** The researcher produces five findings. The writer receives those findings and writes a summary that references and synthesizes them.
+
+### Example 2
+
+**User input:** Topic: quantum computing
+
+**Current (bad) output:** Two disconnected outputs — research notes and a summary that cover different aspects of quantum computing.
+
+**Expected (good) output:** A summary that directly draws from the researcher's specific notes on quantum computing, maintaining factual consistency.
+
+## Your Task
+
+Refactor the starter code so that:
+
+- The **researcher** agent runs first and produces its findings.
+- The **writer** agent receives the researcher's output as context/input.
+- The final output is a summary grounded in the actual research findings.
+- Both agents remain separate (do not merge them into one).
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Sequential execution order:** The researcher runs first and the writer runs second.
+- **Research context flows to writer:** The writer's input includes the researcher's output so the summary is grounded in actual research.
+- **Coherent final summary:** The final summary clearly reflects the specific findings from the research step.

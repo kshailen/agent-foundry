@@ -1,0 +1,54 @@
+## The Problem
+
+Your customer-support agent runs three LLM calls per query (classify, respond, suggest follow-up) with zero observability. When something goes wrong in production—slow responses, wrong classifications, high costs—you have no logs, no traces, and no metrics to diagnose the issue. Your job is to **add a production-grade observability layer** with structured logging, end-to-end request tracing, and aggregated metrics, all without changing the agent's behavior.
+
+## Examples
+
+### Example 1
+
+**User input:** Why was I charged twice for my subscription?
+
+**Current (bad) output:** The correct response is returned, but no logs, traces, or metrics are recorded. When this query takes 8 seconds next week, there is no data to diagnose why.
+
+**Expected (good) output:** The response is identical, but the observability layer emits:
+```json
+{"trace_id": "abc-123", "step": "classify", "model": "gpt-4o-mini", "input_tokens": 28, "output_tokens": 3, "latency_ms": 450, "output": "billing"}
+{"trace_id": "abc-123", "step": "respond", "model": "gpt-4o-mini", "input_tokens": 45, "output_tokens": 120, "latency_ms": 1200, "output": "I'm sorry about the double charge..."}
+{"trace_id": "abc-123", "step": "followup", "model": "gpt-4o-mini", "input_tokens": 85, "output_tokens": 35, "latency_ms": 680, "output": "Proactively issue a refund credit..."}
+```
+
+### Example 2
+
+**Metrics report after 5 queries:**
+
+**Current (bad) output:** No metrics exist. The team has no idea about latency distribution or cost trends.
+
+**Expected (good) output:**
+```
+=== Observability Report ===
+Total requests: 5
+Total LLM calls: 15
+Latency: p50=780ms, p95=1450ms
+Total tokens: 2,340 input / 890 output
+Estimated cost: $0.0047
+Error rate: 0%
+Slowest step: "respond" (avg 1.1s)
+```
+
+## Your Task
+
+Add an observability layer so that:
+
+- Every LLM call **emits a structured log** with input, output, token counts, latency, and model name.
+- All calls within a request share a **unique trace ID** for end-to-end correlation.
+- **Aggregated metrics** (latency percentiles, token totals, error rate) are computed and reportable.
+- The observability layer is **transparent** — it does not change the agent's responses or behavior.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Structured logging:** Every LLM call emits a structured log with input, output, tokens, latency, and model.
+- **End-to-end tracing:** A unique trace ID links all LLM calls within a single request.
+- **Aggregated metrics:** Key metrics like latency percentiles, token usage, and error rates are computed and reportable.
+- **Transparent to agent:** The observability layer does not change the agent's behavior or output.

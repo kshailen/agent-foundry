@@ -1,0 +1,47 @@
+## The Problem
+
+Your agent processes customer requests—including issuing large refunds, deleting accounts, and exporting personal data—without any human oversight. Every action is auto-approved, which is a compliance and safety disaster waiting to happen. Your job is to **add a human-in-the-loop approval gate** so that high-risk actions pause for review while low-risk actions (like order-status lookups) continue automatically.
+
+## Examples
+
+### Example 1
+
+**User input:** Please refund $250 for order #5678
+
+**Current (bad) output:** `[HIGH RISK - AUTO-APPROVED] Refund of $250 has been processed for order #5678.` — no human ever reviewed this.
+
+**Expected (good) output:** The workflow classifies this as high-risk, pauses, and presents to the reviewer: *"Proposed action: Issue $250 refund for order #5678. Risk: HIGH. Approve or reject?"* After approval, it executes the refund. After rejection, it responds to the customer explaining the request needs further review.
+
+### Example 2
+
+**User input:** What is the status of my order #1234?
+
+**Current (bad) output:** Same auto-approval flow even though this is a harmless status lookup.
+
+**Expected (good) output:** The workflow classifies this as low-risk and responds immediately: *"Your order #1234 is currently in transit and expected to arrive by Friday."* — no human review needed.
+
+### Example 3
+
+**User input:** Delete my account and all associated data
+
+**Current (bad) output:** `[HIGH RISK - AUTO-APPROVED] Account deletion initiated.` — irreversible action with no oversight.
+
+**Expected (good) output:** The workflow pauses and shows the reviewer: *"Proposed action: Permanent account deletion and data purge. Risk: HIGH. Approve or reject?"* The action only proceeds after explicit human approval.
+
+## Your Task
+
+Modify the starter code so that:
+
+- A **risk classifier** labels each request as high-risk or low-risk.
+- High-risk actions **pause the workflow** and present the proposed action to a human reviewer.
+- The human can **approve or reject** the action; the workflow resumes accordingly.
+- Low-risk actions **proceed automatically** without interruption.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Pauses on high-risk actions:** The workflow interrupts and waits for human approval before executing high-risk actions.
+- **Auto-approves low-risk actions:** Low-risk actions proceed without requiring human intervention.
+- **Resumes after approval:** After human approval or rejection, the workflow continues from the approval point without restarting.
+- **Shows pending action to reviewer:** The human reviewer can see the proposed action and risk assessment before deciding.

@@ -1,0 +1,52 @@
+{
+  "number": 33,
+  "title": "Context Window Truncation",
+  "difficulty": "easy",
+  "categories": [
+    "memory",
+    "cost-optimization"
+  ],
+  "frameworks": [
+    "langchain",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "The sliding window must keep the most recent N turns",
+    "The system message must always be preserved regardless of truncation",
+    "You may not increase the model's context window limit",
+    "The agent must remain functional after truncation"
+  ],
+  "hints": [
+    "Count the number of messages and slice the list to keep only the most recent ones",
+    "Always keep the system message at position 0 and truncate only user/assistant pairs",
+    "Implement a helper function that trims the history before each call, preserving the system prompt and the last N exchanges"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain_core.messages import HumanMessage, AIMessage, SystemMessage\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# BUG: History grows without bound \u2014 crashes or loses coherence on long conversations\nhistory = [SystemMessage(content=\"You are a helpful assistant.\")]\n\ndef chat(user_input: str) -> str:\n    history.append(HumanMessage(content=user_input))\n    response = llm.invoke(history)\n    history.append(response)\n    return response.content\n\n# Simulate a 50-turn conversation\nfor i in range(50):\n    reply = chat(f\"Tell me fact number {i + 1} about space exploration.\")\n    print(f\"Turn {i + 1}: {reply[:80]}...\")\n\n# By turn 50 the context may exceed limits or degrade\nprint(f\"\\nTotal messages in history: {len(history)}\")",
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom openai.types.responses import ResponseOutputMessage\n\nagent = Agent(\n    name=\"Assistant\",\n    instructions=\"You are a helpful assistant.\",\n)\n\n# BUG: History grows without bound \u2014 crashes or loses coherence on long conversations\nhistory = []\n\ndef chat(user_input: str) -> str:\n    history.append({\"role\": \"user\", \"content\": user_input})\n    result = Runner.run_sync(agent, history)\n    response_text = result.final_output\n    history.append({\"role\": \"assistant\", \"content\": response_text})\n    return response_text\n\n# Simulate a 50-turn conversation\nfor i in range(50):\n    reply = chat(f\"Tell me fact number {i + 1} about space exploration.\")\n    print(f\"Turn {i + 1}: {reply[:80]}...\")\n\nprint(f\"\\nTotal messages in history: {len(history)}\")",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai import LLM\n\nllm = LLM(model=\"gpt-4o-mini\")\n\nagent = Agent(\n    role=\"Assistant\",\n    goal=\"Help users with their questions\",\n    backstory=\"You are a helpful assistant.\",\n    llm=llm,\n)\n\n# BUG: History grows without bound \u2014 crashes or loses coherence on long conversations\nhistory = []\n\ndef chat(user_input: str) -> str:\n    history.append(f\"User: {user_input}\")\n    context = \"\\n\".join(history)\n    task = Task(\n        description=f\"Continue this conversation:\\n{context}\\n\\nRespond to the latest message.\",\n        expected_output=\"A helpful response\",\n        agent=agent,\n    )\n    crew = Crew(agents=[agent], tasks=[task])\n    result = str(crew.kickoff())\n    history.append(f\"Assistant: {result}\")\n    return result\n\n# Simulate a 50-turn conversation\nfor i in range(50):\n    reply = chat(f\"Tell me fact number {i + 1} about space exploration.\")\n    print(f\"Turn {i + 1}: {reply[:80]}...\")\n\nprint(f\"\\nTotal messages in history: {len(history)}\")"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/context-window-truncation-langchain.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/context-window-truncation-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/context-window-truncation-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "bounded-history",
+      "label": "History stays bounded",
+      "description": "The message list never exceeds the configured maximum number of messages"
+    },
+    {
+      "id": "system-preserved",
+      "label": "System message preserved",
+      "description": "The system message is never dropped during truncation"
+    },
+    {
+      "id": "recent-context",
+      "label": "Recent context retained",
+      "description": "The agent can reference information from the most recent turns after truncation"
+    }
+  ]
+}

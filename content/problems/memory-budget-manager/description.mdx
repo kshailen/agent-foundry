@@ -1,0 +1,48 @@
+## The Problem
+
+Your assistant stores every user message and every response in a memory list. After 30 turns, the memory contains thousands of tokens and keeps growing. There is no budget, no eviction, and no prioritization. Eventually the prompt exceeds the context window and the agent fails. Simply truncating from the front (sliding window) loses potentially important information. You need a **budget manager** that tracks token usage, scores items by relevance/recency, and evicts the least valuable items when the budget is exceeded.
+
+## Examples
+
+### Example 1
+
+**Scenario:** 30-turn conversation about world countries. Memory has 60+ items.
+
+**Current (bad) behavior:** All 60 items are in the prompt. By turn 25 the token count exceeds the model's context window and the API errors out.
+
+**Expected (good) behavior:** Memory stays under the token budget (e.g., 2000 tokens). Older, less relevant items are evicted. Recent and frequently referenced items stay.
+
+### Example 2
+
+**Scenario:** User pins an important note: "My API key expires on March 1st." Then 20 turns of unrelated chat follow.
+
+**Current (bad) behavior:** The API key note is buried among 40+ items and may be truncated if a sliding window is used.
+
+**Expected (good) behavior:** The API key note is marked as pinned/high-priority and survives eviction. Less important items are evicted instead.
+
+### Example 3
+
+**Scenario:** Token budget is set to 1500 tokens. The agent has 2000 tokens of memory.
+
+**Current (bad) behavior:** No enforcement — the full 2000 tokens go into the prompt.
+
+**Expected (good) behavior:** The budget manager evicts ~500 tokens worth of low-scoring items before the LLM call.
+
+## Your Task
+
+Implement a **memory budget manager**:
+
+- Track the approximate token count of each memory item.
+- Set a configurable token budget (e.g., 2000 tokens).
+- Before each LLM call, check if total memory exceeds the budget.
+- If over budget, evict items using a scoring function based on recency and relevance.
+- Support pinning important items so they are never evicted.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Token budget enforced:** Total memory token count never exceeds the configured budget.
+- **Eviction is relevance-based:** Least relevant or oldest items are evicted first, not random ones.
+- **Important items protected:** High-priority or pinned items survive eviction.
+- **Budget enforced automatically:** The check and eviction happen before each LLM call without manual intervention.

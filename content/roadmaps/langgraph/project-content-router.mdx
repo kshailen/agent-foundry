@@ -1,0 +1,134 @@
+# Project: Content Router
+
+In this project you will build a **content router** — a graph that classifies user input into one of three categories (poem, story, or joke), routes to a specialized generator node via conditional edges, and returns the generated content.
+
+## Architecture
+
+The graph has four nodes:
+
+1. **classifier** — uses structured output to determine the content type
+2. **poem_generator** — writes a poem
+3. **story_generator** — writes a short story
+4. **joke_generator** — writes a joke
+
+A conditional edge after `classifier` routes to the matching generator.
+
+```
+START → classifier →─┬─→ poem_generator  →─┐
+                      ├─→ story_generator →─┤
+                      └─→ joke_generator  →─┘→ END
+```
+
+## Step 1: Define the State
+
+```python
+from typing import TypedDict, Annotated
+from langgraph.graph import add_messages
+
+class State(TypedDict):
+    messages: Annotated[list, add_messages]
+    content_type: str
+```
+
+## Step 2: Create the Classifier
+
+Use `with_structured_output` and a Pydantic model with `Literal` types to guarantee valid routing keys:
+
+```python
+from pydantic import BaseModel
+from typing import Literal
+from langchain_openai import ChatOpenAI
+
+class ContentType(BaseModel):
+    """Classify the user request into a content type."""
+    content_type: Literal["poem", "story", "joke"]
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+classifier_llm = llm.with_structured_output(ContentType)
+
+def classifier(state: State) -> dict:
+    result = classifier_llm.invoke(state["messages"])
+    return {"content_type": result.content_type}
+```
+
+## Step 3: Build the Generators
+
+Each generator uses a system prompt tailored to its content type:
+
+```python
+def poem_generator(state: State) -> dict:
+    response = llm.invoke([
+        ("system", "You are a poet. Write a short, evocative poem based on the user's request."),
+        *state["messages"],
+    ])
+    return {"messages": [response]}
+
+def story_generator(state: State) -> dict:
+    response = llm.invoke([
+        ("system", "You are a storyteller. Write a short, engaging story based on the user's request."),
+        *state["messages"],
+    ])
+    return {"messages": [response]}
+
+def joke_generator(state: State) -> dict:
+    response = llm.invoke([
+        ("system", "You are a comedian. Write a funny joke based on the user's request."),
+        *state["messages"],
+    ])
+    return {"messages": [response]}
+```
+
+## Step 4: Define the Routing Function
+
+```python
+def route_content(state: State) -> str:
+    return state["content_type"]
+```
+
+## Step 5: Assemble the Graph
+
+```python
+from langgraph.graph import StateGraph, START, END
+
+graph = StateGraph(State)
+graph.add_node("classifier", classifier)
+graph.add_node("poem_generator", poem_generator)
+graph.add_node("story_generator", story_generator)
+graph.add_node("joke_generator", joke_generator)
+
+graph.add_edge(START, "classifier")
+graph.add_conditional_edges("classifier", route_content, {
+    "poem": "poem_generator",
+    "story": "story_generator",
+    "joke": "joke_generator",
+})
+graph.add_edge("poem_generator", END)
+graph.add_edge("story_generator", END)
+graph.add_edge("joke_generator", END)
+
+app = graph.compile()
+```
+
+## Step 6: Test the Router
+
+```python
+result = app.invoke({"messages": [("human", "Tell me a joke about programmers")]})
+print(f"Content type: {result['content_type']}")
+print(f"Output: {result['messages'][-1].content}")
+
+result = app.invoke({"messages": [("human", "Write a poem about the ocean")]})
+print(f"Content type: {result['content_type']}")
+print(f"Output: {result['messages'][-1].content}")
+
+result = app.invoke({"messages": [("human", "Tell me a story about a brave knight")]})
+print(f"Content type: {result['content_type']}")
+print(f"Output: {result['messages'][-1].content}")
+```
+
+## Key Takeaways
+
+- Structured output with `Literal` types guarantees the classifier returns a valid routing key
+- `add_conditional_edges` with a mapping dict cleanly separates routing from generation logic
+- Each generator is an independent node with its own system prompt and personality
+- The pattern scales easily — add a new content type by adding a `Literal` value, a generator node, and a mapping entry
+- This architecture is a building block for any application that needs to classify-then-act on user input

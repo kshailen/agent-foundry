@@ -1,0 +1,47 @@
+## The Problem
+
+Your assistant has access to a stock-price tool and a weather tool, but it makes poor decisions about when to use them. It sometimes calls the stock tool for general-knowledge questions ("What is the capital of Japan?") or tries to answer real-time queries from memory instead of calling the right tool. The tools themselves work fine; the problem is the **system prompt** gives the model no guidance on *when* to use a tool versus answer directly. Your job is to **add few-shot examples to the system prompt** so the agent reliably uses tools for real-time data and answers directly for general knowledge.
+
+## Examples
+
+### Example 1
+
+**User input:** What is Apple's stock price right now?
+
+**Current (bad) output:** Apple's stock price is around $150 (hallucinated from training data, no tool called).
+
+**Expected (good) output:** The agent calls `get_stock_price("AAPL")` and responds: *Apple (AAPL) is currently trading at $178.50.*
+
+### Example 2
+
+**User input:** What is the capital of Japan?
+
+**Current (bad) output:** Agent calls `get_weather("Japan")` or `get_stock_price("JAPAN")` unnecessarily, then answers.
+
+**Expected (good) output:** *The capital of Japan is Tokyo.* (No tool called — this is general knowledge.)
+
+### Example 3
+
+**User input:** What's the weather like in London?
+
+**Current (bad) output:** It's probably rainy in London. (Guessed from stereotypes, no tool called.)
+
+**Expected (good) output:** The agent calls `get_weather("london")` and responds: *The weather in London is currently 58°F and Cloudy.*
+
+## Your Task
+
+Update the **system prompt** (and only that) to add few-shot examples that teach the agent:
+
+- Call a tool when the question requires real-time or dynamic data (stock prices, weather).
+- Answer directly from knowledge when the question is general or factual (capitals, definitions, history).
+- Never call a tool that is irrelevant to the question.
+
+Do not change tool implementations or add new tools.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Uses tool when needed:** The agent calls the correct tool for real-time data queries.
+- **Answers directly when tool not needed:** General-knowledge questions are answered without tool calls.
+- **No unnecessary tool calls:** The agent never invokes a tool that is irrelevant to the user's question.

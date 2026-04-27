@@ -1,0 +1,218 @@
+# Project: Parallel Report Generator
+
+Build a report generator that uses the orchestrator-worker pattern. An orchestrator plans the report sections using structured output, distributes writing to parallel workers via the `Send` API, and a synthesizer aggregates the results into a final report.
+
+## Architecture
+
+The system has three stages:
+
+1. **Orchestrator** — receives a topic and uses structured output to plan 3-5 sections
+2. **Writers** — parallel workers created dynamically via `Send`, each writing one section
+3. **Synthesizer** — aggregates all sections into a final report
+
+## State Definitions
+
+```python
+import operator
+from typing import TypedDict, Annotated
+from pydantic import BaseModel
+
+class Section(BaseModel):
+    title: str
+    description: str
+
+class ReportPlan(BaseModel):
+    title: str
+    sections: list[Section]
+
+class ReportState(TypedDict):
+    topic: str
+    plan: dict
+    sections: Annotated[list[str], operator.add]
+    report: str
+
+class SectionState(TypedDict):
+    title: str
+    description: str
+```
+
+`ReportState` is the parent graph state. The `sections` field uses `Annotated[list[str], operator.add]` so parallel workers can all append their output. `SectionState` is the isolated state each worker receives via `Send`.
+
+## Orchestrator Node
+
+The orchestrator uses structured output to produce a plan:
+
+```python
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+def orchestrator(state: ReportState) -> dict:
+    plan = llm.with_structured_output(ReportPlan).invoke(
+        f"Create a report plan with 3-5 sections about: {state['topic']}. "
+        f"Each section needs a title and a one-sentence description of what to cover."
+    )
+    return {"plan": plan.model_dump()}
+```
+
+## Dynamic Distribution with Send
+
+A conditional edge reads the plan and creates one `Send` per section:
+
+```python
+from langgraph.types import Send
+
+def distribute_sections(state: ReportState) -> list[Send]:
+    sections = state["plan"]["sections"]
+    return [
+        Send("writer", {"title": s["title"], "description": s["description"]})
+        for s in sections
+    ]
+```
+
+The number of workers matches the number of sections the LLM planned — fully dynamic.
+
+## Writer Node
+
+Each worker writes a single section:
+
+```python
+def writer(state: SectionState) -> dict:
+    content = llm.invoke(
+        f"Write a detailed section for a report.\n"
+        f"Section title: {state['title']}\n"
+        f"Description: {state['description']}\n"
+        f"Write 2-3 paragraphs. Start with the section title as a markdown heading."
+    )
+    return {"sections": [content.content]}
+```
+
+## Synthesizer Node
+
+The synthesizer combines all sections into a final report:
+
+```python
+def synthesizer(state: ReportState) -> dict:
+    all_sections = "\n\n".join(state["sections"])
+    report = llm.invoke(
+        f"You are given individual sections of a report about '{state['topic']}'.\n"
+        f"Combine them into a cohesive final report. Add an introduction and conclusion.\n"
+        f"Sections:\n\n{all_sections}"
+    )
+    return {"report": report.content}
+```
+
+## Assembling the Graph
+
+```python
+from langgraph.graph import StateGraph, START, END
+
+graph = StateGraph(ReportState)
+
+graph.add_node("orchestrator", orchestrator)
+graph.add_node("writer", writer)
+graph.add_node("synthesizer", synthesizer)
+
+graph.add_edge(START, "orchestrator")
+graph.add_conditional_edges("orchestrator", distribute_sections, path_map=["writer"])
+graph.add_edge("writer", "synthesizer")
+graph.add_edge("synthesizer", END)
+
+app = graph.compile()
+```
+
+## Running the Generator
+
+```python
+result = app.invoke({"topic": "The Impact of Large Language Models on Software Engineering"})
+
+print("=== REPORT ===")
+print(result["report"])
+print(f"\nSections generated: {len(result['sections'])}")
+```
+
+## Full Code
+
+```python
+import operator
+from typing import TypedDict, Annotated
+from pydantic import BaseModel
+from langgraph.graph import StateGraph, START, END
+from langgraph.types import Send
+from langchain_openai import ChatOpenAI
+
+class Section(BaseModel):
+    title: str
+    description: str
+
+class ReportPlan(BaseModel):
+    title: str
+    sections: list[Section]
+
+class ReportState(TypedDict):
+    topic: str
+    plan: dict
+    sections: Annotated[list[str], operator.add]
+    report: str
+
+class SectionState(TypedDict):
+    title: str
+    description: str
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+def orchestrator(state: ReportState) -> dict:
+    plan = llm.with_structured_output(ReportPlan).invoke(
+        f"Create a report plan with 3-5 sections about: {state['topic']}. "
+        f"Each section needs a title and a one-sentence description of what to cover."
+    )
+    return {"plan": plan.model_dump()}
+
+def distribute_sections(state: ReportState) -> list[Send]:
+    sections = state["plan"]["sections"]
+    return [
+        Send("writer", {"title": s["title"], "description": s["description"]})
+        for s in sections
+    ]
+
+def writer(state: SectionState) -> dict:
+    content = llm.invoke(
+        f"Write a detailed section for a report.\n"
+        f"Section title: {state['title']}\n"
+        f"Description: {state['description']}\n"
+        f"Write 2-3 paragraphs. Start with the section title as a markdown heading."
+    )
+    return {"sections": [content.content]}
+
+def synthesizer(state: ReportState) -> dict:
+    all_sections = "\n\n".join(state["sections"])
+    report = llm.invoke(
+        f"You are given individual sections of a report about '{state['topic']}'.\n"
+        f"Combine them into a cohesive final report. Add an introduction and conclusion.\n"
+        f"Sections:\n\n{all_sections}"
+    )
+    return {"report": report.content}
+
+graph = StateGraph(ReportState)
+graph.add_node("orchestrator", orchestrator)
+graph.add_node("writer", writer)
+graph.add_node("synthesizer", synthesizer)
+graph.add_edge(START, "orchestrator")
+graph.add_conditional_edges("orchestrator", distribute_sections, path_map=["writer"])
+graph.add_edge("writer", "synthesizer")
+graph.add_edge("synthesizer", END)
+
+app = graph.compile()
+
+result = app.invoke({"topic": "The Impact of Large Language Models on Software Engineering"})
+print(result["report"])
+```
+
+## Key Takeaways
+
+- The orchestrator-worker pattern splits into three stages: plan, parallel execute, and synthesize
+- Structured output (`with_structured_output`) lets the LLM produce typed plans for dynamic section creation
+- `Send` API creates one worker per section — the count is determined at runtime, not graph definition time
+- `Annotated[list[str], operator.add]` ensures all parallel worker outputs are aggregated into a single list
+- The synthesizer receives all sections and produces a cohesive final report
+- This pattern scales to any number of sections without changing the graph structure

@@ -1,0 +1,208 @@
+# Production Deployment
+
+Moving a LangGraph application from prototype to production requires durable checkpointing, encrypted state, proper deployment infrastructure, and observability. This guide covers the key components for running LangGraph reliably at scale.
+
+## PostgresSaver for Production Checkpointing
+
+The in-memory `MemorySaver` is fine for development, but production systems need durable persistence. `PostgresSaver` stores checkpoints in PostgreSQL:
+
+```python
+from langgraph.checkpoint.postgres import PostgresSaver
+
+DB_URI = "postgresql://user:password@localhost:5432/langgraph"
+
+with PostgresSaver.from_conn_string(DB_URI) as checkpointer:
+    checkpointer.setup()  # creates tables on first run
+
+    app = graph.compile(checkpointer=checkpointer)
+
+    config = {"configurable": {"thread_id": "user-123"}}
+    result = app.invoke({"messages": [("human", "Hello")]}, config=config)
+```
+
+`PostgresSaver` automatically creates the required tables. Each thread gets its own checkpoint history, enabling resume, replay, and branching.
+
+## Async PostgresSaver
+
+For async applications, use the async variant:
+
+```python
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+async def run():
+    async with AsyncPostgresSaver.from_conn_string(DB_URI) as checkpointer:
+        await checkpointer.setup()
+        app = graph.compile(checkpointer=checkpointer)
+
+        config = {"configurable": {"thread_id": "user-456"}}
+        result = await app.ainvoke(
+            {"messages": [("human", "Hello")]},
+            config=config,
+        )
+```
+
+## EncryptedSerializer with AES
+
+For sensitive state data, encrypt checkpoints at rest using a custom serializer:
+
+```python
+import json
+import os
+from cryptography.fernet import Fernet
+from langgraph.checkpoint.serde.base import SerializerProtocol
+
+class EncryptedSerializer(SerializerProtocol):
+    def __init__(self, key: bytes | None = None):
+        self.fernet = Fernet(key or os.environ["CHECKPOINT_ENCRYPTION_KEY"])
+
+    def dumps(self, obj: dict) -> bytes:
+        plaintext = json.dumps(obj).encode()
+        return self.fernet.encrypt(plaintext)
+
+    def loads(self, data: bytes) -> dict:
+        plaintext = self.fernet.decrypt(data)
+        return json.loads(plaintext)
+
+# Generate a key: Fernet.generate_key()
+serializer = EncryptedSerializer()
+
+checkpointer = PostgresSaver.from_conn_string(
+    DB_URI,
+    serde=serializer,
+)
+```
+
+This ensures checkpoint data is AES-encrypted in PostgreSQL. The encryption key should be stored in environment variables or a secrets manager.
+
+## LangGraph Platform
+
+LangGraph Platform provides a managed deployment option with built-in persistence, streaming, and a task queue:
+
+```python
+# langgraph.json — deployment configuration
+{
+    "graphs": {
+        "my_agent": "./agent.py:graph"
+    },
+    "dependencies": ["langchain", "langgraph", "langchain-openai"],
+    "env": {
+        "OPENAI_API_KEY": ""
+    }
+}
+```
+
+```python
+# Deploy with the LangGraph CLI
+# langgraph up          — local development server
+# langgraph deploy      — deploy to LangGraph Cloud
+```
+
+## Docker Deployment
+
+For self-hosted production, containerize your LangGraph application:
+
+```python
+# Dockerfile
+# FROM python:3.12-slim
+# WORKDIR /app
+# COPY requirements.txt .
+# RUN pip install --no-cache-dir -r requirements.txt
+# COPY . .
+# EXPOSE 8000
+# CMD ["python", "-m", "langgraph", "up", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+```python
+# docker-compose.yml structure
+# services:
+#   langgraph:
+#     build: .
+#     ports: ["8000:8000"]
+#     environment:
+#       - OPENAI_API_KEY
+#       - DATABASE_URL=postgresql://user:pass@db:5432/langgraph
+#     depends_on: [db]
+#   db:
+#     image: postgres:16
+#     environment:
+#       - POSTGRES_DB=langgraph
+#       - POSTGRES_USER=user
+#       - POSTGRES_PASSWORD=pass
+```
+
+## Kubernetes Deployment
+
+For larger-scale deployments, use Kubernetes with horizontal pod autoscaling:
+
+```python
+# Key Kubernetes considerations:
+# - StatelessSet: LangGraph nodes are stateless; state lives in PostgreSQL
+# - HPA: Scale based on queue depth or request latency
+# - Secrets: Mount OPENAI_API_KEY and DB credentials as K8s secrets
+# - Health checks: /health endpoint for liveness/readiness probes
+# - Resource limits: Set CPU/memory limits based on model call patterns
+```
+
+## Monitoring with OpenTelemetry
+
+Add observability to track latency, errors, and token usage across graph executions:
+
+```python
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+
+provider = TracerProvider()
+processor = BatchSpanProcessor(OTLPSpanExporter(endpoint="http://localhost:4317"))
+provider.add_span_processor(processor)
+trace.set_tracer_provider(provider)
+
+tracer = trace.get_tracer("langgraph.app")
+
+def monitored_node(state: dict) -> dict:
+    with tracer.start_as_current_span("agent_reasoning") as span:
+        span.set_attribute("thread_id", state.get("thread_id", "unknown"))
+        span.set_attribute("node", "reasoning")
+        result = llm.invoke(state["messages"])
+        span.set_attribute("tokens", result.usage_metadata.get("total_tokens", 0))
+        return {"messages": [result]}
+```
+
+## LangSmith Integration
+
+LangSmith provides LangGraph-specific tracing and monitoring:
+
+```python
+import os
+
+os.environ["LANGSMITH_API_KEY"] = "your-api-key"
+os.environ["LANGSMITH_TRACING"] = "true"
+os.environ["LANGSMITH_PROJECT"] = "my-langgraph-app"
+
+# All graph invocations are now automatically traced
+# View traces at https://smith.langchain.com
+```
+
+LangSmith captures every node execution, state transition, and LLM call with full input/output visibility.
+
+## Production Checklist
+
+| Area | Development | Production |
+|------|-------------|------------|
+| Checkpointing | `MemorySaver` | `PostgresSaver` with connection pooling |
+| State encryption | None | `EncryptedSerializer` with AES |
+| Deployment | `python app.py` | Docker/K8s with health checks |
+| Monitoring | Print statements | OpenTelemetry + LangSmith |
+| Secrets | `.env` file | K8s secrets / Vault / env vars |
+| Scaling | Single process | HPA with stateless workers |
+| Error handling | Exceptions crash | Retry policies, dead-letter queues |
+
+## Key Takeaways
+
+- Use `PostgresSaver` for durable production checkpointing instead of `MemorySaver`
+- Encrypt sensitive state at rest with `EncryptedSerializer` and AES (Fernet)
+- LangGraph Platform provides managed deployment with built-in persistence and streaming
+- Self-host with Docker or Kubernetes — LangGraph nodes are stateless, state lives in PostgreSQL
+- Add OpenTelemetry for distributed tracing and LangSmith for LangGraph-specific observability
+- Production deployments need connection pooling, health checks, secrets management, and retry policies

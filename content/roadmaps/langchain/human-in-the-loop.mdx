@@ -1,0 +1,178 @@
+# Human-in-the-Loop
+
+Human-in-the-loop (HITL) lets you pause an agent's execution and ask a human to approve, edit, or reject an action before it proceeds. This is critical for high-stakes operations like payments, deletions, or any action that can't be easily undone.
+
+## Why Human-in-the-Loop?
+
+Agents are powerful but not infallible. HITL adds a safety layer where:
+
+- A human reviews tool calls before execution
+- Sensitive actions require explicit approval
+- The human can modify the agent's proposed action
+- Rejected actions let the agent try a different approach
+
+## interrupt_on Config
+
+The simplest way to add human approval is with the `interrupt_on` configuration. This pauses the agent before or after specific nodes:
+
+```python
+from langchain.chat_models import init_chat_model
+from langchain_core.tools import tool
+from langchain_core.messages import HumanMessage
+from langgraph.prebuilt import create_react_agent
+from langgraph.checkpoint.memory import InMemorySaver
+
+@tool
+def refund_payment(order_id: str, amount: float) -> str:
+    """Process a refund for an order. This action cannot be undone."""
+    return f"Refund of ${amount:.2f} processed for order {order_id}"
+
+model = init_chat_model("gpt-4o-mini", model_provider="openai")
+checkpointer = InMemorySaver()
+
+agent = create_react_agent(
+    model=model,
+    tools=[refund_payment],
+    checkpointer=checkpointer,
+)
+
+config = {"configurable": {"thread_id": "refund-1"}}
+
+result = agent.invoke(
+    {"messages": [HumanMessage(content="Refund $50 for order ORD-123")]},
+    config=config,
+    interrupt_before=["tools"],
+)
+```
+
+The agent pauses before calling the tool. You can inspect what it wants to do.
+
+## Checkpointer Requirement
+
+Human-in-the-loop **requires** a checkpointer. The checkpointer saves the agent's state at the interrupt point so execution can resume later:
+
+```python
+checkpointer = InMemorySaver()
+
+agent = create_react_agent(
+    model=model,
+    tools=[refund_payment],
+    checkpointer=checkpointer,
+)
+```
+
+Without a checkpointer, the agent has no way to save its state and resume after the human responds.
+
+## Decision Types
+
+When the agent is interrupted, the human can make one of three decisions:
+
+### Approve — Let the Action Proceed
+
+Resume execution with `None` to approve the pending action:
+
+```python
+from langgraph.types import Command
+
+result = agent.invoke(Command(resume=True), config=config)
+print(result["messages"][-1].content)
+```
+
+### Edit — Modify the Action
+
+Resume with updated values to change what the tool receives:
+
+```python
+result = agent.invoke(
+    Command(resume={"order_id": "ORD-123", "amount": 25.00}),
+    config=config,
+)
+print(result["messages"][-1].content)
+```
+
+### Reject — Block the Action
+
+Resume with a rejection message to tell the agent to try something else:
+
+```python
+result = agent.invoke(
+    Command(resume="Refund denied. Please suggest a store credit instead."),
+    config=config,
+)
+print(result["messages"][-1].content)
+```
+
+## Inspecting the Pending Action
+
+Before approving or rejecting, you can inspect what the agent wants to do by looking at the state:
+
+```python
+state = agent.get_state(config)
+
+for msg in state.values["messages"]:
+    if hasattr(msg, "tool_calls") and msg.tool_calls:
+        for tc in msg.tool_calls:
+            print(f"Tool: {tc['name']}")
+            print(f"Args: {tc['args']}")
+```
+
+## Complete HITL Workflow
+
+Here's a full example showing the interrupt-inspect-resume pattern:
+
+```python
+from langchain.chat_models import init_chat_model
+from langchain_core.tools import tool
+from langchain_core.messages import HumanMessage
+from langgraph.prebuilt import create_react_agent
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import Command
+
+@tool
+def delete_account(user_id: str) -> str:
+    """Permanently delete a user account. This cannot be undone."""
+    return f"Account {user_id} has been permanently deleted."
+
+model = init_chat_model("gpt-4o-mini", model_provider="openai")
+checkpointer = InMemorySaver()
+
+agent = create_react_agent(
+    model=model,
+    tools=[delete_account],
+    checkpointer=checkpointer,
+)
+
+config = {"configurable": {"thread_id": "delete-1"}}
+
+result = agent.invoke(
+    {"messages": [HumanMessage(content="Delete user account USR-456")]},
+    config=config,
+    interrupt_before=["tools"],
+)
+
+state = agent.get_state(config)
+for msg in state.values["messages"]:
+    if hasattr(msg, "tool_calls") and msg.tool_calls:
+        for tc in msg.tool_calls:
+            print(f"Pending action: {tc['name']}({tc['args']})")
+
+approved = input("Approve? (yes/no): ")
+if approved.lower() == "yes":
+    result = agent.invoke(Command(resume=True), config=config)
+else:
+    result = agent.invoke(
+        Command(resume="Action rejected by admin."),
+        config=config,
+    )
+
+print(result["messages"][-1].content)
+```
+
+## Key Takeaways
+
+- Human-in-the-loop pauses agent execution for human review of sensitive actions
+- Use `interrupt_before=["tools"]` to pause before tool execution
+- A checkpointer (`InMemorySaver`) is required to save state across the interrupt
+- Humans can approve (`Command(resume=True)`), edit (pass new args), or reject (pass a string message)
+- Inspect pending actions via `agent.get_state(config)` before making a decision
+- HITL is essential for high-stakes operations like payments, deletions, and data modifications

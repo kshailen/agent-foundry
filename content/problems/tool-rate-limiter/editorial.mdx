@@ -1,0 +1,201 @@
+## Approach
+
+The financial analyst agent uses an `analyze_company` tool that costs $0.05 per call. When a user asks to compare 10 companies, the agent makes 10+ calls, and with retries it can spiral to 50+. There is no mechanism to cap the number of calls per run. The fix is to wrap the tool with a call counter that tracks invocations and returns a rate-limit message after the 5th call, forcing the agent to work with the data it has already gathered.
+
+The counter must be scoped to a single agent run so it resets between separate invocations. In LangChain, a closure or class-based wrapper around the tool achieves this — each call to the outer function increments the counter, and when it hits the limit, it returns a message instead of calling the API. The agent's prompt is also updated to inform it about the rate limit so it can prioritize which companies to analyze first and present partial results gracefully.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+call_counter = {"count": 0}
+MAX_CALLS = 5
+
+
+@tool
+def analyze_company(company_name: str) -> str:
+    """Call expensive financial analysis API for a company. Costs $0.05 per call. Limited to 5 calls per session."""
+    if call_counter["count"] >= MAX_CALLS:
+        return f"RATE LIMIT REACHED: Cannot analyze '{company_name}'. You have used all {MAX_CALLS} API calls for this session. Work with the data you already have."
+
+    call_counter["count"] += 1
+    return f"Analysis for {company_name}: Revenue $10B, Growth 15%, P/E Ratio 25, Rating: Buy, Market Cap $150B, Sector: Technology (API call {call_counter['count']}/{MAX_CALLS})"
+
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", (
+        "You are a financial analyst assistant. Use the analyze_company tool to research companies.\n\n"
+        "IMPORTANT: The analyze_company API is expensive and limited to 5 calls per session.\n"
+        "- Prioritize the most important companies when the user asks about many.\n"
+        "- When you hit the rate limit, present your analysis based on the companies you were able to research.\n"
+        "- Inform the user how many companies you analyzed and which ones remain."
+    )),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}"),
+])
+
+agent = create_tool_calling_agent(llm, [analyze_company], prompt)
+
+
+def run_agent(query: str) -> str:
+    call_counter["count"] = 0
+    executor = AgentExecutor(agent=agent, tools=[analyze_company])
+    result = executor.invoke({"input": query})
+    return result["output"]
+
+
+print(run_agent("Compare the top 10 tech companies: Apple, Google, Microsoft, Amazon, Meta, Tesla, Nvidia, Netflix, Adobe, and Salesforce"))
+```
+
+### LangGraph
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.tools import tool
+from langgraph.prebuilt import create_react_agent
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+call_counter = {"count": 0}
+MAX_CALLS = 5
+
+
+@tool
+def analyze_company(company_name: str) -> str:
+    """Call expensive financial analysis API for a company. Costs $0.05 per call. Limited to 5 calls per session."""
+    if call_counter["count"] >= MAX_CALLS:
+        return f"RATE LIMIT REACHED: Cannot analyze '{company_name}'. You have used all {MAX_CALLS} API calls for this session. Work with the data you already have."
+
+    call_counter["count"] += 1
+    return f"Analysis for {company_name}: Revenue $10B, Growth 15%, P/E Ratio 25, Rating: Buy, Market Cap $150B, Sector: Technology (API call {call_counter['count']}/{MAX_CALLS})"
+
+
+agent = create_react_agent(
+    llm,
+    [analyze_company],
+    prompt=(
+        "You are a financial analyst assistant. Use the analyze_company tool to research companies.\n\n"
+        "IMPORTANT: The analyze_company API is expensive and limited to 5 calls per session.\n"
+        "- Prioritize the most important companies when the user asks about many.\n"
+        "- When you hit the rate limit, present your analysis based on the companies you were able to research.\n"
+        "- Inform the user how many companies you analyzed and which ones remain."
+    ),
+)
+
+
+def run_agent(query: str) -> str:
+    call_counter["count"] = 0
+    result = agent.invoke({"messages": [("human", query)]})
+    return result["messages"][-1].content
+
+
+print(run_agent("Compare the top 10 tech companies: Apple, Google, Microsoft, Amazon, Meta, Tesla, Nvidia, Netflix, Adobe, and Salesforce"))
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai.tools import tool
+
+call_counter = {"count": 0}
+MAX_CALLS = 5
+
+
+@tool
+def analyze_company(company_name: str) -> str:
+    """Call expensive financial analysis API for a company. Costs $0.05 per call. Limited to 5 calls per session."""
+    if call_counter["count"] >= MAX_CALLS:
+        return f"RATE LIMIT REACHED: Cannot analyze '{company_name}'. You have used all {MAX_CALLS} API calls for this session. Work with the data you already have."
+
+    call_counter["count"] += 1
+    return f"Analysis for {company_name}: Revenue $10B, Growth 15%, P/E Ratio 25, Rating: Buy, Market Cap $150B, Sector: Technology (API call {call_counter['count']}/{MAX_CALLS})"
+
+
+analyst_agent = Agent(
+    role="Financial Analyst",
+    goal="Analyze companies and provide financial insights. The analysis API is limited to 5 calls per session.",
+    backstory=(
+        "You are a financial analyst that researches companies using the analysis API. "
+        "IMPORTANT: The API is expensive and limited to 5 calls per session. "
+        "Prioritize the most important companies and present partial results when the limit is reached."
+    ),
+    tools=[analyze_company],
+)
+
+
+def run_analysis(query: str) -> str:
+    call_counter["count"] = 0
+    task = Task(
+        description=query,
+        expected_output="A comparative analysis of the companies with key financial metrics. If the rate limit is reached, present analysis for the companies that were successfully researched.",
+        agent=analyst_agent,
+    )
+    crew = Crew(agents=[analyst_agent], tasks=[task], process=Process.sequential)
+    return str(crew.kickoff())
+
+
+print(run_analysis("Compare the top 10 tech companies: Apple, Google, Microsoft, Amazon, Meta, Tesla, Nvidia, Netflix, Adobe, and Salesforce"))
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from agents.tool import function_tool
+
+call_counter = {"count": 0}
+MAX_CALLS = 5
+
+
+@function_tool
+def analyze_company(company_name: str) -> str:
+    """Call expensive financial analysis API for a company. Costs $0.05 per call. Limited to 5 calls per session."""
+    if call_counter["count"] >= MAX_CALLS:
+        return f"RATE LIMIT REACHED: Cannot analyze '{company_name}'. You have used all {MAX_CALLS} API calls for this session. Work with the data you already have."
+
+    call_counter["count"] += 1
+    return f"Analysis for {company_name}: Revenue $10B, Growth 15%, P/E Ratio 25, Rating: Buy, Market Cap $150B, Sector: Technology (API call {call_counter['count']}/{MAX_CALLS})"
+
+
+agent = Agent(
+    name="Financial Analyst",
+    instructions=(
+        "You are a financial analyst assistant. Use the analyze_company tool to research companies.\n\n"
+        "IMPORTANT: The analyze_company API is expensive and limited to 5 calls per session.\n"
+        "- Prioritize the most important companies when the user asks about many.\n"
+        "- When you hit the rate limit, present your analysis based on the companies you were able to research.\n"
+        "- Inform the user how many companies you analyzed and which ones remain."
+    ),
+    tools=[analyze_company],
+)
+
+
+def run_agent(query: str) -> str:
+    call_counter["count"] = 0
+    result = Runner.run_sync(agent, query)
+    return result.final_output
+
+
+print(run_agent("Compare the top 10 tech companies: Apple, Google, Microsoft, Amazon, Meta, Tesla, Nvidia, Netflix, Adobe, and Salesforce"))
+```
+
+## Why This Works
+
+The rate limiter is implemented at the tool level, which is the correct enforcement point. No matter how many times the LLM tries to call the tool, the counter check inside the function prevents execution beyond the limit. Returning a clear "RATE LIMIT REACHED" message (instead of raising an exception) gives the LLM actionable feedback — it knows to stop making calls and work with what it has.
+
+Resetting the counter at the start of each `run_agent` call ensures that separate user interactions get their own fresh budget. The prompt supplements the tool-level enforcement by telling the agent about the limit upfront, which helps it prioritize strategically (analyzing the most important companies first) rather than discovering the limit only after hitting it.
+
+## Key Takeaways
+
+- Enforce rate limits inside the tool function, not in the prompt alone — prompt-only limits are suggestions the LLM may ignore.
+- Return a clear rate-limit message instead of raising an exception so the agent can degrade gracefully with partial results.
+- Reset the counter between agent runs to ensure each invocation gets a fresh budget.

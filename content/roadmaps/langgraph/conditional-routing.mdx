@@ -1,0 +1,202 @@
+# Conditional Edges & Routing
+
+So far every graph you have built follows a fixed path — node A always leads to node B. Real applications need **branching**: the next step depends on the current state. LangGraph handles this with `add_conditional_edges`, which evaluates a routing function at runtime and sends execution down the matching path.
+
+## add_conditional_edges
+
+`add_conditional_edges` takes three arguments:
+
+1. **source** — the node whose output triggers the decision
+2. **routing_fn** — a function that inspects the state and returns a string key
+3. **mapping** — a dict that maps each key to a target node name
+
+```python
+from typing import TypedDict, Annotated
+from langgraph.graph import StateGraph, START, END, add_messages
+
+class State(TypedDict):
+    messages: Annotated[list, add_messages]
+    category: str
+
+def classify(state: State) -> dict:
+    last = state["messages"][-1].content.lower()
+    if "poem" in last:
+        return {"category": "poem"}
+    elif "joke" in last:
+        return {"category": "joke"}
+    return {"category": "story"}
+
+def route(state: State) -> str:
+    return state["category"]
+
+def poem_node(state: State) -> dict:
+    return {"messages": [("ai", "Here is a poem for you...")]}
+
+def joke_node(state: State) -> dict:
+    return {"messages": [("ai", "Here is a joke for you...")]}
+
+def story_node(state: State) -> dict:
+    return {"messages": [("ai", "Here is a story for you...")]}
+
+graph = StateGraph(State)
+graph.add_node("classify", classify)
+graph.add_node("poem", poem_node)
+graph.add_node("joke", joke_node)
+graph.add_node("story", story_node)
+
+graph.add_edge(START, "classify")
+graph.add_conditional_edges("classify", route, {
+    "poem": "poem",
+    "joke": "joke",
+    "story": "story",
+})
+graph.add_edge("poem", END)
+graph.add_edge("joke", END)
+graph.add_edge("story", END)
+
+app = graph.compile()
+```
+
+The routing function `route` reads the `category` field and the mapping dict forwards execution to the correct generator node.
+
+## LLM-Based Routing with Structured Output
+
+Hard-coded keyword matching is brittle. A more robust approach uses an LLM with `with_structured_output` to classify the input:
+
+```python
+from pydantic import BaseModel
+from typing import Literal
+from langchain_openai import ChatOpenAI
+
+class RouteModel(BaseModel):
+    """Classify the user request into one of the allowed categories."""
+    category: Literal["poem", "joke", "story"]
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+classifier = llm.with_structured_output(RouteModel)
+
+def llm_classify(state: State) -> dict:
+    result = classifier.invoke(state["messages"])
+    return {"category": result.category}
+```
+
+`with_structured_output` constrains the LLM response to the `RouteModel` schema, guaranteeing the returned `category` is one of the three allowed `Literal` values.
+
+## Route Model with Literal Types
+
+The `Literal` type annotation is critical. It defines the **exact set of valid routing keys** the LLM can return. This ensures the routing function always produces a value that appears in the conditional edges mapping:
+
+```python
+class RouteModel(BaseModel):
+    category: Literal["poem", "joke", "story"]
+```
+
+If you later add a new branch (say `"essay"`), you update both the `Literal` type and the mapping dict.
+
+## Routing to Different Generators
+
+Each branch target is a normal LangGraph node. You can make them as simple or complex as needed:
+
+```python
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+def poem_generator(state: State) -> dict:
+    response = llm.invoke([
+        ("system", "You are a poet. Write a short poem based on the user request."),
+        *state["messages"],
+    ])
+    return {"messages": [response]}
+
+def joke_generator(state: State) -> dict:
+    response = llm.invoke([
+        ("system", "You are a comedian. Write a short joke based on the user request."),
+        *state["messages"],
+    ])
+    return {"messages": [response]}
+
+def story_generator(state: State) -> dict:
+    response = llm.invoke([
+        ("system", "You are a storyteller. Write a short story based on the user request."),
+        *state["messages"],
+    ])
+    return {"messages": [response]}
+```
+
+Wire them into the same graph structure shown above and the conditional edge will route each request to the matching specialist.
+
+## Full Example
+
+```python
+from typing import TypedDict, Annotated, Literal
+from langgraph.graph import StateGraph, START, END, add_messages
+from langchain_openai import ChatOpenAI
+from pydantic import BaseModel
+
+class State(TypedDict):
+    messages: Annotated[list, add_messages]
+    category: str
+
+class RouteModel(BaseModel):
+    category: Literal["poem", "joke", "story"]
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+classifier = llm.with_structured_output(RouteModel)
+
+def classify(state: State) -> dict:
+    result = classifier.invoke(state["messages"])
+    return {"category": result.category}
+
+def route(state: State) -> str:
+    return state["category"]
+
+def poem_generator(state: State) -> dict:
+    response = llm.invoke([
+        ("system", "You are a poet. Write a short poem."),
+        *state["messages"],
+    ])
+    return {"messages": [response]}
+
+def joke_generator(state: State) -> dict:
+    response = llm.invoke([
+        ("system", "You are a comedian. Write a short joke."),
+        *state["messages"],
+    ])
+    return {"messages": [response]}
+
+def story_generator(state: State) -> dict:
+    response = llm.invoke([
+        ("system", "You are a storyteller. Write a short story."),
+        *state["messages"],
+    ])
+    return {"messages": [response]}
+
+graph = StateGraph(State)
+graph.add_node("classify", classify)
+graph.add_node("poem", poem_generator)
+graph.add_node("joke", joke_generator)
+graph.add_node("story", story_generator)
+
+graph.add_edge(START, "classify")
+graph.add_conditional_edges("classify", route, {
+    "poem": "poem",
+    "joke": "joke",
+    "story": "story",
+})
+graph.add_edge("poem", END)
+graph.add_edge("joke", END)
+graph.add_edge("story", END)
+
+app = graph.compile()
+result = app.invoke({"messages": [("human", "Tell me a funny joke about cats")]})
+print(result["messages"][-1].content)
+```
+
+## Key Takeaways
+
+- `add_conditional_edges(source, routing_fn, mapping)` enables runtime branching based on state
+- Use `with_structured_output` and a Pydantic model with `Literal` types for reliable LLM-based routing
+- The routing function returns a string key that must match a key in the mapping dict
+- Each branch target is a regular node — simple functions or full LLM-powered generators
+- Always keep the `Literal` values and the mapping dict in sync when adding new routes

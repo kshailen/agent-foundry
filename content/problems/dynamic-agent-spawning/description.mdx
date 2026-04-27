@@ -1,0 +1,47 @@
+## The Problem
+
+You have a fixed two-agent pipeline (researcher + writer) that handles every task the same way regardless of complexity. When a task needs additional skills — like coding, design, or data analysis — the fixed agents can't adapt. Your task is to build a **dynamic agent spawning** system where a **planner** analyzes the incoming task, decides how many and what type of agents are needed, and creates them at runtime.
+
+## Examples
+
+### Example 1
+
+**User input:** Research Python async patterns, write example code, and create a tutorial.
+
+**Current (bad) output:** The fixed researcher and writer try to handle everything. The researcher attempts to write code (poorly), and the writer ignores the code angle entirely.
+
+**Expected (good) output:** The planner identifies three needed roles: researcher, coder, and writer. Three agents are dynamically spawned with tailored instructions. The researcher gathers async pattern information, the coder writes example code, and the writer creates a tutorial combining both.
+
+### Example 2
+
+**User input:** Analyze this sales data and create a presentation summary.
+
+**Current (bad) output:** The researcher and writer attempt data analysis without analytical capabilities.
+
+**Expected (good) output:** The planner spawns a data analyst and a presentation writer. The analyst processes the data and the writer creates the summary — no researcher needed.
+
+### Example 3
+
+**User input:** Translate this document to Spanish.
+
+**Current (bad) output:** Two agents are overkill — the researcher does unnecessary research and the writer does a mediocre translation.
+
+**Expected (good) output:** The planner spawns a single translator agent, since that's all the task requires.
+
+## Your Task
+
+Refactor the starter code so that:
+
+- A **planner** analyzes each incoming task and determines the required agent roles.
+- Agents are **dynamically created** at runtime with roles tailored to the task.
+- The system adapts to different tasks by spawning different numbers and types of agents.
+- The agents execute their subtasks and produce a combined final output.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Agent count decided at runtime:** The number and type of agents are determined dynamically based on the task.
+- **Planner analyzes the task:** A planning step inspects the task and decides what agents are needed.
+- **Agents have tailored roles:** Each spawned agent has a role and instructions specific to its subtask.
+- **Handles different task types:** The system produces different agent configurations for different tasks.

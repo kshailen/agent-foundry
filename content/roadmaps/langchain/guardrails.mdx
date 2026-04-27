@@ -1,0 +1,195 @@
+# Guardrails & Safety
+
+Guardrails protect your agent from processing or leaking sensitive information. LangChain provides middleware that intercepts messages before and after the agent processes them, enabling PII detection, content filtering, and custom safety checks.
+
+## PIIMiddleware
+
+`PIIMiddleware` automatically detects and handles personally identifiable information (PII) in user messages. It can find emails, credit card numbers, IP addresses, phone numbers, and more:
+
+```python
+from langchain.chat_models import init_chat_model
+from langgraph.prebuilt import create_react_agent
+from langgraph.prebuilt.middleware import PIIMiddleware
+
+model = init_chat_model("gpt-4o-mini", model_provider="openai")
+
+pii_middleware = PIIMiddleware()
+
+agent = create_react_agent(
+    model=model,
+    tools=[],
+    prompt="You are a helpful assistant.",
+    middleware=[pii_middleware],
+)
+```
+
+## PII Types Detected
+
+PIIMiddleware can detect several categories of sensitive data:
+
+| PII Type | Example | Pattern |
+|----------|---------|---------|
+| Email | `user@example.com` | Standard email format |
+| Credit Card | `4111-1111-1111-1111` | Major card number patterns |
+| IP Address | `192.168.1.1` | IPv4 addresses |
+| Phone Number | `(555) 123-4567` | Common phone formats |
+| SSN | `123-45-6789` | Social Security Number format |
+
+## Strategies: redact, mask, hash, block
+
+PIIMiddleware supports different strategies for handling detected PII:
+
+### Redact — Replace with a Label
+
+```python
+pii_middleware = PIIMiddleware(strategy="redact")
+```
+
+Input: `"My email is alice@example.com"`
+Output: `"My email is [EMAIL_REDACTED]"`
+
+### Mask — Partially Hide the Value
+
+```python
+pii_middleware = PIIMiddleware(strategy="mask")
+```
+
+Input: `"Card number 4111-1111-1111-1111"`
+Output: `"Card number 4111-XXXX-XXXX-1111"`
+
+### Hash — Replace with a Hash
+
+```python
+pii_middleware = PIIMiddleware(strategy="hash")
+```
+
+Input: `"My email is alice@example.com"`
+Output: `"My email is [HASH:a1b2c3d4]"`
+
+### Block — Reject the Entire Message
+
+```python
+pii_middleware = PIIMiddleware(strategy="block")
+```
+
+If PII is detected, the message is blocked entirely and the agent receives an error message instead.
+
+## Using PIIMiddleware with an Agent
+
+```python
+from langchain_core.messages import HumanMessage
+
+pii_middleware = PIIMiddleware(strategy="redact")
+
+agent = create_react_agent(
+    model=model,
+    tools=[],
+    prompt="You are a customer support assistant.",
+    middleware=[pii_middleware],
+)
+
+result = agent.invoke({
+    "messages": [HumanMessage(content="My email is alice@example.com and my card is 4111-1111-1111-1111")]
+})
+print(result["messages"][-1].content)
+```
+
+The agent never sees the raw PII — it receives the redacted version.
+
+## Custom Middleware
+
+You can build custom middleware with `before_agent` and `after_agent` hooks for any safety logic:
+
+```python
+from langgraph.prebuilt.middleware import AgentMiddleware
+
+class ContentFilterMiddleware(AgentMiddleware):
+    def __init__(self, blocked_words=None):
+        self.blocked_words = blocked_words or []
+
+    def before_agent(self, state):
+        last_message = state["messages"][-1].content
+        for word in self.blocked_words:
+            if word.lower() in last_message.lower():
+                state["messages"][-1].content = "[MESSAGE BLOCKED: contains prohibited content]"
+                break
+        return state
+
+    def after_agent(self, state):
+        last_message = state["messages"][-1].content
+        for word in self.blocked_words:
+            if word.lower() in last_message.lower():
+                state["messages"][-1].content = "I can't help with that topic."
+                break
+        return state
+```
+
+### before_agent Hook
+
+Runs before the agent processes the message. Use it to:
+
+- Filter or modify user input
+- Block messages with prohibited content
+- Add context or system instructions
+- Log incoming messages
+
+### after_agent Hook
+
+Runs after the agent generates a response. Use it to:
+
+- Filter agent output
+- Remove sensitive information from responses
+- Add disclaimers or warnings
+- Log outgoing messages
+
+## Layered Protection
+
+Combine multiple middleware for defense in depth. Middleware runs in order — each one processes the result of the previous:
+
+```python
+pii_filter = PIIMiddleware(strategy="redact")
+content_filter = ContentFilterMiddleware(blocked_words=["hack", "exploit"])
+
+agent = create_react_agent(
+    model=model,
+    tools=[],
+    prompt="You are a helpful assistant.",
+    middleware=[pii_filter, content_filter],
+)
+```
+
+The PII middleware runs first (redacting sensitive data), then the content filter checks for prohibited words. This layered approach catches different categories of unsafe content.
+
+## Middleware with Tools
+
+Middleware also protects tool inputs and outputs:
+
+```python
+from langchain_core.tools import tool
+
+@tool
+def lookup_customer(email: str) -> str:
+    """Look up customer information by email."""
+    return f"Customer found: Premium plan, member since 2020"
+
+agent = create_react_agent(
+    model=model,
+    tools=[lookup_customer],
+    prompt="You are a customer support agent.",
+    middleware=[PIIMiddleware(strategy="redact")],
+)
+
+result = agent.invoke({
+    "messages": [HumanMessage(content="Look up customer alice@example.com")]
+})
+print(result["messages"][-1].content)
+```
+
+## Key Takeaways
+
+- `PIIMiddleware` detects and handles emails, credit cards, IPs, phone numbers, and SSNs
+- Four strategies: `redact` (replace with label), `mask` (partial hide), `hash` (replace with hash), `block` (reject entirely)
+- Custom middleware uses `before_agent` and `after_agent` hooks for arbitrary safety logic
+- `before_agent` filters user input; `after_agent` filters agent output
+- Layer multiple middleware for defense in depth — they run in sequence
+- Middleware protects both direct messages and tool interactions

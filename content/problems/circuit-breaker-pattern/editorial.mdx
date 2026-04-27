@@ -1,0 +1,274 @@
+## Approach
+
+The bug is that the payment processing agent keeps hammering a dead service on every user request. When the payment service goes down, each call fails with a `ConnectionError`, but the agent has no memory of past failures — it tries the full request every time, wasting resources and making the already-struggling service worse. There is no circuit breaker to stop the flood.
+
+The circuit breaker pattern has three states: CLOSED (normal operation — calls go through), OPEN (service is known to be down — calls are immediately rejected without contacting the service), and HALF-OPEN (cooldown expired — one trial call is allowed to test recovery). The breaker starts CLOSED. After 3 consecutive failures, it flips to OPEN and rejects all calls for 60 seconds. After the cooldown, it enters HALF-OPEN and lets one call through: if that call succeeds, the breaker resets to CLOSED; if it fails, it goes back to OPEN for another 60-second cooldown.
+
+The implementation uses a `CircuitBreaker` class that tracks state, failure count, and the timestamp of the last failure. The wrapped service call checks the breaker state before executing and updates it based on the result.
+
+## Solution
+
+### LangChain
+
+```python
+import time
+from langchain_openai import ChatOpenAI
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+
+class CircuitBreaker:
+    def __init__(self, failure_threshold: int = 3, cooldown_seconds: int = 60):
+        self.failure_threshold = failure_threshold
+        self.cooldown_seconds = cooldown_seconds
+        self.failure_count = 0
+        self.state = "CLOSED"
+        self.last_failure_time = 0
+
+    def call(self, func, *args, **kwargs):
+        if self.state == "OPEN":
+            if time.time() - self.last_failure_time >= self.cooldown_seconds:
+                self.state = "HALF-OPEN"
+            else:
+                return "The payment service is temporarily unavailable. Please try again later."
+
+        try:
+            result = func(*args, **kwargs)
+            self.failure_count = 0
+            self.state = "CLOSED"
+            return result
+        except ConnectionError:
+            self.failure_count += 1
+            self.last_failure_time = time.time()
+            if self.failure_count >= self.failure_threshold:
+                self.state = "OPEN"
+            if self.state == "HALF-OPEN":
+                self.state = "OPEN"
+            return f"Payment service error (failure {self.failure_count}/{self.failure_threshold})."
+
+breaker = CircuitBreaker(failure_threshold=3, cooldown_seconds=60)
+
+def _call_payment_service(amount: str) -> str:
+    raise ConnectionError("Payment service is unavailable")
+
+@tool
+def call_payment_service(amount: str) -> str:
+    """Process a payment through the payment service."""
+    return breaker.call(_call_payment_service, amount)
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a payment assistant. Help users process payments."),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}"),
+])
+
+agent = create_tool_calling_agent(llm, [call_payment_service], prompt)
+executor = AgentExecutor(agent=agent, tools=[call_payment_service])
+
+for i in range(5):
+    print(f"\nAttempt {i+1}:")
+    result = executor.invoke({"input": f"Process payment of $50"})
+    print(result["output"])
+```
+
+### LangGraph
+
+```python
+import time
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict
+
+class CircuitBreaker:
+    def __init__(self, failure_threshold: int = 3, cooldown_seconds: int = 60):
+        self.failure_threshold = failure_threshold
+        self.cooldown_seconds = cooldown_seconds
+        self.failure_count = 0
+        self.state = "CLOSED"
+        self.last_failure_time = 0
+
+    def call(self, func, *args, **kwargs):
+        if self.state == "OPEN":
+            if time.time() - self.last_failure_time >= self.cooldown_seconds:
+                self.state = "HALF-OPEN"
+            else:
+                return "The payment service is temporarily unavailable. Please try again later."
+
+        try:
+            result = func(*args, **kwargs)
+            self.failure_count = 0
+            self.state = "CLOSED"
+            return result
+        except ConnectionError:
+            self.failure_count += 1
+            self.last_failure_time = time.time()
+            if self.failure_count >= self.failure_threshold:
+                self.state = "OPEN"
+            if self.state == "HALF-OPEN":
+                self.state = "OPEN"
+            return f"Payment service error (failure {self.failure_count}/{self.failure_threshold})."
+
+breaker = CircuitBreaker(failure_threshold=3, cooldown_seconds=60)
+
+class State(TypedDict):
+    amount: str
+    result: str
+    attempt: int
+
+def _raw_payment_call(amount: str) -> str:
+    raise ConnectionError("Payment service is unavailable")
+
+def process_payment(state: State) -> State:
+    result = breaker.call(_raw_payment_call, state["amount"])
+    return {"result": result}
+
+graph = StateGraph(State)
+graph.add_node("payment", process_payment)
+graph.add_edge(START, "payment")
+graph.add_edge("payment", END)
+
+app = graph.compile()
+
+for i in range(5):
+    print(f"\nAttempt {i+1}:")
+    result = app.invoke({"amount": "$50", "result": "", "attempt": i})
+    print(result["result"])
+```
+
+### CrewAI
+
+```python
+import time
+from crewai import Agent, Task, Crew
+from crewai import LLM
+from crewai.tools import tool
+
+llm = LLM(model="gpt-4o-mini")
+
+class CircuitBreaker:
+    def __init__(self, failure_threshold: int = 3, cooldown_seconds: int = 60):
+        self.failure_threshold = failure_threshold
+        self.cooldown_seconds = cooldown_seconds
+        self.failure_count = 0
+        self.state = "CLOSED"
+        self.last_failure_time = 0
+
+    def call(self, func, *args, **kwargs):
+        if self.state == "OPEN":
+            if time.time() - self.last_failure_time >= self.cooldown_seconds:
+                self.state = "HALF-OPEN"
+            else:
+                return "The payment service is temporarily unavailable. Please try again later."
+
+        try:
+            result = func(*args, **kwargs)
+            self.failure_count = 0
+            self.state = "CLOSED"
+            return result
+        except ConnectionError:
+            self.failure_count += 1
+            self.last_failure_time = time.time()
+            if self.failure_count >= self.failure_threshold:
+                self.state = "OPEN"
+            if self.state == "HALF-OPEN":
+                self.state = "OPEN"
+            return f"Payment service error (failure {self.failure_count}/{self.failure_threshold})."
+
+breaker = CircuitBreaker(failure_threshold=3, cooldown_seconds=60)
+
+def _call_payment_service(amount: str) -> str:
+    raise ConnectionError("Payment service is unavailable")
+
+@tool
+def process_payment(amount: str) -> str:
+    """Process a payment through the payment service."""
+    return breaker.call(_call_payment_service, amount)
+
+agent = Agent(
+    role="Payment Assistant",
+    goal="Help users process payments",
+    backstory="You are a payment assistant that processes payments.",
+    tools=[process_payment],
+    llm=llm,
+)
+
+for i in range(5):
+    print(f"\nAttempt {i+1}:")
+    task = Task(
+        description="Process payment of $50",
+        expected_output="Payment result",
+        agent=agent,
+    )
+    crew = Crew(agents=[agent], tasks=[task])
+    result = crew.kickoff()
+    print(result)
+```
+
+### OpenAI Agents SDK
+
+```python
+import time
+from agents import Agent, Runner
+from agents.tool import function_tool
+
+class CircuitBreaker:
+    def __init__(self, failure_threshold: int = 3, cooldown_seconds: int = 60):
+        self.failure_threshold = failure_threshold
+        self.cooldown_seconds = cooldown_seconds
+        self.failure_count = 0
+        self.state = "CLOSED"
+        self.last_failure_time = 0
+
+    def call(self, func, *args, **kwargs):
+        if self.state == "OPEN":
+            if time.time() - self.last_failure_time >= self.cooldown_seconds:
+                self.state = "HALF-OPEN"
+            else:
+                return "The payment service is temporarily unavailable. Please try again later."
+
+        try:
+            result = func(*args, **kwargs)
+            self.failure_count = 0
+            self.state = "CLOSED"
+            return result
+        except ConnectionError:
+            self.failure_count += 1
+            self.last_failure_time = time.time()
+            if self.failure_count >= self.failure_threshold:
+                self.state = "OPEN"
+            if self.state == "HALF-OPEN":
+                self.state = "OPEN"
+            return f"Payment service error (failure {self.failure_count}/{self.failure_threshold})."
+
+breaker = CircuitBreaker(failure_threshold=3, cooldown_seconds=60)
+
+def _call_payment_service(amount: str) -> str:
+    raise ConnectionError("Payment service is unavailable")
+
+@function_tool
+def process_payment(amount: str) -> str:
+    """Process a payment through the payment service."""
+    return breaker.call(_call_payment_service, amount)
+
+agent = Agent(
+    name="Payment Assistant",
+    instructions="You are a payment assistant. Help users process payments.",
+    tools=[process_payment],
+)
+
+for i in range(5):
+    print(f"\nAttempt {i+1}:")
+    result = Runner.run_sync(agent, "Process payment of $50")
+    print(result.final_output)
+```
+
+## Why This Works
+
+The `CircuitBreaker` class maintains shared state across all calls to the payment service. The first 3 failures increment the counter and eventually trip the breaker to OPEN. Once open, subsequent calls are rejected instantly without contacting the service — this protects the struggling service from being overwhelmed and gives users an immediate response instead of waiting for a timeout. After 60 seconds, the HALF-OPEN state lets one trial call through to test whether the service has recovered. If it succeeds, normal operation resumes. If it fails, the breaker re-opens for another cooldown period. This self-healing behavior means the system automatically recovers when the service comes back, without manual intervention.
+
+## Key Takeaways
+
+- The circuit breaker pattern prevents cascading failures by cutting off requests to a failing service before they waste resources.
+- Three states (CLOSED, OPEN, HALF-OPEN) provide a clean model: normal operation, fail-fast rejection, and automatic recovery testing.
+- The breaker state must be shared across all calls to the same service — using a class instance or shared object ensures consistency.

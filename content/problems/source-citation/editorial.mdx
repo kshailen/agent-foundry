@@ -1,0 +1,191 @@
+## Approach
+
+The RAG pipeline retrieves documents that have source metadata attached (e.g., `earnings_report_q3.pdf`), but two things go wrong. First, when building the context string, only `page_content` is kept and the metadata is discarded. Second, the system prompt never instructs the LLM to cite sources. The result is an answer with no attribution — useless in business contexts where users need to verify claims.
+
+The fix has two parts: preserve the source metadata when constructing the context (format each chunk as its content followed by its source identifier), and update the system prompt to explicitly instruct the LLM to cite the source document for every factual claim it makes. This gives the user a verifiable trail from claim to document.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="The company's revenue grew 40% year-over-year in Q3 2024.", metadata={"source": "earnings_report_q3.pdf"}),
+    Document(page_content="The new product launch is scheduled for March 2025.", metadata={"source": "product_roadmap.pdf"}),
+    Document(page_content="Employee satisfaction scores improved to 4.5/5 in the latest survey.", metadata={"source": "hr_annual_review.pdf"}),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+retriever = vectorstore.as_retriever()
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system",
+     "Answer the question based on the context below. "
+     "For every factual claim, cite the source document in square brackets "
+     "like [Source: filename.pdf].\n\n"
+     "Context:\n{context}"),
+    ("human", "{question}"),
+])
+
+def ask(question: str) -> str:
+    docs = retriever.invoke(question)
+    context = "\n".join(
+        [f"{doc.page_content} [Source: {doc.metadata['source']}]" for doc in docs]
+    )
+    chain = prompt | llm
+    result = chain.invoke({"context": context, "question": question})
+    return result.content
+
+print(ask("What was the revenue growth?"))
+```
+
+### LangGraph
+
+```python
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="The company's revenue grew 40% year-over-year in Q3 2024.", metadata={"source": "earnings_report_q3.pdf"}),
+    Document(page_content="The new product launch is scheduled for March 2025.", metadata={"source": "product_roadmap.pdf"}),
+    Document(page_content="Employee satisfaction scores improved to 4.5/5 in the latest survey.", metadata={"source": "hr_annual_review.pdf"}),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+retriever = vectorstore.as_retriever()
+
+class State(TypedDict):
+    question: str
+    context: str
+    answer: str
+
+def retrieve(state: State) -> State:
+    docs = retriever.invoke(state["question"])
+    context = "\n".join(
+        [f"{doc.page_content} [Source: {doc.metadata['source']}]" for doc in docs]
+    )
+    return {"context": context}
+
+def answer(state: State) -> State:
+    response = llm.invoke(
+        f"Answer the question based on the context below. "
+        f"For every factual claim, cite the source document in square brackets "
+        f"like [Source: filename.pdf].\n\n"
+        f"Context:\n{state['context']}\n\n"
+        f"Question: {state['question']}"
+    )
+    return {"answer": response.content}
+
+graph = StateGraph(State)
+graph.add_node("retrieve", retrieve)
+graph.add_node("answer", answer)
+graph.add_edge(START, "retrieve")
+graph.add_edge("retrieve", "answer")
+graph.add_edge("answer", END)
+
+app = graph.compile()
+result = app.invoke({"question": "What was the revenue growth?"})
+print(result["answer"])
+```
+
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from crewai import LLM
+
+llm = LLM(model="gpt-4o-mini")
+
+documents = [
+    {"content": "The company's revenue grew 40% year-over-year in Q3 2024.", "source": "earnings_report_q3.pdf"},
+    {"content": "The new product launch is scheduled for March 2025.", "source": "product_roadmap.pdf"},
+    {"content": "Employee satisfaction scores improved to 4.5/5 in the latest survey.", "source": "hr_annual_review.pdf"},
+]
+
+context = "\n".join(
+    [f"{doc['content']} [Source: {doc['source']}]" for doc in documents]
+)
+
+
+def ask(question: str) -> str:
+    agent = Agent(
+        role="Research Assistant",
+        goal="Answer questions with source citations",
+        backstory=(
+            "Answer the question based on the context below. "
+            "For every factual claim, cite the source document in square brackets "
+            "like [Source: filename.pdf].\n\n"
+            f"Context:\n{context}"
+        ),
+        llm=llm,
+    )
+    task = Task(
+        description=question,
+        expected_output="An answer with source citations for every claim",
+        agent=agent,
+    )
+    crew = Crew(agents=[agent], tasks=[task])
+    return str(crew.kickoff())
+
+
+print(ask("What was the revenue growth?"))
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+
+documents = [
+    {"content": "The company's revenue grew 40% year-over-year in Q3 2024.", "source": "earnings_report_q3.pdf"},
+    {"content": "The new product launch is scheduled for March 2025.", "source": "product_roadmap.pdf"},
+    {"content": "Employee satisfaction scores improved to 4.5/5 in the latest survey.", "source": "hr_annual_review.pdf"},
+]
+
+context = "\n".join(
+    [f"{doc['content']} [Source: {doc['source']}]" for doc in documents]
+)
+
+agent = Agent(
+    name="Research Assistant",
+    instructions=(
+        "Answer the question based on the context below. "
+        "For every factual claim, cite the source document in square brackets "
+        "like [Source: filename.pdf].\n\n"
+        f"Context:\n{context}"
+    ),
+)
+
+
+def ask(question: str) -> str:
+    result = Runner.run_sync(agent, question)
+    return result.final_output
+
+
+print(ask("What was the revenue growth?"))
+```
+
+## Why This Works
+
+By including source metadata in the context string, the LLM has the information it needs to cite sources. The prompt instruction to cite every factual claim ensures the model does not omit attribution. The result is an answer that is both accurate and verifiable — each claim traces back to a specific document.
+
+## Key Takeaways
+
+- Source metadata must be preserved through the retrieval pipeline, not discarded when building the context string.
+- The LLM needs an explicit prompt instruction to cite sources; it will not do so unprompted.
+- Formatting context as `content [Source: filename]` gives the model a natural pattern to follow in its output.

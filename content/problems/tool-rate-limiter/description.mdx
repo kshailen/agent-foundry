@@ -1,0 +1,37 @@
+## The Problem
+
+Your financial analyst agent uses an `analyze_company` tool that calls an expensive third-party API ($0.05 per call). When a user asks to compare 10 companies, the agent happily makes 10+ API calls — sometimes even more with retries. In production, a single query has triggered 50+ calls, costing over $2. Your job is to **add rate limiting** so the tool is called at most **5 times per agent run**. After hitting the limit, the agent should work with the data it already has.
+
+## Examples
+
+### Example 1
+
+**User input:** Compare the top 10 tech companies: Apple, Google, Microsoft, Amazon, Meta, Tesla, Nvidia, Netflix, Adobe, and Salesforce
+
+**Current (bad) output:** The agent calls `analyze_company` 10 times (once per company), costing $0.50. If some fail and it retries, it could hit 15+ calls.
+
+**Expected (good) output:** The agent calls `analyze_company` for 5 companies, then informs the user: *I've analyzed 5 out of 10 companies due to API rate limits. Here's the comparison for Apple, Google, Microsoft, Amazon, and Meta. I can analyze the remaining 5 in a follow-up request.* The cost is capped at $0.25.
+
+### Example 2
+
+**User input:** Analyze every company in the S&P 500
+
+**Current (bad) output:** The agent attempts hundreds of API calls, burning through the budget rapidly.
+
+**Expected (good) output:** The agent makes 5 calls, presents those results, and explains: *I can only analyze 5 companies per request to manage API costs. Here are the first 5 — let me know which others you'd like me to look into next.*
+
+## Your Task
+
+- Add rate limiting so the `analyze_company` tool is called at most 5 times per agent run.
+- When the limit is reached, the tool should return a clear rate-limit message instead of making the API call.
+- The agent should still provide useful output based on the data it gathered within the limit.
+- The rate limit counter must reset between separate agent invocations.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **API calls capped at 5:** The expensive API tool is never called more than 5 times per run.
+- **Limit is handled gracefully:** The agent informs the user when the limit is reached.
+- **Partial results are still useful:** The agent provides analysis for the companies it managed to look up.
+- **Counter resets between runs:** Each new agent invocation starts with a fresh call counter.

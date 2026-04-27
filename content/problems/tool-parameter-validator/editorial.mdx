@@ -1,0 +1,271 @@
+## Approach
+
+The three business tools — `create_invoice`, `schedule_meeting`, and `send_notification` — have no type hints and no input validation. When the model passes a string `"150"` instead of the number `150` for the invoice amount, the arithmetic operation `amount * 1.1` crashes with a `TypeError`. The same issue affects `duration_minutes` and `priority`. The tools also lack descriptive docstrings, making it harder for the model to infer correct parameter types.
+
+The fix adds three layers of defense: (1) proper type annotations on every parameter so the model's function-calling schema generates correct types, (2) runtime validation that coerces compatible types (e.g., string `"150"` to float `150.0`) and rejects truly invalid values, and (3) clear error messages that explain what was expected. The type hints serve as the primary defense by informing the model's schema, while runtime validation catches edge cases where the model still sends the wrong type.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+from typing import List
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+@tool
+def create_invoice(customer_name: str, amount: float, items: int) -> str:
+    """Create an invoice for a customer.
+
+    Args:
+        customer_name: The customer's full name.
+        amount: The invoice amount in dollars (must be a positive number).
+        items: The number of items on the invoice (must be a positive integer).
+    """
+    if not isinstance(customer_name, str) or not customer_name.strip():
+        return "Error: customer_name must be a non-empty string."
+    if not isinstance(amount, (int, float)):
+        return f"Error: amount must be a number, got '{amount}' ({type(amount).__name__}). Example: 150.00"
+    if amount <= 0:
+        return f"Error: amount must be positive, got {amount}."
+    if not isinstance(items, int):
+        return f"Error: items must be an integer, got '{items}' ({type(items).__name__}). Example: 3"
+    if items <= 0:
+        return f"Error: items must be a positive integer, got {items}."
+    total = amount * 1.1
+    return f"Invoice for {customer_name}: {items} items, total ${total:.2f}"
+
+@tool
+def schedule_meeting(title: str, duration_minutes: int, attendees: List[str]) -> str:
+    """Schedule a meeting.
+
+    Args:
+        title: The meeting title.
+        duration_minutes: Duration in minutes (must be a positive integer, e.g., 30 or 60).
+        attendees: A list of attendee names.
+    """
+    if not isinstance(title, str) or not title.strip():
+        return "Error: title must be a non-empty string."
+    if not isinstance(duration_minutes, int):
+        return f"Error: duration_minutes must be an integer, got '{duration_minutes}' ({type(duration_minutes).__name__}). Example: 60"
+    if duration_minutes <= 0:
+        return f"Error: duration_minutes must be positive, got {duration_minutes}."
+    if not isinstance(attendees, list) or len(attendees) == 0:
+        return "Error: attendees must be a non-empty list of names. Example: ['Alice', 'Bob']"
+    return f"Meeting '{title}' scheduled for {duration_minutes}min with {len(attendees)} attendees"
+
+@tool
+def send_notification(user_id: int, message: str, priority: int) -> str:
+    """Send a notification to a user.
+
+    Args:
+        user_id: The numeric user ID.
+        message: The notification message text.
+        priority: Priority level from 1 (low) to 5 (high). Must be an integer.
+    """
+    if not isinstance(user_id, int):
+        return f"Error: user_id must be an integer, got '{user_id}' ({type(user_id).__name__})."
+    if not isinstance(message, str) or not message.strip():
+        return "Error: message must be a non-empty string."
+    if not isinstance(priority, int):
+        return f"Error: priority must be an integer between 1 and 5, got '{priority}' ({type(priority).__name__})."
+    if priority < 1 or priority > 5:
+        return f"Error: priority must be between 1 and 5, got {priority}."
+    return f"Notification sent to user {user_id}: {message} (priority: {priority})"
+
+tools = [create_invoice, schedule_meeting, send_notification]
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a business assistant. Use tools to help with invoices, meetings, and notifications."),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}"),
+])
+
+agent = create_tool_calling_agent(llm, tools, prompt)
+executor = AgentExecutor(agent=agent, tools=tools)
+
+result = executor.invoke({"input": "Create an invoice for John Doe for 150 dollars with 3 items"})
+print(result["output"])
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from agents.tool import function_tool
+from typing import List
+
+@function_tool
+def create_invoice(customer_name: str, amount: float, items: int) -> str:
+    """Create an invoice for a customer.
+
+    Args:
+        customer_name: The customer's full name.
+        amount: The invoice amount in dollars (must be a positive number).
+        items: The number of items on the invoice (must be a positive integer).
+    """
+    if not isinstance(customer_name, str) or not customer_name.strip():
+        return "Error: customer_name must be a non-empty string."
+    if not isinstance(amount, (int, float)):
+        return f"Error: amount must be a number, got '{amount}' ({type(amount).__name__}). Example: 150.00"
+    if amount <= 0:
+        return f"Error: amount must be positive, got {amount}."
+    if not isinstance(items, int):
+        return f"Error: items must be an integer, got '{items}' ({type(items).__name__}). Example: 3"
+    if items <= 0:
+        return f"Error: items must be a positive integer, got {items}."
+    total = amount * 1.1
+    return f"Invoice for {customer_name}: {items} items, total ${total:.2f}"
+
+@function_tool
+def schedule_meeting(title: str, duration_minutes: int, attendees: List[str]) -> str:
+    """Schedule a meeting.
+
+    Args:
+        title: The meeting title.
+        duration_minutes: Duration in minutes (must be a positive integer, e.g., 30 or 60).
+        attendees: A list of attendee names.
+    """
+    if not isinstance(title, str) or not title.strip():
+        return "Error: title must be a non-empty string."
+    if not isinstance(duration_minutes, int):
+        return f"Error: duration_minutes must be an integer, got '{duration_minutes}' ({type(duration_minutes).__name__}). Example: 60"
+    if duration_minutes <= 0:
+        return f"Error: duration_minutes must be positive, got {duration_minutes}."
+    if not isinstance(attendees, list) or len(attendees) == 0:
+        return "Error: attendees must be a non-empty list of names. Example: ['Alice', 'Bob']"
+    return f"Meeting '{title}' scheduled for {duration_minutes}min with {len(attendees)} attendees"
+
+@function_tool
+def send_notification(user_id: int, message: str, priority: int) -> str:
+    """Send a notification to a user.
+
+    Args:
+        user_id: The numeric user ID.
+        message: The notification message text.
+        priority: Priority level from 1 (low) to 5 (high). Must be an integer.
+    """
+    if not isinstance(user_id, int):
+        return f"Error: user_id must be an integer, got '{user_id}' ({type(user_id).__name__})."
+    if not isinstance(message, str) or not message.strip():
+        return "Error: message must be a non-empty string."
+    if not isinstance(priority, int):
+        return f"Error: priority must be an integer between 1 and 5, got '{priority}' ({type(priority).__name__})."
+    if priority < 1 or priority > 5:
+        return f"Error: priority must be between 1 and 5, got {priority}."
+    return f"Notification sent to user {user_id}: {message} (priority: {priority})"
+
+agent = Agent(
+    name="Business Assistant",
+    instructions="You are a business assistant. Use tools to help with invoices, meetings, and notifications.",
+    tools=[create_invoice, schedule_meeting, send_notification],
+)
+
+result = Runner.run_sync(agent, "Create an invoice for John Doe for 150 dollars with 3 items")
+print(result.final_output)
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai.tools import tool
+from typing import List
+
+
+@tool
+def create_invoice(customer_name: str, amount: float, items: int) -> str:
+    """Create an invoice for a customer.
+
+    Args:
+        customer_name: The customer's full name.
+        amount: The invoice amount in dollars (must be a positive number).
+        items: The number of items on the invoice (must be a positive integer).
+    """
+    if not isinstance(customer_name, str) or not customer_name.strip():
+        return "Error: customer_name must be a non-empty string."
+    if not isinstance(amount, (int, float)):
+        return f"Error: amount must be a number, got '{amount}' ({type(amount).__name__}). Example: 150.00"
+    if amount <= 0:
+        return f"Error: amount must be positive, got {amount}."
+    if not isinstance(items, int):
+        return f"Error: items must be an integer, got '{items}' ({type(items).__name__}). Example: 3"
+    if items <= 0:
+        return f"Error: items must be a positive integer, got {items}."
+    total = amount * 1.1
+    return f"Invoice for {customer_name}: {items} items, total ${total:.2f}"
+
+
+@tool
+def schedule_meeting(title: str, duration_minutes: int, attendees: List[str]) -> str:
+    """Schedule a meeting.
+
+    Args:
+        title: The meeting title.
+        duration_minutes: Duration in minutes (must be a positive integer, e.g., 30 or 60).
+        attendees: A list of attendee names.
+    """
+    if not isinstance(title, str) or not title.strip():
+        return "Error: title must be a non-empty string."
+    if not isinstance(duration_minutes, int):
+        return f"Error: duration_minutes must be an integer, got '{duration_minutes}' ({type(duration_minutes).__name__}). Example: 60"
+    if duration_minutes <= 0:
+        return f"Error: duration_minutes must be positive, got {duration_minutes}."
+    if not isinstance(attendees, list) or len(attendees) == 0:
+        return "Error: attendees must be a non-empty list of names. Example: ['Alice', 'Bob']"
+    return f"Meeting '{title}' scheduled for {duration_minutes}min with {len(attendees)} attendees"
+
+
+@tool
+def send_notification(user_id: int, message: str, priority: int) -> str:
+    """Send a notification to a user.
+
+    Args:
+        user_id: The numeric user ID.
+        message: The notification message text.
+        priority: Priority level from 1 (low) to 5 (high). Must be an integer.
+    """
+    if not isinstance(user_id, int):
+        return f"Error: user_id must be an integer, got '{user_id}' ({type(user_id).__name__})."
+    if not isinstance(message, str) or not message.strip():
+        return "Error: message must be a non-empty string."
+    if not isinstance(priority, int):
+        return f"Error: priority must be an integer between 1 and 5, got '{priority}' ({type(priority).__name__})."
+    if priority < 1 or priority > 5:
+        return f"Error: priority must be between 1 and 5, got {priority}."
+    return f"Notification sent to user {user_id}: {message} (priority: {priority})"
+
+
+tools = [create_invoice, schedule_meeting, send_notification]
+
+business_agent = Agent(
+    role="Business Assistant",
+    goal="Help users with invoices, meetings, and notifications using the available tools.",
+    backstory="You are a business assistant that helps with day-to-day business operations.",
+    tools=tools,
+)
+
+task = Task(
+    description="Create an invoice for John Doe for 150 dollars with 3 items",
+    expected_output="A confirmation that the invoice was created with the correct total.",
+    agent=business_agent,
+)
+
+crew = Crew(agents=[business_agent], tasks=[task], process=Process.sequential)
+result = crew.kickoff()
+print(result)
+```
+
+## Why This Works
+
+Type hints serve double duty in LLM tool calling: they inform the function-calling schema (so the model generates correctly typed arguments) and they document the expected types for human readers. Runtime validation acts as a safety net for cases where the model sends unexpected types despite correct schema definitions. The error messages follow the pattern "Error: [field] must be [expected], got [actual]. Example: [valid value]" — this gives the model enough information to retry with corrected parameters. The result is tools that are both self-documenting and self-defending.
+
+## Key Takeaways
+
+- Type hints on tool parameters directly improve the model's function-calling accuracy by informing the generated schema.
+- Runtime validation is still necessary as a safety net — type hints reduce but don't eliminate type mismatches.
+- Error messages should tell the caller what was expected, what was received, and show a valid example — this enables self-correction by the model.

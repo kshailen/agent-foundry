@@ -1,0 +1,57 @@
+{
+  "number": 41,
+  "title": "Memory Budget Manager",
+  "difficulty": "hard",
+  "categories": [
+    "memory",
+    "cost-optimization"
+  ],
+  "frameworks": [
+    "langchain",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "Total memory must stay under a configurable token budget",
+    "Eviction must be based on relevance or recency, not random",
+    "The budget check and eviction must happen automatically before each call",
+    "High-importance items should be protected from eviction"
+  ],
+  "hints": [
+    "Track an approximate token count for each memory item using a simple word-count heuristic (1 token ≈ 0.75 words)",
+    "Score each item by combining recency and access frequency, then evict the lowest-scoring items first",
+    "Allow marking certain items as 'pinned' so they are never evicted regardless of budget pressure"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain_core.messages import HumanMessage, SystemMessage\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# BUG: Memory grows without bound — no budget enforcement\nmemory_items = []\n\ndef add_memory(item: str):\n    memory_items.append(item)\n\ndef chat(user_input: str) -> str:\n    add_memory(f\"User: {user_input}\")\n    memory_block = \"\\n\".join(memory_items)\n    messages = [\n        SystemMessage(content=f\"You are a helpful assistant. Memory:\\n{memory_block}\"),\n        HumanMessage(content=user_input),\n    ]\n    response = llm.invoke(messages)\n    add_memory(f\"Assistant: {response.content}\")\n    return response.content\n\n# Simulate many interactions that fill up memory\nfor i in range(30):\n    topic = f\"Tell me an interesting fact about country number {i + 1} in the world.\"\n    reply = chat(topic)\n    print(f\"Turn {i + 1} ({len(memory_items)} items): {reply[:60]}...\")\n\nprint(f\"\\nTotal memory items: {len(memory_items)}\")\ntotal_chars = sum(len(item) for item in memory_items)\nprint(f\"Total characters in memory: {total_chars}\")",
+    "crewai": "from crewai import Agent, Task, Crew\n\n# BUG: Memory grows without bound — no budget enforcement\nmemory_items = []\n\nassistant = Agent(\n    role=\"Assistant\",\n    goal=\"Answer questions about world countries\",\n    backstory=\"You are a helpful assistant with perfect memory.\",\n)\n\ndef add_memory(item: str):\n    memory_items.append(item)\n\nfor i in range(30):\n    topic = f\"Tell me an interesting fact about country number {i + 1} in the world.\"\n    add_memory(f\"User: {topic}\")\n    task = Task(\n        description=f\"Memory:\\n\" + \"\\n\".join(memory_items) + f\"\\n\\nRespond to: {topic}\",\n        expected_output=\"An interesting fact about the country\",\n        agent=assistant,\n    )\n    crew = Crew(agents=[assistant], tasks=[task])\n    result = crew.kickoff()\n    add_memory(f\"Assistant: {str(result)[:200]}\")\n    print(f\"Turn {i + 1} ({len(memory_items)} items): {str(result)[:60]}...\")\n\nprint(f\"\\nTotal memory items: {len(memory_items)}\")\ntotal_chars = sum(len(item) for item in memory_items)\nprint(f\"Total characters in memory: {total_chars}\")",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\n# BUG: Memory grows without bound — no budget enforcement\nmemory_items = []\n\nagent = Agent(\n    name=\"Assistant\",\n    instructions=\"You are a helpful assistant.\",\n)\n\ndef add_memory(item: str):\n    memory_items.append(item)\n\nfor i in range(30):\n    topic = f\"Tell me an interesting fact about country number {i + 1} in the world.\"\n    add_memory(f\"User: {topic}\")\n    memory_block = \"\\n\".join(memory_items)\n    prompt = f\"Memory:\\n{memory_block}\\n\\nRespond to: {topic}\"\n    result = Runner.run_sync(agent, prompt)\n    add_memory(f\"Assistant: {result.final_output[:200]}\")\n    print(f\"Turn {i + 1} ({len(memory_items)} items): {result.final_output[:60]}...\")\n\nprint(f\"\\nTotal memory items: {len(memory_items)}\")\ntotal_chars = sum(len(item) for item in memory_items)\nprint(f\"Total characters in memory: {total_chars}\")"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/memory-budget-manager-langchain.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/memory-budget-manager-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/memory-budget-manager-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "budget-enforced",
+      "label": "Token budget enforced",
+      "description": "Total memory token count never exceeds the configured budget"
+    },
+    {
+      "id": "smart-eviction",
+      "label": "Eviction is relevance-based",
+      "description": "Least relevant or oldest items are evicted first, not random items"
+    },
+    {
+      "id": "pinned-protected",
+      "label": "Important items protected",
+      "description": "High-priority or pinned memory items survive eviction"
+    },
+    {
+      "id": "automatic-enforcement",
+      "label": "Budget enforced automatically",
+      "description": "The budget check and eviction happen before each LLM call without manual intervention"
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+## The Problem
+
+Your product review agent is supposed to return structured JSON matching a Pydantic schema: `product_name`, `rating` (1–5), `summary`, `pros` (list), and `cons` (list). In practice, the LLM returns free-form text, missing fields, wrong types, or malformed JSON — and the downstream system that consumes this output breaks. There is **no validation step** between the agent's response and the consumer. Your job is to add output validation against the Pydantic schema so that only well-formed responses are returned, and malformed ones are caught and corrected.
+
+## Examples
+
+### Example 1
+
+**User input:** Review the Sony WH-1000XM5 headphones
+
+**Current (bad) output:** A free-text paragraph like *"The Sony WH-1000XM5 are great headphones with excellent noise cancellation..."* — no JSON structure, no schema compliance.
+
+**Expected (good) output:**
+```json
+{
+  "product_name": "Sony WH-1000XM5",
+  "rating": 4,
+  "summary": "Premium noise-cancelling headphones with excellent sound quality.",
+  "pros": ["Outstanding noise cancellation", "Comfortable fit", "Long battery life"],
+  "cons": ["Expensive", "No IP rating for water resistance"]
+}
+```
+
+### Example 2
+
+**User input:** Review the MacBook Air M3
+
+**Current (bad) output:** JSON with missing `cons` field: `{"product_name": "MacBook Air M3", "rating": 5, "summary": "..."}` — fails Pydantic validation.
+
+**Expected (good) output:** A complete JSON object with all five required fields populated.
+
+## Your Task
+
+Add **output schema validation** so the agent:
+
+- Validates its output against the `ProductReview` Pydantic model before returning.
+- Catches validation errors and either re-prompts the LLM or returns a structured error.
+- Ensures all required fields (`product_name`, `rating`, `summary`, `pros`, `cons`) are present and correctly typed.
+- Does not crash on malformed LLM output.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Output matches Pydantic schema:** The final response validates against the `ProductReview` model.
+- **Invalid output is handled:** Malformed responses are caught and corrected or reported.
+- **All required fields present:** Every field in the schema is populated with the correct type.
+- **No unhandled exceptions:** Validation failures do not crash the application.

@@ -1,0 +1,201 @@
+## Approach
+
+The starter code performs one-shot generation: the generator produces a product description and the pipeline ends. There is no quality gate, no reviewer, and no opportunity for revision. The output quality is a coin flip — sometimes the first draft is good, sometimes it misses key selling points or has the wrong tone.
+
+The fix introduces a critic-generator feedback loop. After the generator produces a draft, the critic reviews it and provides specific improvement suggestions. If the critic is not satisfied, the generator receives the feedback and produces a revised draft. This cycle repeats until the critic approves or a maximum iteration count is reached, preventing infinite loops.
+
+In CrewAI, this is implemented as an iterative crew where the generate and review tasks run in a loop controlled by a Python while loop. In LangGraph, this maps naturally to a cyclic graph: a generate node feeds into a critic node, which has a conditional edge that either loops back to generate (with feedback) or exits to END when the draft is approved.
+
+## Solution
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai import LLM
+
+llm = LLM(model="gpt-4o-mini")
+
+MAX_ITERATIONS = 3
+
+generator = Agent(
+    role="Content Generator",
+    goal="Write a compelling product description",
+    backstory="You are a creative copywriter.",
+    llm=llm,
+)
+
+critic = Agent(
+    role="Quality Critic",
+    goal="Review content and provide improvement suggestions",
+    backstory="You are a senior editor with high standards.",
+    llm=llm,
+)
+
+product = "wireless noise-cancelling headphones"
+draft = ""
+
+for i in range(MAX_ITERATIONS):
+    if i == 0:
+        generate_task = Task(
+            description=f"Write a compelling 100-word product description for {product}",
+            expected_output="A compelling 100-word product description",
+            agent=generator,
+        )
+    else:
+        generate_task = Task(
+            description=f"Revise the product description for {product} based on this feedback:\n{feedback}\n\nPrevious draft:\n{draft}",
+            expected_output="A revised compelling 100-word product description",
+            agent=generator,
+        )
+
+    gen_crew = Crew(agents=[generator], tasks=[generate_task], process=Process.sequential)
+    draft = str(gen_crew.kickoff())
+
+    review_task = Task(
+        description=f"Review this product description and decide if it is high quality. If it needs improvement, provide specific suggestions. If it is good enough, respond with exactly 'APPROVED'.\n\nDraft:\n{draft}",
+        expected_output="Either 'APPROVED' or specific improvement suggestions",
+        agent=critic,
+    )
+
+    review_crew = Crew(agents=[critic], tasks=[review_task], process=Process.sequential)
+    feedback = str(review_crew.kickoff())
+
+    if "APPROVED" in feedback.upper():
+        print(f"Approved after {i + 1} iteration(s)")
+        break
+
+print("Final description:", draft)
+```
+
+### LangGraph
+
+```python
+from langchain_openai import ChatOpenAI
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+MAX_ITERATIONS = 3
+
+class State(TypedDict):
+    product: str
+    draft: str
+    feedback: str
+    approved: bool
+    iteration: int
+
+def generate(state: State) -> dict:
+    if state["feedback"]:
+        prompt = (
+            f"Revise this product description for: {state['product']}\n\n"
+            f"Previous draft:\n{state['draft']}\n\n"
+            f"Feedback to address:\n{state['feedback']}\n\n"
+            f"Write an improved 100-word product description."
+        )
+    else:
+        prompt = f"Write a compelling 100-word product description for: {state['product']}"
+    response = llm.invoke(prompt)
+    return {"draft": response.content, "iteration": state["iteration"] + 1}
+
+def critique(state: State) -> dict:
+    prompt = (
+        f"Review this product description and decide if it is high quality.\n"
+        f"If it needs improvement, provide specific suggestions.\n"
+        f"If it is good enough, respond with exactly 'APPROVED'.\n\n"
+        f"Draft:\n{state['draft']}"
+    )
+    response = llm.invoke(prompt)
+    is_approved = "APPROVED" in response.content.upper()
+    return {"feedback": response.content, "approved": is_approved}
+
+def should_continue(state: State) -> str:
+    if state["approved"] or state["iteration"] >= MAX_ITERATIONS:
+        return "end"
+    return "generate"
+
+graph = StateGraph(State)
+graph.add_node("generate", generate)
+graph.add_node("critique", critique)
+graph.add_edge(START, "generate")
+graph.add_edge("generate", "critique")
+graph.add_conditional_edges("critique", should_continue, {"generate": "generate", "end": END})
+
+app = graph.compile()
+result = app.invoke({
+    "product": "wireless noise-cancelling headphones",
+    "draft": "",
+    "feedback": "",
+    "approved": False,
+    "iteration": 0,
+})
+print(result["draft"])
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+
+MAX_ITERATIONS = 3
+
+generator = Agent(
+    name="Content Generator",
+    instructions="You are a creative copywriter. Write compelling product descriptions.",
+)
+
+critic = Agent(
+    name="Quality Critic",
+    instructions=(
+        "You are a senior editor with high standards. Review the given product description "
+        "and decide if it is high quality. If it needs improvement, provide specific suggestions. "
+        "If it is good enough, respond with exactly 'APPROVED'."
+    ),
+)
+
+product = "wireless noise-cancelling headphones"
+draft = ""
+feedback = ""
+
+for i in range(MAX_ITERATIONS):
+    if i == 0:
+        gen_prompt = f"Write a compelling 100-word product description for {product}"
+    else:
+        gen_prompt = (
+            f"Revise this product description for {product} based on feedback:\n\n"
+            f"Previous draft:\n{draft}\n\n"
+            f"Feedback:\n{feedback}\n\n"
+            f"Write an improved 100-word product description."
+        )
+
+    gen_result = Runner.run_sync(generator, gen_prompt)
+    draft = gen_result.final_output
+
+    review_prompt = (
+        f"Review this product description and decide if it is high quality. "
+        f"If it needs improvement, provide specific suggestions. "
+        f"If it is good enough, respond with exactly 'APPROVED'.\n\n"
+        f"Draft:\n{draft}"
+    )
+    review_result = Runner.run_sync(critic, review_prompt)
+    feedback = review_result.final_output
+
+    if "APPROVED" in feedback.upper():
+        print(f"Approved after {i + 1} iteration(s)")
+        break
+
+print("Final description:", draft)
+```
+
+## Why This Works
+
+The feedback loop creates an iterative refinement process where each revision addresses specific shortcomings identified by the critic. The generator does not start over from scratch — it receives both its previous draft and the critic's feedback, so it can make targeted improvements. The conditional termination (approval or max iterations) ensures the loop always ends, preventing runaway LLM calls.
+
+In LangGraph, the conditional edge from the critique node acts as the quality gate: it inspects the critic's output for an approval signal and routes accordingly. This pattern generalizes to any scenario where you need iterative improvement with a quality threshold.
+
+## Key Takeaways
+
+- A critic-generator loop turns one-shot generation into iterative refinement, significantly improving output quality.
+- Always include a maximum iteration cap to prevent infinite loops and unbounded API costs.
+- The critic must produce actionable feedback (not just pass/fail) so the generator knows what to fix in the next iteration.

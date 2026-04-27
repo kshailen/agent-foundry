@@ -1,0 +1,50 @@
+{
+  "number": 5,
+  "title": "Chain-of-Thought Activator",
+  "difficulty": "easy",
+  "categories": [
+    "prompt-design"
+  ],
+  "frameworks": [
+    "langchain",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "You may only modify the system prompt",
+    "The agent must show its reasoning before the final answer",
+    "No external calculator tools may be added"
+  ],
+  "hints": [
+    "Ask the model to think step by step and show each intermediate calculation",
+    "Include a worked example in the prompt so the model sees the expected reasoning format",
+    "Instruct the model to separate its reasoning steps from the final answer with a clear marker"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain_core.prompts import ChatPromptTemplate\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# BUG: This prompt encourages direct answers without showing reasoning steps\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a math assistant. Give the answer to the user's math problem. Be concise \u2014 just state the final number.\"),\n    (\"human\", \"{input}\"),\n])\n\nchain = prompt | llm\n\n# Test: multi-step word problem that requires intermediate calculations\nresult = chain.invoke({\n    \"input\": \"A store sells notebooks for $4 each. Sarah buys 3 notebooks and pays with a $20 bill. She then buys 2 pens at $1.50 each. How much money does she have left?\"\n})\nprint(result.content)",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\n# BUG: This instruction encourages direct answers without showing reasoning steps\nagent = Agent(\n    name=\"Math Assistant\",\n    instructions=\"You are a math assistant. Give the answer to the user's math problem. Be concise \u2014 just state the final number.\",\n)\n\n# Test: multi-step word problem that requires intermediate calculations\nresult = Runner.run_sync(\n    agent,\n    \"A store sells notebooks for $4 each. Sarah buys 3 notebooks and pays with a $20 bill. She then buys 2 pens at $1.50 each. How much money does she have left?\"\n)\nprint(result.final_output)",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai import LLM\n\nllm = LLM(model=\"gpt-4o-mini\")\n\n# BUG: This instruction encourages direct answers without showing reasoning steps\nagent = Agent(\n    role=\"Math Assistant\",\n    goal=\"Solve math problems\",\n    backstory=\"You are a math assistant. Give the answer to the user's math problem. Be concise \u2014 just state the final number.\",\n    llm=llm,\n)\n\ntask = Task(\n    description=\"A store sells notebooks for $4 each. Sarah buys 3 notebooks and pays with a $20 bill. She then buys 2 pens at $1.50 each. How much money does she have left?\",\n    expected_output=\"The answer to the math problem\",\n    agent=agent,\n)\n\ncrew = Crew(agents=[agent], tasks=[task])\n\nresult = crew.kickoff()\nprint(result)"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/chain-of-thought-activator-langchain.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/chain-of-thought-activator-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/chain-of-thought-activator-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "correct-answer",
+      "label": "Correct final answer",
+      "description": "The agent produces the mathematically correct final answer"
+    },
+    {
+      "id": "reasoning-shown",
+      "label": "Reasoning steps shown",
+      "description": "The agent shows explicit step-by-step reasoning before the final answer"
+    },
+    {
+      "id": "intermediate-calculations",
+      "label": "Intermediate calculations visible",
+      "description": "Each intermediate calculation is written out so the reader can follow the logic"
+    }
+  ]
+}

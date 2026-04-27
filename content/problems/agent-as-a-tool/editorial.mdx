@@ -1,0 +1,127 @@
+## Approach
+
+The core issue is that two agents exist in isolation — the main assistant and the translator — but the main agent has no mechanism to invoke the translator when it encounters a translation request. Instead, the assistant attempts translation on its own, producing lower-quality results because it lacks the specialized instructions and focus of the translator agent.
+
+The fix is to wrap the translator agent as a callable tool that the main agent can invoke on demand. This means the translator remains a fully independent agent with its own system prompt and behavior, but it is exposed to the main agent through the framework's tool-calling interface. The main agent's instructions are updated to mention it has a translation tool available, so the LLM knows to delegate translation requests rather than handling them directly.
+
+This pattern — "agent as a tool" — is fundamental in multi-agent systems. It lets you compose specialized agents into a larger system without merging their logic, preserving separation of concerns while enabling collaboration.
+
+## Solution
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+
+translator = Agent(
+    name="Translator",
+    instructions="You are a translator. Translate the given text to the requested language.",
+)
+
+main_agent = Agent(
+    name="Assistant",
+    instructions="You are a helpful assistant. You can answer questions and help with tasks. Use the Translator tool when the user asks for a translation.",
+    tools=[translator.as_tool(
+        tool_name="translate",
+        tool_description="Translate text to a specified language using a specialized translator agent",
+    )],
+)
+
+result = Runner.run_sync(main_agent, "Translate 'Hello, how are you?' to French")
+print(result.final_output)
+
+result = Runner.run_sync(main_agent, "What is the capital of Japan?")
+print(result.final_output)
+```
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+translator_prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a translator. Translate the given text to the requested language."),
+    ("human", "{input}"),
+])
+translator_chain = translator_prompt | llm
+
+@tool
+def translate(input: str) -> str:
+    """Translate text to a specified language using a specialized translator agent."""
+    result = translator_chain.invoke({"input": input})
+    return result.content
+
+main_prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a helpful assistant. You can answer questions and help with tasks. Use the translate tool when the user asks for a translation."),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}"),
+])
+
+agent = create_tool_calling_agent(llm, [translate], main_prompt)
+executor = AgentExecutor(agent=agent, tools=[translate])
+
+result = executor.invoke({"input": "Translate 'Hello, how are you?' to French"})
+print(result["output"])
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai import LLM
+
+llm = LLM(model="gpt-4o-mini")
+
+translator = Agent(
+    role="Translator",
+    goal="Translate text to the requested language",
+    backstory="You are a translator. Translate the given text to the requested language.",
+    llm=llm,
+)
+
+main_agent = Agent(
+    role="Assistant",
+    goal="Help users with questions and tasks. Delegate translation requests to the Translator.",
+    backstory="You are a helpful assistant. You can answer questions and help with tasks. When the user asks for a translation, delegate to the Translator.",
+    llm=llm,
+)
+
+translate_task = Task(
+    description="Translate 'Hello, how are you?' to French",
+    expected_output="The translated text in French",
+    agent=translator,
+)
+
+main_task = Task(
+    description="Provide the translation result to the user",
+    expected_output="The final translated text",
+    agent=main_agent,
+    context=[translate_task],
+)
+
+crew = Crew(
+    agents=[translator, main_agent],
+    tasks=[translate_task, main_task],
+    process=Process.sequential,
+)
+
+result = crew.kickoff()
+print(result)
+```
+
+## Why This Works
+
+By wrapping the translator agent as a tool, the main agent gains the ability to delegate translation requests to a specialist while continuing to handle general queries directly. The LLM powering the main agent sees the tool's name and description in its context, allowing it to decide at inference time whether the user's request warrants calling the translator. Non-translation queries bypass the tool entirely and are answered by the main agent alone.
+
+The translator remains a standalone agent with its own prompt and behavior — it is not reduced to a plain function. This preserves the flexibility to upgrade, test, or replace the translator independently without modifying the main agent's logic.
+
+## Key Takeaways
+
+- The "agent as a tool" pattern lets you compose specialized agents without merging their logic into a single monolithic prompt.
+- The main agent's system prompt must mention the tool so the LLM knows it can delegate — without this, the agent will attempt everything itself.
+- In OpenAI Agents SDK, `agent.as_tool()` provides a built-in mechanism; in LangChain, you wrap the agent call inside a `@tool`-decorated function.

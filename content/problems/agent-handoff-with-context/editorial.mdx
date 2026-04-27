@@ -1,0 +1,133 @@
+## Approach
+
+The bug is that when the sales agent hands off to the onboarding agent, all conversation context is lost. The starter code runs each agent in a completely separate invocation — the sales agent processes one message and the onboarding agent starts fresh with no knowledge of what was discussed. The user is forced to repeat their plan choice, team size, and preferences.
+
+The fix requires preserving the full conversation history during the handoff. In OpenAI Agents SDK, the native handoff mechanism carries conversation context automatically — the fix is to use handoffs instead of running agents in separate `Runner.run_sync` calls. In LangGraph, the conversation state (including the sales response) must be stored in the graph state and explicitly included in the onboarding node's prompt so it knows what was discussed.
+
+The handoff must be explicit — not an accidental side effect of shared global state. The receiving agent should clearly know it is picking up from a previous agent's conversation and should acknowledge what was already discussed.
+
+## Solution
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+
+onboarding_agent = Agent(
+    name="Onboarding Agent",
+    instructions="You are an onboarding specialist. Help new customers set up their account. You will receive context from the sales conversation — use it to avoid asking the customer to repeat information.",
+)
+
+sales_agent = Agent(
+    name="Sales Agent",
+    instructions="You are a sales agent. Help customers choose the right product plan. When the customer is ready to proceed with setup, hand off to the Onboarding Agent.",
+    handoffs=[onboarding_agent],
+)
+
+result = Runner.run_sync(sales_agent, "I'm interested in the Pro plan for my team of 10. Let's set up my account now.")
+print(result.final_output)
+```
+
+### LangGraph
+
+```python
+from langchain_openai import ChatOpenAI
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+class State(TypedDict):
+    user_message: str
+    sales_response: str
+    onboarding_response: str
+
+def sales_node(state: State) -> dict:
+    prompt = f"You are a sales agent. The customer says: {state['user_message']}"
+    response = llm.invoke(prompt)
+    return {"sales_response": response.content}
+
+def onboarding_node(state: State) -> dict:
+    prompt = (
+        f"You are an onboarding specialist. A customer has just been handed off from the sales team.\n\n"
+        f"Here is the sales conversation for context:\n"
+        f"Customer: {state['user_message']}\n"
+        f"Sales Agent: {state['sales_response']}\n\n"
+        f"The customer is now ready to set up their account. Use the context above to avoid asking "
+        f"them to repeat any information they already provided. Continue the conversation seamlessly."
+    )
+    response = llm.invoke(prompt)
+    return {"onboarding_response": response.content}
+
+graph = StateGraph(State)
+graph.add_node("sales", sales_node)
+graph.add_node("onboarding", onboarding_node)
+graph.add_edge(START, "sales")
+graph.add_edge("sales", "onboarding")
+graph.add_edge("onboarding", END)
+
+app = graph.compile()
+result = app.invoke({
+    "user_message": "I'm interested in the Pro plan for my team of 10",
+    "sales_response": "",
+    "onboarding_response": "",
+})
+print("Onboarding:", result["onboarding_response"])
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai import LLM
+
+llm = LLM(model="gpt-4o-mini")
+
+sales_agent = Agent(
+    role="Sales Agent",
+    goal="Help customers choose the right product plan",
+    backstory="You are a sales agent. Help customers choose the right product plan.",
+    llm=llm,
+)
+
+onboarding_agent = Agent(
+    role="Onboarding Agent",
+    goal="Help new customers set up their account using context from the sales conversation",
+    backstory="You are an onboarding specialist. You will receive context from the sales conversation — use it to avoid asking the customer to repeat information.",
+    llm=llm,
+)
+
+sales_task = Task(
+    description="Customer says: I'm interested in the Pro plan for my team of 10. Help them choose the right plan.",
+    expected_output="A sales response about the Pro plan",
+    agent=sales_agent,
+)
+
+onboarding_task = Task(
+    description="The customer is ready to set up their account. Use the sales conversation context to continue seamlessly without asking the customer to repeat information.",
+    expected_output="Onboarding steps personalized to the customer's chosen plan and team size",
+    agent=onboarding_agent,
+    context=[sales_task],
+)
+
+crew = Crew(
+    agents=[sales_agent, onboarding_agent],
+    tasks=[sales_task, onboarding_task],
+    process=Process.sequential,
+)
+
+result = crew.kickoff()
+print(result)
+```
+
+## Why This Works
+
+In OpenAI Agents SDK, handoffs are a first-class feature — when the sales agent hands off to the onboarding agent, the full conversation history (including all messages exchanged with the sales agent) is automatically carried over. The onboarding agent sees everything the user said and can pick up seamlessly.
+
+In LangGraph, the state dict acts as the shared memory. By explicitly including `state['user_message']` and `state['sales_response']` in the onboarding node's prompt, the onboarding agent receives all the context it needs. The key is that this context passing is explicit and intentional — not an accident of shared mutable state.
+
+## Key Takeaways
+
+- Agent handoffs must preserve conversation context — without it, the user experience degrades because they have to repeat themselves.
+- In OpenAI Agents SDK, `handoffs` automatically carry conversation history between agents, making context-preserving handoffs trivial.
+- In LangGraph, the state dict is the explicit context-passing mechanism — include all relevant prior conversation data in downstream nodes' prompts.

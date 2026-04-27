@@ -1,0 +1,285 @@
+# Project: Code Review Crew
+
+## What You'll Build
+
+You will build a **hierarchical CrewAI crew** that performs a **multi-angle code review**. A **manager** coordinates three specialists—a **security reviewer**, a **performance reviewer**, and a **best practices reviewer**—so their findings roll up into one **structured** final report. Together they produce a **comprehensive code review** you can parse in code, not only read as prose.
+
+## Features Used
+
+- **Agents** — security, performance, and best-practices specialists
+- **Tasks** — three focused reviews plus a final synthesis
+- **Hierarchical Process** — manager delegates and coordinates specialists (`Process.hierarchical`, `manager_llm`)
+- **Custom Tools** — `@tool`-decorated function that simulates reading a code snippet
+- **Structured Output** — Pydantic `CodeReview` / `Issue` on the final task via `output_pydantic`
+- **Human Input** — `human_input=True` on the synthesis task for a human gate before the final structured result
+
+## Step 1: Define a custom tool (`@tool`)
+
+Use **`crewai.tools.tool`** to wrap a small function. This example **accepts a code string** and **returns it unchanged**, simulating a **file read** so agents practice calling a tool instead of only seeing inline text.
+
+```python
+from crewai.tools import tool
+
+@tool("Read Code Snippet")
+def read_code_snippet(code: str) -> str:
+    """Simulate reading source from a file. Pass the full source code as the code argument."""
+    return code
+```
+
+## Step 2: Define Pydantic output models
+
+Model the final deliverable as **`CodeReview`** with nested **`Issue`** rows (severity, description, suggestion), plus **`overall_score`** and **`summary`**.
+
+```python
+from pydantic import BaseModel
+
+class Issue(BaseModel):
+    severity: str
+    description: str
+    suggestion: str
+
+class CodeReview(BaseModel):
+    file_name: str
+    issues: list[Issue]
+    overall_score: int
+    summary: str
+```
+
+## Step 3: Define three specialist agents
+
+Give each agent the **read_code_snippet** tool, **`verbose=True`**, and **`allow_delegation=False`** so they behave as workers under the hierarchical manager.
+
+```python
+from crewai import Agent
+
+security_reviewer = Agent(
+    role="Security Reviewer",
+    goal="Find security vulnerabilities, unsafe patterns, and auth/data-handling risks",
+    backstory="You specialize in secure coding, OWASP-style thinking, and threat-aware review.",
+    tools=[read_code_snippet],
+    verbose=True,
+    allow_delegation=False,
+)
+
+performance_reviewer = Agent(
+    role="Performance Reviewer",
+    goal="Identify performance bottlenecks, unnecessary work, and scalability concerns",
+    backstory="You profile and reason about complexity, I/O, and hot paths in application code.",
+    tools=[read_code_snippet],
+    verbose=True,
+    allow_delegation=False,
+)
+
+best_practices_reviewer = Agent(
+    role="Best Practices Reviewer",
+    goal="Assess readability, maintainability, naming, structure, and idiomatic style",
+    backstory="You care about clean code, consistency, and long-term maintainability.",
+    tools=[read_code_snippet],
+    verbose=True,
+    allow_delegation=False,
+)
+```
+
+## Step 4: Define review tasks and synthesis
+
+Create **security_review**, **performance_review**, and **practices_review** tasks that reference **`{file_name}`** and **`{code}`** in `inputs` from `kickoff`. Use **`context`** on the final task so synthesis sees prior outputs. On **synthesis_task**, set **`output_pydantic=CodeReview`** and **`human_input=True`**.
+
+```python
+from crewai import Task
+
+security_review = Task(
+    description=(
+        "Review the code for file {file_name}. Use read_code_snippet with code={code} to load the snippet, "
+        "then report security issues, unsafe assumptions, and hardening suggestions."
+    ),
+    expected_output="Concise security-focused findings the manager can merge into a final review.",
+)
+
+performance_review = Task(
+    description=(
+        "Review the code for file {file_name}. Use read_code_snippet with code={code}, "
+        "then report performance risks, complexity concerns, and concrete optimizations."
+    ),
+    expected_output="Concise performance-focused findings the manager can merge into a final review.",
+)
+
+practices_review = Task(
+    description=(
+        "Review the code for file {file_name}. Use read_code_snippet with code={code}, "
+        "then report style, structure, naming, and maintainability improvements."
+    ),
+    expected_output="Concise best-practices findings the manager can merge into a final review.",
+)
+
+synthesis_task = Task(
+    description=(
+        "Combine the security, performance, and best-practices findings for {file_name} into one review. "
+        "Merge overlapping points, deduplicate, and assign severities. "
+        "Set overall_score from 1 (poor) to 10 (excellent). "
+        "Populate CodeReview: file_name, issues (severity, description, suggestion), overall_score, summary."
+    ),
+    expected_output="A single validated CodeReview object.",
+    context=[security_review, performance_review, practices_review],
+    output_pydantic=CodeReview,
+    human_input=True,
+)
+```
+
+Under **hierarchical** process, the **manager** assigns these tasks to the specialists; you do not pin each task to an agent on the `Task` itself.
+
+## Step 5: Assemble the crew
+
+Use **`Process.hierarchical`** and **`manager_llm="gpt-4o"`** so CrewAI creates a **manager** that coordinates the three reviewers.
+
+```python
+from crewai import Crew, Process
+
+crew = Crew(
+    agents=[security_reviewer, performance_reviewer, best_practices_reviewer],
+    tasks=[security_review, performance_review, practices_review, synthesis_task],
+    process=Process.hierarchical,
+    manager_llm="gpt-4o",
+    verbose=True,
+)
+```
+
+## Step 6: Run with `kickoff` and read structured output
+
+Pass **`file_name`** and **`code`** via **`inputs`**. After **`crew.kickoff(...)`**, the final structured task exposes fields on **`result.pydantic`** (a **`CodeReview`** instance). You can also inspect **`result.raw`** for the full text trace.
+
+```python
+sample_code = '''
+def get_user(user_id):
+    query = "SELECT * FROM users WHERE id = " + str(user_id)
+    return db.execute(query)
+'''
+
+result = crew.kickoff(inputs={"file_name": "users.py", "code": sample_code})
+
+review = result.pydantic
+print(review.file_name, review.overall_score)
+print(review.summary)
+for issue in review.issues:
+    print(issue.severity, issue.description, "->", issue.suggestion)
+```
+
+When **`human_input=True`** runs, the process **pauses** for your feedback (where **`input()`** is available—terminal, many notebooks, and similar environments) before finalizing the **`CodeReview`**.
+
+## Full Code
+
+```python
+import os
+from getpass import getpass
+
+from pydantic import BaseModel
+from crewai import Agent, Crew, Process, Task
+from crewai.tools import tool
+
+os.environ["OPENAI_API_KEY"] = getpass("Enter your OpenAI API key: ")
+
+@tool("Read Code Snippet")
+def read_code_snippet(code: str) -> str:
+    """Simulate reading source from a file. Pass the full source code as the code argument."""
+    return code
+
+class Issue(BaseModel):
+    severity: str
+    description: str
+    suggestion: str
+
+class CodeReview(BaseModel):
+    file_name: str
+    issues: list[Issue]
+    overall_score: int
+    summary: str
+
+security_reviewer = Agent(
+    role="Security Reviewer",
+    goal="Find security vulnerabilities, unsafe patterns, and auth/data-handling risks",
+    backstory="You specialize in secure coding, OWASP-style thinking, and threat-aware review.",
+    tools=[read_code_snippet],
+    verbose=True,
+    allow_delegation=False,
+)
+
+performance_reviewer = Agent(
+    role="Performance Reviewer",
+    goal="Identify performance bottlenecks, unnecessary work, and scalability concerns",
+    backstory="You profile and reason about complexity, I/O, and hot paths in application code.",
+    tools=[read_code_snippet],
+    verbose=True,
+    allow_delegation=False,
+)
+
+best_practices_reviewer = Agent(
+    role="Best Practices Reviewer",
+    goal="Assess readability, maintainability, naming, structure, and idiomatic style",
+    backstory="You care about clean code, consistency, and long-term maintainability.",
+    tools=[read_code_snippet],
+    verbose=True,
+    allow_delegation=False,
+)
+
+security_review = Task(
+    description=(
+        "Review the code for file {file_name}. Use read_code_snippet with code={code} to load the snippet, "
+        "then report security issues, unsafe assumptions, and hardening suggestions."
+    ),
+    expected_output="Concise security-focused findings the manager can merge into a final review.",
+)
+
+performance_review = Task(
+    description=(
+        "Review the code for file {file_name}. Use read_code_snippet with code={code}, "
+        "then report performance risks, complexity concerns, and concrete optimizations."
+    ),
+    expected_output="Concise performance-focused findings the manager can merge into a final review.",
+)
+
+practices_review = Task(
+    description=(
+        "Review the code for file {file_name}. Use read_code_snippet with code={code}, "
+        "then report style, structure, naming, and maintainability improvements."
+    ),
+    expected_output="Concise best-practices findings the manager can merge into a final review.",
+)
+
+synthesis_task = Task(
+    description=(
+        "Combine the security, performance, and best-practices findings for {file_name} into one review. "
+        "Merge overlapping points, deduplicate, and assign severities. "
+        "Set overall_score from 1 (poor) to 10 (excellent). "
+        "Populate CodeReview: file_name, issues (severity, description, suggestion), overall_score, summary."
+    ),
+    expected_output="A single validated CodeReview object.",
+    context=[security_review, performance_review, practices_review],
+    output_pydantic=CodeReview,
+    human_input=True,
+)
+
+crew = Crew(
+    agents=[security_reviewer, performance_reviewer, best_practices_reviewer],
+    tasks=[security_review, performance_review, practices_review, synthesis_task],
+    process=Process.hierarchical,
+    manager_llm="gpt-4o",
+    verbose=True,
+)
+
+sample_code = '''
+def get_user(user_id):
+    query = "SELECT * FROM users WHERE id = " + str(user_id)
+    return db.execute(query)
+'''
+
+result = crew.kickoff(inputs={"file_name": "users.py", "code": sample_code})
+
+review = result.pydantic
+print(review.file_name, review.overall_score)
+print(review.summary)
+for issue in review.issues:
+    print(issue.severity, issue.description, "->", issue.suggestion)
+```
+
+## What You Learned
+
+You combined **hierarchical orchestration** with **three specialist agents**, a **custom `@tool`** that simulates reading code, and a **final synthesis task** that uses **`output_pydantic`** to emit a typed **`CodeReview`**. You also used **`human_input=True`** so a person can steer the consolidated review before the structured object is finalized, and you saw how **`result.pydantic`** exposes the validated output for downstream code.

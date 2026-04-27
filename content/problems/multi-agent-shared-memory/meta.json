@@ -1,0 +1,57 @@
+{
+  "number": 43,
+  "title": "Multi-Agent Shared Memory",
+  "difficulty": "hard",
+  "categories": [
+    "memory",
+    "multi-agent"
+  ],
+  "frameworks": [
+    "crewai",
+    "langgraph",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "All agents must be able to read from the shared scratchpad",
+    "Writes to the shared scratchpad must not overwrite each other silently",
+    "Each entry must track which agent wrote it",
+    "The shared memory must be readable by all agents at any point in the workflow"
+  ],
+  "hints": [
+    "Use a shared list or dictionary that all agents can append to, with each entry tagged by the writing agent's name",
+    "Instead of overwriting, use an append-only log pattern where each agent adds entries with metadata",
+    "Inject the current state of the shared scratchpad into each agent's context before it runs"
+  ],
+  "starterCode": {
+    "crewai": "from crewai import Agent, Task, Crew\n\n# BUG: Each agent has isolated memory — they can't share findings\nresearcher = Agent(\n    role=\"Researcher\",\n    goal=\"Find key data points about renewable energy trends.\",\n    backstory=\"You are an expert researcher who finds relevant data.\",\n    verbose=True,\n)\n\nanalyst = Agent(\n    role=\"Analyst\",\n    goal=\"Analyze data and extract insights.\",\n    backstory=\"You are a data analyst who turns raw data into insights.\",\n    verbose=True,\n)\n\nwriter = Agent(\n    role=\"Writer\",\n    goal=\"Write a compelling report from the analysis.\",\n    backstory=\"You are a technical writer who creates clear reports.\",\n    verbose=True,\n)\n\n# Each task runs in isolation — no shared scratchpad\nresearch_task = Task(\n    description=\"Research the top 5 renewable energy trends for 2025.\",\n    expected_output=\"A list of 5 trends with supporting data.\",\n    agent=researcher,\n)\n\nanalysis_task = Task(\n    description=\"Analyze the research findings and identify the most impactful trend.\",\n    expected_output=\"An analysis with the top trend identified.\",\n    agent=analyst,\n)\n\nwriting_task = Task(\n    description=\"Write a 3-paragraph summary report combining research and analysis.\",\n    expected_output=\"A polished 3-paragraph report.\",\n    agent=writer,\n)\n\ncrew = Crew(\n    agents=[researcher, analyst, writer],\n    tasks=[research_task, analysis_task, writing_task],\n    verbose=True,\n)\n\nresult = crew.kickoff()\nprint(result)",
+    "langgraph": "from langchain_openai import ChatOpenAI\nfrom langgraph.graph import StateGraph, START, END\nfrom typing import TypedDict\nfrom langchain_core.messages import HumanMessage, SystemMessage\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# BUG: Each agent has its own isolated memory — no shared scratchpad\nclass State(TypedDict):\n    task: str\n    result: str\n\ndef researcher(state: State) -> State:\n    # Researcher finds data but can't share it with others\n    messages = [\n        SystemMessage(content=\"You are a researcher. Find key data points.\"),\n        HumanMessage(content=state[\"task\"]),\n    ]\n    response = llm.invoke(messages)\n    return {\"result\": response.content}\n\ndef analyst(state: State) -> State:\n    # Analyst has no access to researcher's findings\n    messages = [\n        SystemMessage(content=\"You are an analyst. Analyze the data.\"),\n        HumanMessage(content=f\"Analyze: {state['result']}\"),\n    ]\n    response = llm.invoke(messages)\n    return {\"result\": response.content}\n\ndef writer(state: State) -> State:\n    # Writer only sees analyst output, not researcher's raw data\n    messages = [\n        SystemMessage(content=\"You are a technical writer. Write a report.\"),\n        HumanMessage(content=f\"Write report from: {state['result']}\"),\n    ]\n    response = llm.invoke(messages)\n    return {\"result\": response.content}\n\ngraph = StateGraph(State)\ngraph.add_node(\"researcher\", researcher)\ngraph.add_node(\"analyst\", analyst)\ngraph.add_node(\"writer\", writer)\ngraph.add_edge(START, \"researcher\")\ngraph.add_edge(\"researcher\", \"analyst\")\ngraph.add_edge(\"analyst\", \"writer\")\ngraph.add_edge(\"writer\", END)\napp = graph.compile()\n\nresult = app.invoke({\"task\": \"Research renewable energy trends and write a report.\"})\nprint(result[\"result\"])",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\n# BUG: Each agent has isolated memory — they can't share findings\nresearcher = Agent(\n    name=\"Researcher\",\n    instructions=\"You are a researcher. Find key data points.\",\n)\n\nanalyst = Agent(\n    name=\"Analyst\",\n    instructions=\"You are an analyst. Analyze the data.\",\n)\n\nwriter = Agent(\n    name=\"Writer\",\n    instructions=\"You are a technical writer. Write a report.\",\n)\n\ntask = \"Research renewable energy trends and write a report.\"\n\nresearch_result = Runner.run_sync(researcher, task)\nanalysis_result = Runner.run_sync(analyst, f\"Analyze: {research_result.final_output}\")\n# Writer only sees analyst output, not researcher's raw data\nreport_result = Runner.run_sync(writer, f\"Write report from: {analysis_result.final_output}\")\n\nprint(report_result.final_output)"
+  },
+  "colabUrls": {
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/multi-agent-shared-memory-crewai.ipynb",
+    "langgraph": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/multi-agent-shared-memory-langgraph.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/multi-agent-shared-memory-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "shared-read",
+      "label": "All agents can read shared memory",
+      "description": "Every agent in the workflow can access the shared scratchpad contents"
+    },
+    {
+      "id": "attributed-writes",
+      "label": "Writes are attributed",
+      "description": "Each entry in the shared scratchpad tracks which agent wrote it"
+    },
+    {
+      "id": "no-silent-overwrite",
+      "label": "No silent overwrites",
+      "description": "Agents append to the shared memory rather than overwriting previous entries"
+    },
+    {
+      "id": "downstream-access",
+      "label": "Downstream agents see upstream data",
+      "description": "Later agents in the pipeline can access findings from earlier agents"
+    }
+  ]
+}

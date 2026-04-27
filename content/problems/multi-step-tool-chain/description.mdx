@@ -1,0 +1,36 @@
+## The Problem
+
+You have a research assistant agent equipped with three tools: `search_articles`, `extract_entities`, and `summarize`. The correct workflow is a strict pipeline: **search → extract entities → summarize**. However, the agent frequently skips steps — it might jump directly to `summarize` without searching first, or skip entity extraction entirely. The result is shallow, unreliable briefs that miss key details. Your job is to **enforce the three-step sequence** so every research request goes through all stages in order.
+
+## Examples
+
+### Example 1
+
+**User input:** Research the latest trends in AI and give me a brief
+
+**Current (bad) output:** The agent calls `summarize` directly with the user's query, producing a generic summary based on the LLM's memory — no real search was performed and no entities were extracted.
+
+**Expected (good) output:** The agent first calls `search_articles("latest trends in AI")`, then passes those results to `extract_entities(...)`, and finally feeds both into `summarize(...)`. The final output is grounded in search results with named entities.
+
+### Example 2
+
+**User input:** Give me a research brief on quantum computing startups
+
+**Current (bad) output:** The agent calls `search_articles` and then immediately `summarize`, skipping entity extraction. The summary lacks specific company names and key figures.
+
+**Expected (good) output:** All three tools are called in order. The summary includes specific entities (company names, founders, technologies) extracted in step two.
+
+## Your Task
+
+- Modify the agent's prompt or orchestration to enforce the strict tool ordering: search → extract_entities → summarize.
+- Ensure each tool's output is passed as input to the next tool in the chain.
+- The agent must never skip a step or call tools out of order.
+- Do not modify the tool implementations themselves.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **All three tools are called:** The agent invokes search, extract_entities, and summarize — none are skipped.
+- **Tools called in correct order:** The sequence is always search → extract_entities → summarize.
+- **Outputs are chained between steps:** Each tool receives the output of the previous tool as its input.

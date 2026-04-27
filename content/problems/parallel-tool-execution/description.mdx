@@ -1,0 +1,36 @@
+## The Problem
+
+Your weather assistant agent can fetch weather for any city using the `get_weather` tool. When a user asks for weather in three cities, the agent calls the tool **sequentially** — one city at a time — resulting in 3× the latency. Each lookup takes about 1 second, so three sequential calls take ~3 seconds. Your job is to **make the agent execute all three weather lookups in parallel** so the total time drops to roughly 1 second.
+
+## Examples
+
+### Example 1
+
+**User input:** What's the weather in New York, London, and Tokyo?
+
+**Current (bad) output:** The agent calls `get_weather("New York")`, waits for the result, then calls `get_weather("London")`, waits again, then `get_weather("Tokyo")`. Total time: ~3 seconds.
+
+**Expected (good) output:** The agent issues all three `get_weather` calls simultaneously. All results arrive in ~1 second. The agent presents: *New York: 72°F Sunny, London: 58°F Cloudy, Tokyo: 68°F Partly Cloudy.*
+
+### Example 2
+
+**User input:** Compare the weather in Paris, Berlin, and Madrid
+
+**Current (bad) output:** Three sequential calls with cumulative latency. The user waits noticeably longer than necessary.
+
+**Expected (good) output:** All three lookups happen in parallel. The agent responds quickly with a comparative summary.
+
+## Your Task
+
+- Modify the agent or orchestration to execute multiple `get_weather` calls in parallel.
+- Ensure the total wall-clock time is roughly the time of a single lookup, not the sum of all lookups.
+- The agent must still collect and present all results together in a coherent response.
+- Do not change the tool's internal implementation.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Weather lookups run in parallel:** All three city lookups execute concurrently rather than sequentially.
+- **Total time is roughly one lookup:** The wall-clock time is approximately 1 second, not 3.
+- **All city results are returned:** The agent presents weather data for all requested cities in a single response.

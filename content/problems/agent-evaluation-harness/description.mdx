@@ -1,0 +1,56 @@
+## The Problem
+
+Your customer-support agent is "tested" by manually running a few queries and eyeballing the output. There are no metrics, no expected outputs, and no way to detect regressions when you change the prompt or model. Your job is to **build an automated evaluation harness** that runs a suite of at least 10 test cases, scores each on accuracy, latency, and cost, and produces a summary report—making agent quality measurable and repeatable.
+
+## Examples
+
+### Example 1
+
+**Test case:** Input: "What is your return policy?" — Expected: mentions 30-day window and free returns
+
+**Current (bad) output:** The developer manually reads the response and decides "looks good" — no score, no record, not reproducible.
+
+**Expected (good) output:**
+```
+Test 1: "What is your return policy?"
+  Accuracy: 0.9 (mentions 30-day window ✓, mentions free returns ✓, misses restocking fee)
+  Latency: 1.23s
+  Cost: $0.0004
+  Status: PASS
+```
+
+### Example 2
+
+**Test suite summary:**
+
+**Current (bad) output:** No summary exists. The developer has a vague sense that "it usually works."
+
+**Expected (good) output:**
+```
+=== Evaluation Report ===
+Total test cases: 10
+Passed: 8 (80%)
+Failed: 2 (20%)
+Avg accuracy: 0.85
+Avg latency: 1.15s
+Total cost: $0.0042
+Failed tests: #4 (shipping question), #9 (edge case: empty input)
+```
+
+## Your Task
+
+Build an evaluation harness so that:
+
+- At least **10 test cases** are defined with inputs and expected outputs.
+- Each test case is **scored on accuracy** (LLM-as-judge or keyword matching), **latency** (wall-clock time), and **cost** (token usage).
+- Results are **aggregated into a summary report** with pass/fail rates and averages.
+- The harness is **data-driven** — adding new test cases requires only adding data, not changing code.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **At least 10 test cases:** The harness includes at least 10 test cases with expected outputs.
+- **Multi-metric scoring:** Each test case is scored on accuracy, latency, and cost.
+- **Summary report:** Results are aggregated into a report with pass/fail rates and metric averages.
+- **Data-driven test cases:** Adding new test cases requires only data changes, not code modifications.

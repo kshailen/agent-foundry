@@ -1,0 +1,56 @@
+{
+  "number": 49,
+  "title": "No Match Detector",
+  "difficulty": "medium",
+  "categories": [
+    "rag"
+  ],
+  "frameworks": [
+    "langchain",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "The agent must detect when retrieved documents are not relevant to the query",
+    "A similarity score threshold or relevance check must be implemented",
+    "The agent must respond with a clear 'I don't have information' message when no match is found",
+    "The agent must not fabricate answers when retrieval quality is low"
+  ],
+  "hints": [
+    "Use similarity scores from the vector store to determine if retrieved documents are actually relevant",
+    "Set a threshold — if the best match score is below it, treat it as no match",
+    "Add a prompt instruction that tells the LLM to say it doesn't have the information rather than guessing"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI, OpenAIEmbeddings\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom langchain_community.vectorstores import FAISS\nfrom langchain_core.documents import Document\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\nembeddings = OpenAIEmbeddings()\n\ndocuments = [\n    Document(page_content=\"Our return policy allows returns within 30 days of purchase.\"),\n    Document(page_content=\"Shipping is free for orders over $50 within the continental US.\"),\n    Document(page_content=\"Our customer support hours are 9 AM to 5 PM EST, Monday through Friday.\"),\n]\n\nvectorstore = FAISS.from_documents(documents, embeddings)\nretriever = vectorstore.as_retriever()\n\n# BUG: Always generates an answer regardless of retrieval quality\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"Answer the question based on the context.\\n\\nContext: {context}\"),\n    (\"human\", \"{question}\"),\n])\n\ndef ask(question: str) -> str:\n    docs = retriever.invoke(question)\n    context = \"\\n\".join([doc.page_content for doc in docs])\n    chain = prompt | llm\n    result = chain.invoke({\"context\": context, \"question\": question})\n    return result.content\n\n# This question has no relevant document — the agent should say so\nprint(ask(\"What programming languages does your API support?\"))",
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom agents.tool import function_tool\nimport numpy as np\n\nknowledge_base = [\n    \"Our return policy allows returns within 30 days of purchase.\",\n    \"Shipping is free for orders over $50 within the continental US.\",\n    \"Our customer support hours are 9 AM to 5 PM EST, Monday through Friday.\",\n]\n\n@function_tool\ndef search_knowledge_base(query: str) -> str:\n    \"\"\"Search the knowledge base for relevant information.\"\"\"\n    # Simulated search — always returns the first document regardless of relevance\n    return knowledge_base[0]\n\n# BUG: Agent always generates an answer, even when the retrieved doc is irrelevant\nagent = Agent(\n    name=\"Support Agent\",\n    instructions=\"You are a customer support agent. Answer questions using the search tool.\",\n    tools=[search_knowledge_base],\n)\n\n# This question has no relevant document\nresult = Runner.run_sync(agent, \"What programming languages does your API support?\")\nprint(result.final_output)",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai.tools import tool\nfrom langchain_openai import OpenAIEmbeddings\nfrom langchain_community.vectorstores import FAISS\nfrom langchain_core.documents import Document\n\nembeddings = OpenAIEmbeddings()\n\ndocuments = [\n    Document(page_content=\"Our return policy allows returns within 30 days of purchase.\"),\n    Document(page_content=\"Shipping is free for orders over $50 within the continental US.\"),\n    Document(page_content=\"Our customer support hours are 9 AM to 5 PM EST, Monday through Friday.\"),\n]\n\nvectorstore = FAISS.from_documents(documents, embeddings)\nretriever = vectorstore.as_retriever()\n\n# BUG: Always generates an answer regardless of retrieval quality\n@tool\ndef search_knowledge_base(question: str) -> str:\n    \"\"\"Search the knowledge base for relevant information.\"\"\"\n    docs = retriever.invoke(question)\n    return \"\\n\".join([doc.page_content for doc in docs])\n\nsupport_agent = Agent(\n    role=\"Support Agent\",\n    goal=\"Answer customer questions using the knowledge base\",\n    backstory=\"You are a customer support agent. Answer questions using the search tool.\",\n    tools=[search_knowledge_base],\n)\n\ntask = Task(\n    description=\"What programming languages does your API support?\",\n    expected_output=\"Information about supported programming languages\",\n    agent=support_agent,\n)\n\ncrew = Crew(agents=[support_agent], tasks=[task])\nprint(crew.kickoff())"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/no-match-detector-langchain.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/no-match-detector-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/no-match-detector-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "detects-no-match",
+      "label": "Detects irrelevant retrievals",
+      "description": "The agent identifies when retrieved documents are not relevant to the query"
+    },
+    {
+      "id": "no-hallucination",
+      "label": "Does not hallucinate answers",
+      "description": "The agent does not fabricate information when no relevant documents exist"
+    },
+    {
+      "id": "clear-message",
+      "label": "Returns clear no-info message",
+      "description": "The agent clearly communicates that it doesn't have the requested information"
+    },
+    {
+      "id": "answers-when-relevant",
+      "label": "Still answers relevant queries",
+      "description": "The agent correctly answers questions when relevant documents are found"
+    }
+  ]
+}

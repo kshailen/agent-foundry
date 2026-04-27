@@ -1,0 +1,166 @@
+# Building a Tool-Calling Agent
+
+A tool-calling agent is the canonical LangGraph pattern: the LLM decides which tools to use, the graph executes them, and the results feed back to the LLM until it has a final answer. This creates the classic **ReAct loop** — Reason, Act, Observe, repeat.
+
+## The Agent Loop
+
+```
+       ┌──────────────────────────┐
+       │                          │
+START ─→ LLM Node ─→ Has tool calls? ─── No ──→ END
+                         │
+                        Yes
+                         │
+                    Tool Node
+                         │
+                    ┌────┘
+                    │
+              (back to LLM)
+```
+
+1. The **LLM node** receives messages, reasons about the task, and either produces a final answer or requests tool calls
+2. A **conditional edge** checks if the response contains tool calls
+3. If yes, the **tool node** executes the requested tools and returns results
+4. The loop repeats until the LLM responds without tool calls
+
+## Defining Tools
+
+Use the `@tool` decorator from LangChain to define tools with type hints and docstrings:
+
+```python
+from langchain_core.tools import tool
+
+@tool
+def add(a: float, b: float) -> float:
+    """Add two numbers together."""
+    return a + b
+
+@tool
+def multiply(a: float, b: float) -> float:
+    """Multiply two numbers together."""
+    return a * b
+
+@tool
+def divide(a: float, b: float) -> float:
+    """Divide a by b."""
+    return a / b
+
+tools = [add, multiply, divide]
+```
+
+The docstring becomes the tool description the LLM sees. Clear descriptions lead to better tool selection.
+
+## Binding Tools to the LLM
+
+`bind_tools()` attaches tool schemas to the model so it knows what's available:
+
+```python
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+llm_with_tools = llm.bind_tools(tools)
+```
+
+The model can now return `tool_calls` in its response when it decides a tool is needed.
+
+## Building the Graph
+
+```python
+from langgraph.graph import StateGraph, MessagesState, START, END
+from langgraph.prebuilt import ToolNode, tools_condition
+
+def llm_node(state: MessagesState) -> dict:
+    response = llm_with_tools.invoke(state["messages"])
+    return {"messages": [response]}
+
+tool_node = ToolNode(tools)
+
+graph = StateGraph(MessagesState)
+
+graph.add_node("llm", llm_node)
+graph.add_node("tools", tool_node)
+
+graph.add_edge(START, "llm")
+graph.add_conditional_edges("llm", tools_condition)
+graph.add_edge("tools", "llm")
+
+app = graph.compile()
+```
+
+### What Each Part Does
+
+| Component | Role |
+|-----------|------|
+| `llm_node` | Calls the LLM with the current message history |
+| `ToolNode(tools)` | Executes any tool calls from the LLM response |
+| `tools_condition` | Routes to `"tools"` if tool calls exist, otherwise to `END` |
+| `MessagesState` | Manages the message list with `add_messages` reducer |
+
+## tools_condition Under the Hood
+
+`tools_condition` is a helper that checks the last AI message for tool calls:
+
+```python
+from langgraph.prebuilt import tools_condition
+
+# Equivalent logic:
+def route(state: MessagesState) -> str:
+    last_message = state["messages"][-1]
+    if last_message.tool_calls:
+        return "tools"
+    return END
+```
+
+Using `tools_condition` saves boilerplate and handles edge cases.
+
+## Running the Agent
+
+```python
+from langchain_core.messages import HumanMessage
+
+result = app.invoke({
+    "messages": [HumanMessage(content="What is 25 * 4 + 10?")]
+})
+
+for message in result["messages"]:
+    print(f"{message.type}: {message.content}")
+```
+
+The agent will:
+1. Receive the question
+2. Call `multiply(25, 4)` → 100
+3. Call `add(100, 10)` → 110
+4. Return the final answer: 110
+
+## Visualizing the Graph
+
+```python
+from IPython.display import Image
+Image(app.get_graph().draw_mermaid_png())
+```
+
+## Custom Routing with Conditional Edges
+
+For more control, replace `tools_condition` with your own routing function:
+
+```python
+def custom_route(state: MessagesState) -> str:
+    last_message = state["messages"][-1]
+    if not last_message.tool_calls:
+        return END
+    tool_names = [tc["name"] for tc in last_message.tool_calls]
+    if "divide" in tool_names:
+        return "safe_tools"
+    return "tools"
+```
+
+This lets you route different tools to different nodes — useful for adding validation or sandboxing.
+
+## Key Takeaways
+
+- The tool-calling agent loop is: LLM → check for tool calls → execute tools → back to LLM
+- `@tool` decorator defines tools; clear docstrings improve LLM tool selection
+- `model.bind_tools(tools)` attaches tool schemas to the LLM
+- `ToolNode` from `langgraph.prebuilt` handles tool execution automatically
+- `tools_condition` routes to the tool node or END based on whether tool calls exist
+- The loop continues until the LLM produces a response without tool calls

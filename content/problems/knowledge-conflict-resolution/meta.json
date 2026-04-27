@@ -1,0 +1,57 @@
+{
+  "number": 59,
+  "title": "Knowledge Conflict Resolution",
+  "difficulty": "hard",
+  "categories": [
+    "rag",
+    "prompt-design"
+  ],
+  "frameworks": [
+    "langchain",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "The agent must detect when retrieved documents contain contradictory information",
+    "Contradictions must be flagged explicitly in the response",
+    "The agent must not silently pick one version over another",
+    "Both conflicting sources must be cited when a conflict is detected"
+  ],
+  "hints": [
+    "After retrieval, add a step that compares the retrieved documents for conflicting claims",
+    "Use an LLM to detect whether two documents agree or contradict on the same topic",
+    "When a conflict is found, present both versions with their sources and let the user decide"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI, OpenAIEmbeddings\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom langchain_community.vectorstores import FAISS\nfrom langchain_core.documents import Document\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\nembeddings = OpenAIEmbeddings()\n\ndocuments = [\n    Document(page_content=\"The company's annual revenue for 2024 was $150M, a 20% increase.\", metadata={\"source\": \"investor_report_q4.pdf\"}),\n    Document(page_content=\"Total 2024 revenue reached $142M according to the audited financial statements.\", metadata={\"source\": \"audited_financials_2024.pdf\"}),\n    Document(page_content=\"The company has 500 employees across 5 global offices.\", metadata={\"source\": \"company_overview.pdf\"}),\n    Document(page_content=\"Current headcount stands at 480 full-time employees.\", metadata={\"source\": \"hr_report_dec2024.pdf\"}),\n]\n\nvectorstore = FAISS.from_documents(documents, embeddings)\nretriever = vectorstore.as_retriever()\n\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"Answer based on context.\\n\\nContext: {context}\"),\n    (\"human\", \"{question}\"),\n])\n\n# BUG: Picks the first document's answer with no conflict detection\ndef ask(question: str) -> str:\n    docs = retriever.invoke(question)\n    context = \"\\n\".join([doc.page_content for doc in docs])\n    chain = prompt | llm\n    result = chain.invoke({\"context\": context, \"question\": question})\n    return result.content\n\n# The two revenue docs contradict — the agent should flag this\nprint(ask(\"What was the company's 2024 revenue?\"))",
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom agents.tool import function_tool\n\nknowledge_base = {\n    \"investor_report_q4.pdf\": \"The company's annual revenue for 2024 was $150M, a 20% increase.\",\n    \"audited_financials_2024.pdf\": \"Total 2024 revenue reached $142M according to the audited financial statements.\",\n    \"company_overview.pdf\": \"The company has 500 employees across 5 global offices.\",\n    \"hr_report_dec2024.pdf\": \"Current headcount stands at 480 full-time employees.\",\n}\n\n@function_tool\ndef search_documents(query: str) -> str:\n    \"\"\"Search company documents for relevant information.\"\"\"\n    results = []\n    for source, content in knowledge_base.items():\n        if any(word in content.lower() for word in query.lower().split()):\n            results.append(f\"[{source}]: {content}\")\n    return \"\\n\".join(results) if results else \"No relevant documents found.\"\n\n# BUG: Agent picks the first result with no conflict detection\nagent = Agent(\n    name=\"Knowledge Agent\",\n    instructions=\"You are a helpful assistant. Answer questions using the search tool.\",\n    tools=[search_documents],\n)\n\nresult = Runner.run_sync(agent, \"What was the company's 2024 revenue?\")\nprint(result.final_output)",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai.tools import tool\nfrom langchain_openai import OpenAIEmbeddings\nfrom langchain_community.vectorstores import FAISS\nfrom langchain_core.documents import Document\n\nembeddings = OpenAIEmbeddings()\n\ndocuments = [\n    Document(page_content=\"The company's annual revenue for 2024 was $150M, a 20% increase.\", metadata={\"source\": \"investor_report_q4.pdf\"}),\n    Document(page_content=\"Total 2024 revenue reached $142M according to the audited financial statements.\", metadata={\"source\": \"audited_financials_2024.pdf\"}),\n    Document(page_content=\"The company has 500 employees across 5 global offices.\", metadata={\"source\": \"company_overview.pdf\"}),\n    Document(page_content=\"Current headcount stands at 480 full-time employees.\", metadata={\"source\": \"hr_report_dec2024.pdf\"}),\n]\n\nvectorstore = FAISS.from_documents(documents, embeddings)\nretriever = vectorstore.as_retriever()\n\n@tool\ndef search_documents(query: str) -> str:\n    \"\"\"Search company documents for relevant information.\"\"\"\n    docs = retriever.invoke(query)\n    results = []\n    for doc in docs:\n        source = doc.metadata.get(\"source\", \"unknown\")\n        results.append(f\"[{source}]: {doc.page_content}\")\n    return \"\\n\".join(results) if results else \"No relevant documents found.\"\n\n# BUG: Picks the first document's answer with no conflict detection\nassistant = Agent(\n    role=\"Knowledge Agent\",\n    goal=\"Answer questions using the search tool\",\n    backstory=\"You are a helpful assistant.\",\n    tools=[search_documents],\n)\n\ntask = Task(\n    description=\"What was the company's 2024 revenue?\",\n    expected_output=\"The company's 2024 revenue\",\n    agent=assistant,\n)\n\ncrew = Crew(agents=[assistant], tasks=[task])\nprint(crew.kickoff())"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/knowledge-conflict-resolution-langchain.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/knowledge-conflict-resolution-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/knowledge-conflict-resolution-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "detects-conflicts",
+      "label": "Detects contradictions",
+      "description": "The agent identifies when retrieved documents contain conflicting information"
+    },
+    {
+      "id": "flags-explicitly",
+      "label": "Flags conflicts explicitly",
+      "description": "The response explicitly states that a conflict exists rather than silently choosing one version"
+    },
+    {
+      "id": "cites-both-sources",
+      "label": "Cites both conflicting sources",
+      "description": "Both contradicting documents and their sources are presented to the user"
+    },
+    {
+      "id": "handles-agreement",
+      "label": "Handles agreeing documents normally",
+      "description": "When documents agree, the agent answers normally without unnecessary conflict warnings"
+    }
+  ]
+}

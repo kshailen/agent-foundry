@@ -1,0 +1,51 @@
+{
+  "number": 28,
+  "title": "Tool Schema Evolution",
+  "difficulty": "hard",
+  "categories": [
+    "tool-calling"
+  ],
+  "frameworks": [
+    "langchain",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "The tool must work with the new API that requires the 'output_format' parameter",
+    "Existing agent prompts and workflows that call the tool must not break",
+    "The tool must provide a sensible default for the new required parameter",
+    "The tool's description must reflect the updated capabilities"
+  ],
+  "hints": [
+    "Add the new parameter with a default value so existing callers that don't pass it still work",
+    "Update the tool's docstring to mention the new parameter and its accepted values",
+    "Consider a wrapper that maps the old schema to the new one, applying defaults for missing fields"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain.agents import AgentExecutor, create_tool_calling_agent\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom langchain_core.tools import tool\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# BUG: The upstream API now requires 'output_format' (one of: 'json', 'text', 'csv')\n# but our tool schema doesn't include it. Every call fails with:\n# \"API Error: Missing required parameter 'output_format'\"\n# TODO: Update the tool to support the new parameter without breaking existing callers\n\n@tool\ndef fetch_report(company: str, year: int) -> str:\n    \"\"\"Fetch an annual report for a company.\"\"\"\n    # Old API call — worked before the API update\n    # response = api.get_report(company=company, year=year)\n    # New API requires: api.get_report(company=company, year=year, output_format=...)\n    # Simulating the new API behavior:\n    raise ValueError(f\"API Error: Missing required parameter 'output_format'. Must be one of: json, text, csv\")\n\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a financial research assistant. Fetch company reports when asked.\"),\n    (\"human\", \"{input}\"),\n    (\"placeholder\", \"{agent_scratchpad}\"),\n])\n\nagent = create_tool_calling_agent(llm, [fetch_report], prompt)\nexecutor = AgentExecutor(agent=agent, tools=[fetch_report])\n\nresult = executor.invoke({\"input\": \"Get me Apple's 2024 annual report\"})\nprint(result[\"output\"])",
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom agents.tool import function_tool\n\n# BUG: The upstream API now requires 'output_format' (one of: 'json', 'text', 'csv')\n# but our tool schema doesn't include it. Every call fails with:\n# \"API Error: Missing required parameter 'output_format'\"\n# TODO: Update the tool to support the new parameter without breaking existing callers\n\n@function_tool\ndef fetch_report(company: str, year: int) -> str:\n    \"\"\"Fetch an annual report for a company.\"\"\"\n    # Old API call — worked before the API update\n    # response = api.get_report(company=company, year=year)\n    # New API requires: api.get_report(company=company, year=year, output_format=...)\n    # Simulating the new API behavior:\n    raise ValueError(f\"API Error: Missing required parameter 'output_format'. Must be one of: json, text, csv\")\n\nagent = Agent(\n    name=\"Financial Research Assistant\",\n    instructions=\"You are a financial research assistant. Fetch company reports when asked.\",\n    tools=[fetch_report],\n)\n\nresult = Runner.run_sync(agent, \"Get me Apple's 2024 annual report\")\nprint(result.final_output)",
+    "crewai": "from crewai import Agent, Task, Crew, Process\nfrom crewai.tools import tool\n\n# BUG: The upstream API now requires 'output_format' (one of: 'json', 'text', 'csv')\n# but our tool schema doesn't include it. Every call fails with:\n# \"API Error: Missing required parameter 'output_format'\"\n# TODO: Update the tool to support the new parameter without breaking existing callers\n\n@tool\ndef fetch_report(company: str, year: int) -> str:\n    \"\"\"Fetch an annual report for a company.\"\"\"\n    # Old API call — worked before the API update\n    # response = api.get_report(company=company, year=year)\n    # New API requires: api.get_report(company=company, year=year, output_format=...)\n    # Simulating the new API behavior:\n    raise ValueError(f\"API Error: Missing required parameter 'output_format'. Must be one of: json, text, csv\")\n\nresearch_agent = Agent(\n    role=\"Financial Research Assistant\",\n    goal=\"Fetch and present company annual reports in the requested format.\",\n    backstory=\"You are a financial research assistant that retrieves company reports.\",\n    tools=[fetch_report],\n)\n\ntask = Task(\n    description=\"Get me Apple's 2024 annual report\",\n    expected_output=\"The annual report content for Apple for the year 2024.\",\n    agent=research_agent,\n)\n\ncrew = Crew(agents=[research_agent], tasks=[task], process=Process.sequential)\nresult = crew.kickoff()\nprint(result)"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/tool-schema-evolution-langchain.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/tool-schema-evolution-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/tool-schema-evolution-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "new-param-supported",
+      "label": "New parameter is supported",
+      "description": "The tool accepts the 'output_format' parameter and passes it to the API"
+    },
+    {
+      "id": "backward-compatible",
+      "label": "Backward compatible",
+      "description": "Existing callers that don't specify output_format still work via a default value"
+    },
+    {
+      "id": "no-errors",
+      "label": "No API errors",
+      "description": "The tool no longer raises the 'Missing required parameter' error"
+    }
+  ]
+}

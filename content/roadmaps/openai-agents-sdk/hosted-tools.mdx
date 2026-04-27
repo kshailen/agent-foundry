@@ -1,0 +1,177 @@
+# Hosted Tools
+
+Hosted tools are pre-built, server-side capabilities provided by OpenAI that your agents can use without any custom code. The OpenAI Agents SDK includes `WebSearchTool`, `FileSearchTool`, `CodeInterpreterTool`, and `ImageGenerationTool` — each running on OpenAI's infrastructure.
+
+## Why Hosted Tools
+
+Building a reliable web search engine, file search system, or code sandbox from scratch is complex. Hosted tools give your agents access to these powerful capabilities with a single line of configuration — no API keys, servers, or infrastructure to manage.
+
+## WebSearchTool
+
+Give your agent the ability to search the web for real-time information:
+
+```python
+from agents import Agent, Runner, WebSearchTool
+
+agent = Agent(
+    name="Research Agent",
+    instructions="You are a research assistant. Search the web to answer questions with up-to-date information.",
+    tools=[WebSearchTool()],
+)
+
+result = Runner.run_sync(agent, "What were the major AI announcements this week?")
+print(result.final_output)
+```
+
+### Controlling Search Context
+
+Use `search_context_size` to control how much context the tool retrieves from search results:
+
+```python
+agent = Agent(
+    name="Deep Research Agent",
+    instructions="You provide thorough, well-researched answers.",
+    tools=[WebSearchTool(search_context_size="high")],
+)
+
+result = Runner.run_sync(agent, "Explain the latest advances in quantum computing.")
+print(result.final_output)
+```
+
+| Value | Description |
+|-------|-------------|
+| `"low"` | Minimal context — faster, fewer tokens |
+| `"medium"` | Balanced context (default) |
+| `"high"` | Maximum context — more thorough but uses more tokens |
+
+## FileSearchTool
+
+Search through uploaded files using OpenAI's vector store:
+
+```python
+from agents import Agent, Runner, FileSearchTool
+
+agent = Agent(
+    name="Document Agent",
+    instructions="You answer questions based on the provided documents.",
+    tools=[FileSearchTool(vector_store_ids=["vs_abc123"])],
+)
+
+result = Runner.run_sync(agent, "What does the Q3 report say about revenue?")
+print(result.final_output)
+```
+
+The `vector_store_ids` parameter points to one or more vector stores you've created via the OpenAI API. The tool automatically searches these stores and returns relevant chunks to the agent.
+
+### Multiple Vector Stores
+
+```python
+agent = Agent(
+    name="Knowledge Agent",
+    tools=[FileSearchTool(vector_store_ids=["vs_policies", "vs_procedures"])],
+)
+```
+
+## CodeInterpreterTool
+
+Let your agent write and execute Python code in a sandboxed environment:
+
+```python
+from agents import Agent, Runner, CodeInterpreterTool
+
+agent = Agent(
+    name="Data Analyst",
+    instructions="You analyze data and create visualizations. Use code to perform calculations.",
+    tools=[CodeInterpreterTool()],
+)
+
+result = Runner.run_sync(agent, "Calculate the first 20 Fibonacci numbers and find their sum.")
+print(result.final_output)
+```
+
+The code runs in an isolated sandbox on OpenAI's servers — safe for untrusted computations.
+
+## ImageGenerationTool
+
+Enable your agent to generate images from text descriptions:
+
+```python
+from agents import Agent, Runner, ImageGenerationTool
+
+agent = Agent(
+    name="Creative Agent",
+    instructions="You help users create images. Use the image generation tool.",
+    tools=[ImageGenerationTool()],
+)
+
+result = Runner.run_sync(agent, "Create an image of a sunset over a mountain lake.")
+print(result.final_output)
+```
+
+## Combining Multiple Hosted Tools
+
+Agents can use several hosted tools together:
+
+```python
+from agents import Agent, Runner, WebSearchTool, CodeInterpreterTool
+
+agent = Agent(
+    name="Analyst Agent",
+    instructions=(
+        "You are a research analyst. Search the web for data, "
+        "then use code to analyze and visualize it."
+    ),
+    tools=[
+        WebSearchTool(search_context_size="high"),
+        CodeInterpreterTool(),
+    ],
+)
+
+result = Runner.run_sync(
+    agent,
+    "Find the current population of the 5 largest countries and create a bar chart comparison.",
+)
+print(result.final_output)
+```
+
+## Web Search Example: Fact-Checking Agent
+
+A practical example that uses web search to verify claims:
+
+```python
+from agents import Agent, Runner, WebSearchTool
+
+fact_checker = Agent(
+    name="Fact Checker",
+    instructions=(
+        "You are a fact-checking agent. When given a claim, search the web "
+        "to verify it. Respond with VERIFIED, UNVERIFIED, or FALSE, "
+        "followed by your evidence."
+    ),
+    tools=[WebSearchTool(search_context_size="high")],
+)
+
+result = Runner.run_sync(
+    fact_checker,
+    "Claim: Python is the most popular programming language in 2025.",
+)
+print(result.final_output)
+```
+
+## Hosted Tools Summary
+
+| Tool | Class | Key Parameters |
+|------|-------|----------------|
+| Web Search | `WebSearchTool` | `search_context_size` (`"low"`, `"medium"`, `"high"`) |
+| File Search | `FileSearchTool` | `vector_store_ids` (list of vector store IDs) |
+| Code Interpreter | `CodeInterpreterTool` | None required |
+| Image Generation | `ImageGenerationTool` | None required |
+
+## Key Takeaways
+
+- Hosted tools run on OpenAI's infrastructure — no setup, servers, or API keys needed
+- `WebSearchTool` gives agents real-time web access with configurable `search_context_size`
+- `FileSearchTool` searches your uploaded documents via vector store IDs
+- `CodeInterpreterTool` executes Python in a sandboxed environment for computation and visualization
+- `ImageGenerationTool` creates images from text descriptions
+- Combine multiple hosted tools on a single agent for powerful multi-capability workflows

@@ -1,0 +1,213 @@
+## Approach
+
+The starter code uses a single solver agent to tackle coding challenges, producing one solution with no comparison or quality assurance. The output quality is a gamble — you might get an elegant O(n^2) solution or a naive O(n^3) brute force, with no way to know which. The fix is to implement a competitive selection pattern: three solver agents independently tackle the same problem (ideally with different approaches), and a separate judge agent evaluates all three solutions on criteria like correctness, time complexity, and code clarity, then selects the best one with a rationale.
+
+In CrewAI, each solver is a separate agent with a distinct backstory encouraging a different problem-solving style. All three run their tasks, then a judge task with context from all three evaluates and picks the winner. In LangGraph, three solver nodes run (sequentially or with fan-out), their outputs are collected in state, and a judge node evaluates and selects.
+
+The judge must be a separate agent — not one of the solvers — to avoid bias. It must provide a rationale explaining why it chose one solution over the others, giving the user confidence in the selection.
+
+## Solution
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai import LLM
+
+llm = LLM(model="gpt-4o-mini")
+
+solver_1 = Agent(
+    role="Algorithm Specialist",
+    goal="Solve coding problems using well-known algorithms and data structures",
+    backstory="You favor dynamic programming and classic algorithmic approaches.",
+    llm=llm,
+)
+
+solver_2 = Agent(
+    role="Pragmatic Engineer",
+    goal="Solve coding problems with clean, readable, practical code",
+    backstory="You prioritize readability and simplicity over cleverness.",
+    llm=llm,
+)
+
+solver_3 = Agent(
+    role="Performance Engineer",
+    goal="Solve coding problems with the most time and space efficient approach",
+    backstory="You optimize for performance and always analyze complexity.",
+    llm=llm,
+)
+
+judge = Agent(
+    role="Code Judge",
+    goal="Evaluate multiple code solutions and select the best one",
+    backstory="You are a senior staff engineer who reviews code for correctness, efficiency, and clarity.",
+    llm=llm,
+)
+
+solve_task_1 = Task(
+    description="Write a Python function to solve: {problem}. Provide clean code with an explanation of your approach.",
+    expected_output="A working Python function with explanation",
+    agent=solver_1,
+)
+
+solve_task_2 = Task(
+    description="Write a Python function to solve: {problem}. Provide clean code with an explanation of your approach.",
+    expected_output="A working Python function with explanation",
+    agent=solver_2,
+)
+
+solve_task_3 = Task(
+    description="Write a Python function to solve: {problem}. Provide clean code with an explanation of your approach.",
+    expected_output="A working Python function with explanation",
+    agent=solver_3,
+)
+
+judge_task = Task(
+    description="Evaluate the three solutions provided for: {problem}. Compare them on correctness, time complexity, space complexity, and code clarity. Select the best solution and explain your rationale.",
+    expected_output="The best solution with a detailed rationale for why it was chosen",
+    agent=judge,
+    context=[solve_task_1, solve_task_2, solve_task_3],
+)
+
+crew = Crew(
+    agents=[solver_1, solver_2, solver_3, judge],
+    tasks=[solve_task_1, solve_task_2, solve_task_3, judge_task],
+    process=Process.sequential,
+)
+
+result = crew.kickoff(inputs={"problem": "Find the longest palindromic substring in a given string"})
+print(result)
+```
+
+### LangGraph
+
+```python
+from langchain_openai import ChatOpenAI
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+class State(TypedDict):
+    problem: str
+    solution_1: str
+    solution_2: str
+    solution_3: str
+    solution: str
+
+def solver_1(state: State) -> dict:
+    prompt = (
+        f"You are an algorithm specialist who favors dynamic programming approaches. "
+        f"Write a Python function to solve: {state['problem']}. Provide clean code with explanation."
+    )
+    response = llm.invoke(prompt)
+    return {"solution_1": response.content}
+
+def solver_2(state: State) -> dict:
+    prompt = (
+        f"You are a pragmatic engineer who prioritizes readability and simplicity. "
+        f"Write a Python function to solve: {state['problem']}. Provide clean code with explanation."
+    )
+    response = llm.invoke(prompt)
+    return {"solution_2": response.content}
+
+def solver_3(state: State) -> dict:
+    prompt = (
+        f"You are a performance engineer who optimizes for efficiency. "
+        f"Write a Python function to solve: {state['problem']}. Provide clean code with explanation."
+    )
+    response = llm.invoke(prompt)
+    return {"solution_3": response.content}
+
+def judge(state: State) -> dict:
+    prompt = (
+        f"You are a senior staff engineer. Evaluate these three solutions for: {state['problem']}\n\n"
+        f"Solution A (Algorithm Specialist):\n{state['solution_1']}\n\n"
+        f"Solution B (Pragmatic Engineer):\n{state['solution_2']}\n\n"
+        f"Solution C (Performance Engineer):\n{state['solution_3']}\n\n"
+        f"Compare them on correctness, time complexity, space complexity, and code clarity. "
+        f"Select the best solution and explain your rationale."
+    )
+    response = llm.invoke(prompt)
+    return {"solution": response.content}
+
+graph = StateGraph(State)
+graph.add_node("solver_1", solver_1)
+graph.add_node("solver_2", solver_2)
+graph.add_node("solver_3", solver_3)
+graph.add_node("judge", judge)
+
+graph.add_edge(START, "solver_1")
+graph.add_edge(START, "solver_2")
+graph.add_edge(START, "solver_3")
+graph.add_edge("solver_1", "judge")
+graph.add_edge("solver_2", "judge")
+graph.add_edge("solver_3", "judge")
+graph.add_edge("judge", END)
+
+app = graph.compile()
+result = app.invoke({
+    "problem": "Find the longest palindromic substring in a given string",
+    "solution_1": "",
+    "solution_2": "",
+    "solution_3": "",
+    "solution": "",
+})
+print(result["solution"])
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+
+solver_1 = Agent(
+    name="Algorithm Specialist",
+    instructions="You are an algorithm specialist who favors dynamic programming and classic algorithmic approaches. Write a Python function to solve the given problem. Provide clean code with explanation.",
+)
+
+solver_2 = Agent(
+    name="Pragmatic Engineer",
+    instructions="You are a pragmatic engineer who prioritizes readability and simplicity over cleverness. Write a Python function to solve the given problem. Provide clean code with explanation.",
+)
+
+solver_3 = Agent(
+    name="Performance Engineer",
+    instructions="You are a performance engineer who optimizes for time and space efficiency. Write a Python function to solve the given problem. Provide clean code with explanation.",
+)
+
+problem = "Find the longest palindromic substring in a given string"
+
+result_1 = Runner.run_sync(solver_1, f"Write a Python function to solve: {problem}")
+result_2 = Runner.run_sync(solver_2, f"Write a Python function to solve: {problem}")
+result_3 = Runner.run_sync(solver_3, f"Write a Python function to solve: {problem}")
+
+judge = Agent(
+    name="Code Judge",
+    instructions="You are a senior staff engineer. Evaluate code solutions for correctness, time complexity, space complexity, and code clarity. Select the best solution and explain your rationale.",
+)
+
+judge_prompt = (
+    f"Evaluate these three solutions for: {problem}\n\n"
+    f"Solution A (Algorithm Specialist):\n{result_1.final_output}\n\n"
+    f"Solution B (Pragmatic Engineer):\n{result_2.final_output}\n\n"
+    f"Solution C (Performance Engineer):\n{result_3.final_output}\n\n"
+    f"Compare them on correctness, time complexity, space complexity, and code clarity. "
+    f"Select the best solution and explain your rationale."
+)
+
+final_result = Runner.run_sync(judge, judge_prompt)
+print(final_result.final_output)
+```
+
+## Why This Works
+
+By having three agents with different problem-solving philosophies tackle the same problem independently, you get genuine diversity in approaches — one might use dynamic programming, another might use expand-around-center, and a third might prioritize readability. The judge evaluates all three on objective criteria (correctness, complexity, clarity) without bias toward any solver's style, since it is a separate agent that did not produce any of the solutions.
+
+The fan-out/fan-in pattern in LangGraph makes this particularly elegant: all three solvers can run in parallel, and the judge only executes once all solutions are available.
+
+## Key Takeaways
+
+- Competitive selection leverages diversity — agents with different backstories and priorities naturally produce different solutions, increasing the chance that at least one is excellent.
+- The judge must be a separate agent, not one of the solvers, to avoid self-evaluation bias.
+- Give each solver a distinct problem-solving philosophy (e.g., algorithmic, pragmatic, performance-focused) to maximize solution diversity.

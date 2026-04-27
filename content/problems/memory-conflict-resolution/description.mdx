@@ -1,0 +1,58 @@
+## The Problem
+
+Your assistant stores facts about the user, but it only ever **appends** new facts — it never updates or removes old ones. When the user says "I live in NYC" and later says "I moved to LA," both facts coexist in memory. The next time the user asks "Where do I live?" the agent sees conflicting information and may say "You live in New York City" or, worse, give a confused answer mentioning both cities. The fix is to implement **conflict resolution** so that updated facts replace their predecessors.
+
+## Examples
+
+### Example 1
+
+**User input (turn 1):** I live in New York City.
+
+**User input (turn 2):** Actually, I just moved to Los Angeles.
+
+**User input (turn 3):** Where do I live?
+
+**Current (bad) output:** Based on what you've told me, you live in New York City... or wait, you also mentioned Los Angeles. Could you clarify?
+
+**Expected (good) output:** You live in Los Angeles — you mentioned you recently moved there.
+
+### Example 2
+
+**User input (turn 1):** I work at Google.
+
+**User input (turn 5):** I just started a new job at OpenAI.
+
+**User input (turn 6):** Where do I work?
+
+**Current (bad) output:** You work at Google. (Ignores the update, or mentions both.)
+
+**Expected (good) output:** You work at OpenAI — you mentioned starting there recently.
+
+### Example 3
+
+**User input (turn 1):** My favorite color is blue.
+
+**User input (turn 3):** I've changed my mind — my favorite color is green now.
+
+**User input (turn 4):** What's my favorite color?
+
+**Current (bad) output:** Your favorite color is blue... or green? You've mentioned both.
+
+**Expected (good) output:** Your favorite color is green.
+
+## Your Task
+
+Implement **conflict-aware memory** for the agent:
+
+- Store facts with identifiable keys or categories (e.g., "location", "employer", "favorite_color").
+- When the user states a new value for an existing category, **replace** the old fact.
+- The agent must always use the most recent value when responding.
+- The agent should never contradict itself within a single response.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Updates replace old facts:** When a user corrects a fact, the old value is replaced rather than duplicated.
+- **Uses the latest value:** The agent always references the most recently stated fact.
+- **No self-contradictions:** The agent never presents conflicting information in a single response.

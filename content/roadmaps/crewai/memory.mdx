@@ -1,0 +1,72 @@
+# Memory System
+
+CrewAI’s **memory system** lets agents retain useful information across tasks and, when persistence is configured, across separate crew runs. Instead of starting from a blank slate every time, crews can build on prior facts, decisions, and entity mentions—reducing repeated research and keeping multi-step workflows coherent.
+
+## Enabling memory on a Crew
+
+Turn on the default crew memory by passing `memory=True`. CrewAI wires a shared `Memory` instance into the crew; with `verbose=True`, you can watch recall and storage activity in the logs.
+
+```python
+crew = Crew(
+    agents=[researcher, writer],
+    tasks=[research_task, write_task],
+    memory=True,
+    verbose=True,
+)
+```
+
+After each task, the framework can **extract discrete facts** from outputs and store them. Before each task, agents **recall** relevant memories so the prompt includes helpful context.
+
+## Types of memory (conceptual layers)
+
+CrewAI exposes a **unified** `Memory` API, but it covers behaviors people often describe as separate layers:
+
+- **Short-term memory** — Context from **within a single crew run**: recent interactions, task outputs, and facts extracted during that execution. It keeps later tasks aligned with what already happened in the same `kickoff`.
+- **Long-term memory** — **Insights and facts that persist** when you use a durable storage backend. A new run of the same project can recall what the crew learned last time instead of rediscovering it.
+- **Entity memory** — The system tracks **key entities** (people, organizations, products, concepts) mentioned during execution. Those become retrievable facts tied to scopes and categories, so agents stay consistent about “who” and “what” across tasks.
+
+## Memory API
+
+You can use `Memory` standalone or rely on the instance the crew manages when `memory=True`. Common operations:
+
+| Method | Purpose |
+|--------|---------|
+| `memory.remember(content, scope=..., source=...)` | Store content; scope and metadata can be **auto-inferred** by the LLM when omitted. |
+| `memory.recall(query, limit=..., depth="shallow"\|"deep")` | Retrieve ranked matches using **composite scoring** (semantic similarity, recency, importance). `depth="shallow"` is a fast vector pass; `depth="deep"` (typical default) runs a richer recall flow with query analysis. |
+| `memory.forget(scope=...)` | Remove memories under a scope path (for example, pruning an old project branch). |
+
+Other helpers (such as `extract_memories` for splitting long text into facts, or `tree()` / `info()` to inspect the scope hierarchy) support the same mental model: store, retrieve, and prune with explicit or inferred structure.
+
+## Hierarchical scopes
+
+Memories live under **path-like scopes**, similar to directories:
+
+- `/project/alpha` — project-specific knowledge  
+- `/agent/researcher` — agent-scoped or private views when you assign `memory.scope("/agent/researcher")` on an agent  
+- `/`, `/company/...`, deeper paths as your tree grows  
+
+Scopes narrow **where** recall searches, which improves precision and performance. You can pass an explicit `scope=` to `remember()`, or let the system infer placement from content and the existing tree.
+
+## Why memory improves crews
+
+- **Continuity across tasks** — Later tasks see distilled facts from earlier steps without copying huge transcripts into every prompt.  
+- **Continuity across runs** — With persistent storage, the next `kickoff` can recall prior decisions and avoid redoing the same research.  
+- **Consistency** — Entity- and decision-level memories reduce contradictions and “amnesia” between agents.
+
+Use **`memory=True` together with `verbose=True`** while learning: log output shows when context is retrieved and when new memories are written, which makes debugging and trust-building much easier.
+
+## Configuration: embedders and storage
+
+Memory quality depends on **embeddings** (semantic search) and optional **storage backends** for durability:
+
+- Configure **embedder providers** so vectors match your environment (cloud APIs, local models, etc.).  
+- Choose **storage backends** when you need memories to survive beyond one process—so “long-term” behavior is real, not only in-session.
+
+See the official [Memory](https://docs.crewai.com/concepts/memory) documentation for constructor options (weights, half-life, LLM used for analysis, and recall tuning).
+
+## Key takeaways
+
+- Enable crew memory with **`memory=True`**; use **`verbose=True`** to observe it.  
+- One **`Memory`** API backs short-lived run context, durable knowledge, and entity-like facts, with **scopes** organizing the tree.  
+- **`remember`**, **`recall`** (with **`depth`** and **`limit`**), and **`forget(scope=...)`** are the core control surface.  
+- Tuning **embedders** and **storage** connects notebook experiments to production-style persistence.

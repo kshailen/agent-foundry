@@ -1,0 +1,368 @@
+## Approach
+
+The starter code runs a single agent configuration — there is no way to compare alternatives or determine whether a cheaper model could deliver comparable quality. The fix builds an A/B testing framework that runs two configurations side-by-side on the same set of test inputs, scores each on quality (via LLM-as-judge) and cost (via token tracking), and produces a summary report with a winner recommendation.
+
+The framework defines configurations as data: each configuration specifies a model name and system prompt. Both configurations are run against identical inputs to ensure a fair comparison. Quality is scored on a 1-5 scale by an LLM judge, cost is computed from actual token usage, and a cost-effectiveness metric (quality per dollar) identifies which configuration offers the best value. The framework is designed so that swapping in new configurations requires only changing the config dictionaries — no code modifications.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage
+import time
+
+PRICING = {
+    "gpt-4o-mini": {"input": 0.15 / 1_000_000, "output": 0.60 / 1_000_000},
+    "gpt-4o": {"input": 2.50 / 1_000_000, "output": 10.00 / 1_000_000},
+}
+
+configs = {
+    "A": {
+        "name": "gpt-4o (detailed prompt)",
+        "model": "gpt-4o",
+        "system_prompt": "You are a helpful and thorough customer support agent. Provide detailed, professional answers covering all aspects of the question. Include relevant policies, next steps, and proactive suggestions.",
+    },
+    "B": {
+        "name": "gpt-4o-mini (concise prompt)",
+        "model": "gpt-4o-mini",
+        "system_prompt": "You are a customer support agent. Answer concisely and helpfully.",
+    },
+}
+
+judge_llm = ChatOpenAI(model="gpt-4o-mini")
+
+test_queries = [
+    "What is your return policy?",
+    "My order arrived damaged, what should I do?",
+    "Can I change my shipping address after placing an order?",
+    "Do you price match with competitors?",
+    "How do I cancel my subscription?",
+]
+
+
+def run_config(config: dict, query: str) -> tuple[str, float, float]:
+    llm = ChatOpenAI(model=config["model"])
+    start = time.time()
+    response = llm.invoke([
+        SystemMessage(content=config["system_prompt"]),
+        HumanMessage(content=query),
+    ])
+    latency = time.time() - start
+    usage = response.usage_metadata
+    prices = PRICING[config["model"]]
+    cost = usage.input_tokens * prices["input"] + usage.output_tokens * prices["output"]
+    return response.content, latency, cost
+
+
+def judge_quality(query: str, response: str) -> float:
+    result = judge_llm.invoke([
+        SystemMessage(content="Score this customer support response on quality from 1.0 to 5.0. Consider accuracy, helpfulness, professionalism, and completeness. Reply with ONLY a number."),
+        HumanMessage(content=f"Customer question: {query}\n\nAgent response: {response}"),
+    ])
+    score = float(result.content.strip())
+    return max(1.0, min(5.0, score))
+
+
+def run_ab_test():
+    results = {name: [] for name in configs}
+
+    for query in test_queries:
+        print(f"\nQuery: {query}")
+        for config_name, config in configs.items():
+            response, latency, cost = run_config(config, query)
+            quality = judge_quality(query, response)
+            results[config_name].append({
+                "query": query,
+                "quality": quality,
+                "latency": latency,
+                "cost": cost,
+            })
+            print(f"  Config {config_name} ({config['name']}): "
+                  f"Quality: {quality:.1f}/5 | Cost: ${cost:.6f} | Latency: {latency:.2f}s")
+
+    print(f"\n{'='*60}")
+    print(f"=== A/B Test Results ===")
+    print(f"{'='*60}")
+
+    summaries = {}
+    for config_name, config in configs.items():
+        r = results[config_name]
+        avg_quality = sum(x["quality"] for x in r) / len(r)
+        total_cost = sum(x["cost"] for x in r)
+        avg_latency = sum(x["latency"] for x in r) / len(r)
+        cost_effectiveness = avg_quality / total_cost if total_cost > 0 else 0
+        summaries[config_name] = {
+            "avg_quality": avg_quality,
+            "total_cost": total_cost,
+            "avg_latency": avg_latency,
+            "cost_effectiveness": cost_effectiveness,
+        }
+        print(f"\nConfig {config_name} ({config['name']}):")
+        print(f"  Avg quality: {avg_quality:.1f}/5")
+        print(f"  Total cost: ${total_cost:.6f}")
+        print(f"  Avg latency: {avg_latency:.2f}s")
+        print(f"  Cost-effectiveness: {cost_effectiveness:.1f} quality-points/$")
+
+    a, b = summaries["A"], summaries["B"]
+    quality_diff = abs(a["avg_quality"] - b["avg_quality"]) / max(a["avg_quality"], b["avg_quality"]) * 100
+    cost_diff = abs(a["total_cost"] - b["total_cost"]) / max(a["total_cost"], b["total_cost"]) * 100
+
+    if b["cost_effectiveness"] > a["cost_effectiveness"]:
+        winner = "B"
+        reason = f"{cost_diff:.0f}% cheaper with only {quality_diff:.0f}% quality reduction"
+    else:
+        winner = "A"
+        reason = f"higher quality justifies the {cost_diff:.0f}% cost increase"
+
+    print(f"\nRECOMMENDATION: Config {winner} ({configs[winner]['name']}) — {reason}")
+
+
+run_ab_test()
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+import time
+
+PRICING = {
+    "gpt-4o-mini": {"input": 0.15 / 1_000_000, "output": 0.60 / 1_000_000},
+    "gpt-4o": {"input": 2.50 / 1_000_000, "output": 10.00 / 1_000_000},
+}
+
+configs = {
+    "A": {
+        "name": "gpt-4o (detailed prompt)",
+        "model": "gpt-4o",
+        "instructions": "You are a helpful and thorough customer support agent. Provide detailed, professional answers covering all aspects of the question. Include relevant policies, next steps, and proactive suggestions.",
+    },
+    "B": {
+        "name": "gpt-4o-mini (concise prompt)",
+        "model": "gpt-4o-mini",
+        "instructions": "You are a customer support agent. Answer concisely and helpfully.",
+    },
+}
+
+judge = Agent(
+    name="Quality Judge",
+    instructions="Score this customer support response on quality from 1.0 to 5.0. Consider accuracy, helpfulness, professionalism, and completeness. Reply with ONLY a number.",
+    model="gpt-4o-mini",
+)
+
+test_queries = [
+    "What is your return policy?",
+    "My order arrived damaged, what should I do?",
+    "Can I change my shipping address after placing an order?",
+    "Do you price match with competitors?",
+    "How do I cancel my subscription?",
+]
+
+
+def run_config(config: dict, query: str) -> tuple[str, float, float]:
+    agent = Agent(
+        name="Support Agent",
+        instructions=config["instructions"],
+        model=config["model"],
+    )
+    start = time.time()
+    result = Runner.run_sync(agent, query)
+    latency = time.time() - start
+    usage = result.raw_responses[-1].usage
+    prices = PRICING[config["model"]]
+    cost = usage.input_tokens * prices["input"] + usage.output_tokens * prices["output"]
+    return result.final_output, latency, cost
+
+
+def judge_quality(query: str, response: str) -> float:
+    result = Runner.run_sync(judge, f"Customer question: {query}\n\nAgent response: {response}")
+    score = float(result.final_output.strip())
+    return max(1.0, min(5.0, score))
+
+
+def run_ab_test():
+    results = {name: [] for name in configs}
+
+    for query in test_queries:
+        print(f"\nQuery: {query}")
+        for config_name, config in configs.items():
+            response, latency, cost = run_config(config, query)
+            quality = judge_quality(query, response)
+            results[config_name].append({
+                "query": query,
+                "quality": quality,
+                "latency": latency,
+                "cost": cost,
+            })
+            print(f"  Config {config_name} ({config['name']}): "
+                  f"Quality: {quality:.1f}/5 | Cost: ${cost:.6f} | Latency: {latency:.2f}s")
+
+    print(f"\n{'='*60}")
+    print(f"=== A/B Test Results ===")
+    print(f"{'='*60}")
+
+    summaries = {}
+    for config_name, config in configs.items():
+        r = results[config_name]
+        avg_quality = sum(x["quality"] for x in r) / len(r)
+        total_cost = sum(x["cost"] for x in r)
+        avg_latency = sum(x["latency"] for x in r) / len(r)
+        cost_effectiveness = avg_quality / total_cost if total_cost > 0 else 0
+        summaries[config_name] = {
+            "avg_quality": avg_quality,
+            "total_cost": total_cost,
+            "avg_latency": avg_latency,
+            "cost_effectiveness": cost_effectiveness,
+        }
+        print(f"\nConfig {config_name} ({config['name']}):")
+        print(f"  Avg quality: {avg_quality:.1f}/5")
+        print(f"  Total cost: ${total_cost:.6f}")
+        print(f"  Avg latency: {avg_latency:.2f}s")
+        print(f"  Cost-effectiveness: {cost_effectiveness:.1f} quality-points/$")
+
+    a, b = summaries["A"], summaries["B"]
+    quality_diff = abs(a["avg_quality"] - b["avg_quality"]) / max(a["avg_quality"], b["avg_quality"]) * 100
+    cost_diff = abs(a["total_cost"] - b["total_cost"]) / max(a["total_cost"], b["total_cost"]) * 100
+
+    if b["cost_effectiveness"] > a["cost_effectiveness"]:
+        winner = "B"
+        reason = f"{cost_diff:.0f}% cheaper with only {quality_diff:.0f}% quality reduction"
+    else:
+        winner = "A"
+        reason = f"higher quality justifies the {cost_diff:.0f}% cost increase"
+
+    print(f"\nRECOMMENDATION: Config {winner} ({configs[winner]['name']}) — {reason}")
+
+
+run_ab_test()
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai import LLM
+import time
+
+configs = {
+    "A": {
+        "name": "gpt-4o (detailed prompt)",
+        "model": "gpt-4o",
+        "backstory": "You are a helpful and thorough customer support agent. Provide detailed, professional answers covering all aspects of the question. Include relevant policies, next steps, and proactive suggestions.",
+    },
+    "B": {
+        "name": "gpt-4o-mini (concise prompt)",
+        "model": "gpt-4o-mini",
+        "backstory": "You are a customer support agent. Answer concisely and helpfully.",
+    },
+}
+
+judge_llm = LLM(model="gpt-4o-mini")
+
+judge_agent = Agent(
+    role="Quality Judge",
+    goal="Score customer support responses on quality from 1.0 to 5.0",
+    backstory="You evaluate responses for accuracy, helpfulness, professionalism, and completeness. Reply with ONLY a number.",
+    llm=judge_llm,
+)
+
+test_queries = [
+    "What is your return policy?",
+    "My order arrived damaged, what should I do?",
+    "Can I change my shipping address after placing an order?",
+    "Do you price match with competitors?",
+    "How do I cancel my subscription?",
+]
+
+
+def run_config(config: dict, query: str) -> tuple[str, float]:
+    agent = Agent(
+        role="Customer Support",
+        goal="Answer customer questions",
+        backstory=config["backstory"],
+        llm=LLM(model=config["model"]),
+    )
+    task = Task(description=query, expected_output="A helpful customer support response", agent=agent)
+    crew = Crew(agents=[agent], tasks=[task], process=Process.sequential)
+    start = time.time()
+    result = crew.kickoff()
+    latency = time.time() - start
+    return str(result), latency
+
+
+def judge_quality(query: str, response: str) -> float:
+    task = Task(
+        description=(
+            f"Score this customer support response on quality from 1.0 to 5.0. "
+            f"Consider accuracy, helpfulness, professionalism, and completeness. "
+            f"Reply with ONLY a number.\n\nCustomer question: {query}\n\nAgent response: {response}"
+        ),
+        expected_output="A number between 1.0 and 5.0",
+        agent=judge_agent,
+    )
+    crew = Crew(agents=[judge_agent], tasks=[task], process=Process.sequential)
+    result = crew.kickoff()
+    score = float(str(result).strip())
+    return max(1.0, min(5.0, score))
+
+
+def run_ab_test():
+    results = {name: [] for name in configs}
+
+    for query in test_queries:
+        print(f"\nQuery: {query}")
+        for config_name, config in configs.items():
+            response, latency = run_config(config, query)
+            quality = judge_quality(query, response)
+            results[config_name].append({
+                "query": query,
+                "quality": quality,
+                "latency": latency,
+            })
+            print(f"  Config {config_name} ({config['name']}): "
+                  f"Quality: {quality:.1f}/5 | Latency: {latency:.2f}s")
+
+    print(f"\n{'='*60}")
+    print(f"=== A/B Test Results ===")
+    print(f"{'='*60}")
+
+    summaries = {}
+    for config_name, config in configs.items():
+        r = results[config_name]
+        avg_quality = sum(x["quality"] for x in r) / len(r)
+        avg_latency = sum(x["latency"] for x in r) / len(r)
+        summaries[config_name] = {
+            "avg_quality": avg_quality,
+            "avg_latency": avg_latency,
+        }
+        print(f"\nConfig {config_name} ({config['name']}):")
+        print(f"  Avg quality: {avg_quality:.1f}/5")
+        print(f"  Avg latency: {avg_latency:.2f}s")
+
+    a, b = summaries["A"], summaries["B"]
+    quality_diff = abs(a["avg_quality"] - b["avg_quality"]) / max(a["avg_quality"], b["avg_quality"]) * 100
+
+    if b["avg_quality"] >= a["avg_quality"] * 0.9:
+        winner = "B"
+        reason = f"comparable quality with only {quality_diff:.0f}% quality difference and lower cost"
+    else:
+        winner = "A"
+        reason = f"higher quality justifies the cost increase"
+
+    print(f"\nRECOMMENDATION: Config {winner} ({configs[winner]['name']}) — {reason}")
+
+
+run_ab_test()
+```
+
+## Why This Works
+
+The A/B testing framework ensures a fair comparison by running both configurations on identical inputs. Quality is measured objectively via an LLM judge rather than subjective eyeballing, and cost is computed from real token usage rather than guesses. The cost-effectiveness metric (quality per dollar) provides a single number that balances both dimensions, making the recommendation defensible. The winner recommendation includes statistical justification — the percentage cost difference versus quality difference — so stakeholders can make an informed trade-off decision. Because configurations are defined as data dictionaries, swapping in a new model or prompt requires only editing the dictionary without touching the comparison logic.
+
+## Key Takeaways
+
+- Never deploy a model or prompt change without A/B testing it against the current configuration — intuition about "better" is unreliable.
+- Score on both quality and cost to compute cost-effectiveness; a model that is 5% worse but 90% cheaper may be the right choice for your use case.
+- Define configurations as data (model, prompt, parameters) so the framework is reusable across any pair of alternatives without code changes.

@@ -1,0 +1,56 @@
+# Crew Planning
+
+**Crew planning** is an optional phase that runs *before* your crew executes its tasks. CrewAI uses an internal **AgentPlanner** to produce step-by-step plans from the crew’s context. Those plans are **injected into each task’s description**, so every agent sees structured guidance instead of only the raw task text.
+
+## Enabling planning
+
+Pass **`planning=True`** on the `Crew` constructor. By default, planning uses **`gpt-4o-mini`**. To use a different model for the planning call, set **`planning_llm`** (for example **`"gpt-4o"`**).
+
+```python
+from crewai import Crew, Process
+
+crew = Crew(
+    agents=[researcher, analyst, writer],
+    tasks=[research_task, analysis_task, writing_task],
+    process=Process.sequential,
+    planning=True,
+    planning_llm="gpt-4o",
+)
+```
+
+## What happens under the hood
+
+Roughly:
+
+1. **Inputs** — agents, tasks, process, and other crew configuration are available to the planner.
+2. **AgentPlanner** — consumes that crew-wide picture and generates plans (ordered steps and rationale aligned with your tasks).
+3. **Injection** — those plans are merged into **task descriptions** so each step’s agent receives the planner’s breakdown as part of what they must follow.
+
+So planning is not a separate user-facing API you call manually; it is wired into **`kickoff`** (and related run paths) when `planning=True`.
+
+## With vs without planning
+
+| | `planning=False` (default) | `planning=True` |
+|---|---------------------------|-----------------|
+| **Behavior** | Agents start from your task descriptions and proceed. | A planner pass runs first; tasks are augmented with explicit step-by-step guidance. |
+| **Outcome** | Fast to start; behavior depends heavily on prompt quality. | More consistent structure across multi-step work; agents “think before acting” in the sense of following an injected plan. |
+
+## When to use it
+
+Turn planning on when:
+
+- Work is **multi-step and complex** (research → analysis → writing, pipelines with dependencies, etc.).
+- You care about **consistency** across agents and tasks.
+- You want **deliberate ordering and decomposition** reflected in what each agent sees, not only in your initial task strings.
+
+## Cost and latency
+
+Planning triggers an **extra LLM call** (or planner work, depending on version) before normal task execution. Expect a small **latency** bump and **additional tokens** for that planning step—usually modest compared to a long crew run, but non-zero.
+
+## Key takeaways
+
+- **`planning=True`** enables an **AgentPlanner** that runs before task execution.
+- Plans are **injected into task descriptions**, not kept only in logs.
+- **`planning_llm`** overrides the default planner model (default **`gpt-4o-mini`**).
+- Use planning for **complex, multi-step crews** where **structure and consistency** matter.
+- Budget for **slightly higher latency and token usage** from the planning call.

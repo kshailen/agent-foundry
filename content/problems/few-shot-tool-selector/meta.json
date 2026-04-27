@@ -1,0 +1,51 @@
+{
+  "number": 6,
+  "title": "Few-Shot Tool Selector",
+  "difficulty": "easy",
+  "categories": [
+    "prompt-design",
+    "tool-calling"
+  ],
+  "frameworks": [
+    "langchain",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "You may only modify the system prompt to add few-shot examples",
+    "Do not change the tool implementations",
+    "The agent must still use tools when appropriate"
+  ],
+  "hints": [
+    "Add 2-3 examples in the prompt showing when to call a tool vs. answer directly",
+    "Include one example where a tool is needed and one where general knowledge suffices",
+    "Make the examples match real user queries the agent will encounter"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain.agents import AgentExecutor, create_tool_calling_agent\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom langchain_core.tools import tool\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n@tool\ndef get_stock_price(ticker: str) -> str:\n    \"\"\"Get the current stock price for a given ticker symbol.\"\"\"\n    prices = {\"AAPL\": \"$178.50\", \"GOOGL\": \"$141.20\", \"MSFT\": \"$378.90\"}\n    return prices.get(ticker.upper(), f\"No data for {ticker}\")\n\n@tool\ndef get_weather(city: str) -> str:\n    \"\"\"Get the current weather for a given city.\"\"\"\n    weather = {\"new york\": \"72°F, Sunny\", \"london\": \"58°F, Cloudy\", \"tokyo\": \"68°F, Clear\"}\n    return weather.get(city.lower(), f\"No weather data for {city}\")\n\ntools = [get_stock_price, get_weather]\n\n# BUG: No few-shot examples — agent can't decide when to use tools vs. answer directly\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a helpful assistant with access to tools. Answer the user's question.\"),\n    (\"human\", \"{input}\"),\n    (\"placeholder\", \"{agent_scratchpad}\"),\n])\n\nagent = create_tool_calling_agent(llm, tools, prompt)\nexecutor = AgentExecutor(agent=agent, tools=tools)\n\n# Test 1: Should use tool\nresult1 = executor.invoke({\"input\": \"What is Apple's stock price right now?\"})\nprint(\"Tool query:\", result1[\"output\"])\n\n# Test 2: Should NOT use tool\nresult2 = executor.invoke({\"input\": \"What is the capital of Japan?\"})\nprint(\"Knowledge query:\", result2[\"output\"])",
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom agents.tool import function_tool\n\n@function_tool\ndef get_stock_price(ticker: str) -> str:\n    \"\"\"Get the current stock price for a given ticker symbol.\"\"\"\n    prices = {\"AAPL\": \"$178.50\", \"GOOGL\": \"$141.20\", \"MSFT\": \"$378.90\"}\n    return prices.get(ticker.upper(), f\"No data for {ticker}\")\n\n@function_tool\ndef get_weather(city: str) -> str:\n    \"\"\"Get the current weather for a given city.\"\"\"\n    weather = {\"new york\": \"72°F, Sunny\", \"london\": \"58°F, Cloudy\", \"tokyo\": \"68°F, Clear\"}\n    return weather.get(city.lower(), f\"No weather data for {city}\")\n\n# BUG: No few-shot examples — agent can't decide when to use tools vs. answer directly\nagent = Agent(\n    name=\"Assistant\",\n    instructions=\"You are a helpful assistant with access to tools. Answer the user's question.\",\n    tools=[get_stock_price, get_weather],\n)\n\n# Test 1: Should use tool\nresult1 = Runner.run_sync(agent, \"What is Apple's stock price right now?\")\nprint(\"Tool query:\", result1.final_output)\n\n# Test 2: Should NOT use tool\nresult2 = Runner.run_sync(agent, \"What is the capital of Japan?\")\nprint(\"Knowledge query:\", result2.final_output)",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai.tools import tool\n\n@tool\ndef get_stock_price(ticker: str) -> str:\n    \"\"\"Get the current stock price for a given ticker symbol.\"\"\"\n    prices = {\"AAPL\": \"$178.50\", \"GOOGL\": \"$141.20\", \"MSFT\": \"$378.90\"}\n    return prices.get(ticker.upper(), f\"No data for {ticker}\")\n\n@tool\ndef get_weather(city: str) -> str:\n    \"\"\"Get the current weather for a given city.\"\"\"\n    weather = {\"new york\": \"72°F, Sunny\", \"london\": \"58°F, Cloudy\", \"tokyo\": \"68°F, Clear\"}\n    return weather.get(city.lower(), f\"No weather data for {city}\")\n\n# BUG: No few-shot examples — agent can't decide when to use tools vs. answer directly\nassistant = Agent(\n    role=\"Assistant\",\n    goal=\"Answer the user's question\",\n    backstory=\"You are a helpful assistant with access to tools. Answer the user's question.\",\n    tools=[get_stock_price, get_weather],\n)\n\n# Test 1: Should use tool\ntask1 = Task(\n    description=\"What is Apple's stock price right now?\",\n    expected_output=\"The current stock price\",\n    agent=assistant,\n)\ncrew1 = Crew(agents=[assistant], tasks=[task1])\nprint(\"Tool query:\", crew1.kickoff())\n\n# Test 2: Should NOT use tool\ntask2 = Task(\n    description=\"What is the capital of Japan?\",\n    expected_output=\"The answer to the question\",\n    agent=assistant,\n)\ncrew2 = Crew(agents=[assistant], tasks=[task2])\nprint(\"Knowledge query:\", crew2.kickoff())"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/few-shot-tool-selector-langchain.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/few-shot-tool-selector-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/few-shot-tool-selector-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "uses-tool-when-needed",
+      "label": "Uses tool when needed",
+      "description": "The agent calls the appropriate tool for queries requiring real-time data"
+    },
+    {
+      "id": "answers-directly-when-possible",
+      "label": "Answers directly when tool not needed",
+      "description": "The agent answers from general knowledge without calling a tool for factual questions"
+    },
+    {
+      "id": "no-unnecessary-calls",
+      "label": "No unnecessary tool calls",
+      "description": "The agent does not make tool calls that are irrelevant to the user's question"
+    }
+  ]
+}

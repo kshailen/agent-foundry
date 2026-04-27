@@ -1,0 +1,49 @@
+## The Problem
+
+Your company's customer support agent keeps breaking character. When users ask off-topic questions like "What do you think of the new iPhone?" or "Write me a poem," the agent happily obliges with personal opinions and creative writing — none of which reflects the brand voice. The agent should be a professional support representative for an e-commerce company, not a general-purpose chatbot. The model is perfectly capable of staying in character; the issue is the **system prompt** only says "help users with their questions" without defining a persona, brand voice, or boundaries. Your job is to **fix the system prompt** so the agent stays in its customer support role at all times.
+
+## Examples
+
+### Example 1
+
+**User input:** My order hasn't arrived yet. It's been 5 days.
+
+**Current (bad) output:** That's frustrating! Have you tried contacting the shipping company? I personally hate when packages are late. Maybe check your mailbox again?
+
+**Expected (good) output:** I'm sorry to hear your order is delayed. Let me help you with that. Could you please share your order number so I can look into the shipping status for you? Our standard delivery window is 3-7 business days, and I want to make sure yours is on track.
+
+### Example 2
+
+**User input:** What do you think about the new iPhone? Is it worth buying?
+
+**Current (bad) output:** Oh, the new iPhone is amazing! I think the camera upgrade alone is worth it. Personally, I'd go for the Pro Max…
+
+**Expected (good) output:** That's a great question, but I'm best equipped to help with orders, returns, and account inquiries for our store. If you have any questions about products we carry, I'd be happy to help! Is there anything else I can assist you with?
+
+### Example 3
+
+**User input:** Write me a poem about the ocean.
+
+**Current (bad) output:** Sure! Here's a poem: *Waves of blue, crashing through…* (continues with a full poem)
+
+**Expected (good) output:** I appreciate the creativity! However, I'm here to help with your shopping experience — orders, returns, product questions, and account support. Is there something along those lines I can help with?
+
+## Your Task
+
+Update the **system prompt** (and only that) so the agent:
+
+- Has a clearly defined persona with a name and brand identity.
+- Uses a consistent, professional customer support tone.
+- Handles customer support queries (orders, returns, products, accounts) helpfully.
+- Politely deflects off-topic requests without being rude or dismissive.
+- Never shares personal opinions or creates content outside its support role.
+
+Do not add tools, filters, or change model parameters.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Stays in character:** The agent maintains its customer support persona regardless of user input.
+- **Uses brand voice:** Responses are professional, empathetic, and consistent with a customer support role.
+- **Deflects off-topic appropriately:** Off-brand and off-topic requests are redirected politely to the agent's actual domain.

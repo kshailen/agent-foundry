@@ -1,0 +1,57 @@
+{
+  "number": 79,
+  "title": "Critic-Generator Loop",
+  "difficulty": "medium",
+  "categories": [
+    "multi-agent",
+    "evaluation"
+  ],
+  "frameworks": [
+    "crewai",
+    "langgraph",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "The generator and critic must be separate agents",
+    "The loop must terminate when quality criteria are met or a max iteration count is reached",
+    "The critic must provide actionable feedback, not just a pass/fail",
+    "The generator must incorporate critic feedback in subsequent attempts"
+  ],
+  "hints": [
+    "Add a feedback loop where the critic's output is fed back to the generator as revision instructions",
+    "Include a quality check that decides whether to loop again or stop",
+    "In LangGraph, model this as a cyclic graph with a conditional edge based on critic approval"
+  ],
+  "starterCode": {
+    "crewai": "from crewai import Agent, Task, Crew, Process\nfrom crewai import LLM\n\nllm = LLM(model=\"gpt-4o-mini\")\n\ngenerator = Agent(\n    role=\"Content Generator\",\n    goal=\"Write a compelling product description\",\n    backstory=\"You are a creative copywriter.\",\n    llm=llm,\n)\n\ncritic = Agent(\n    role=\"Quality Critic\",\n    goal=\"Review content and provide improvement suggestions\",\n    backstory=\"You are a senior editor with high standards.\",\n    llm=llm,\n)\n\n# BUG: One-shot generation \u2014 the critic never reviews the output\n# TODO: Add a review loop so the critic checks and the generator revises\ngenerate_task = Task(\n    description=\"Write a product description for {product}\",\n    expected_output=\"A compelling 100-word product description\",\n    agent=generator,\n)\n\ncrew = Crew(\n    agents=[generator],\n    tasks=[generate_task],\n    process=Process.sequential,\n)\n\nresult = crew.kickoff(inputs={\"product\": \"wireless noise-cancelling headphones\"})\nprint(result)",
+    "langgraph": "from langchain_openai import ChatOpenAI\nfrom langgraph.graph import StateGraph, START, END\nfrom typing import TypedDict\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\nclass State(TypedDict):\n    product: str\n    draft: str\n    feedback: str\n    approved: bool\n\ndef generate(state: State) -> dict:\n    prompt = f\"Write a compelling 100-word product description for: {state['product']}\"\n    response = llm.invoke(prompt)\n    return {\"draft\": response.content}\n\n# BUG: No critic node and no review loop exist\n# TODO: Add a critic node that reviews the draft and a conditional loop\n\ngraph = StateGraph(State)\ngraph.add_node(\"generate\", generate)\ngraph.add_edge(START, \"generate\")\ngraph.add_edge(\"generate\", END)\n\napp = graph.compile()\nresult = app.invoke({\"product\": \"wireless noise-cancelling headphones\", \"draft\": \"\", \"feedback\": \"\", \"approved\": False})\nprint(result[\"draft\"])",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\ngenerator = Agent(\n    name=\"Content Generator\",\n    instructions=\"You are a creative copywriter. Write compelling product descriptions.\",\n)\n\ncritic = Agent(\n    name=\"Quality Critic\",\n    instructions=\"You are a senior editor with high standards. Review content and provide improvement suggestions.\",\n)\n\n# BUG: One-shot generation \u2014 the critic never reviews the output\n# TODO: Add a review loop so the critic checks and the generator revises\nresult = Runner.run_sync(\n    generator,\n    \"Write a compelling 100-word product description for wireless noise-cancelling headphones\",\n)\nprint(result.final_output)"
+  },
+  "colabUrls": {
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/critic-generator-loop-crewai.ipynb",
+    "langgraph": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/critic-generator-loop-langgraph.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/critic-generator-loop-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "loop-exists",
+      "label": "Review loop implemented",
+      "description": "The generator and critic run in a loop where feedback leads to revision"
+    },
+    {
+      "id": "critic-reviews",
+      "label": "Critic provides actionable feedback",
+      "description": "The critic agent reviews the draft and returns specific improvement suggestions"
+    },
+    {
+      "id": "generator-revises",
+      "label": "Generator incorporates feedback",
+      "description": "The generator uses the critic's feedback to produce an improved draft"
+    },
+    {
+      "id": "loop-terminates",
+      "label": "Loop terminates correctly",
+      "description": "The loop stops when quality is met or a maximum iteration count is reached"
+    }
+  ]
+}

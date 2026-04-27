@@ -1,0 +1,187 @@
+# Project: Customer Support Bot
+
+In this project, you'll build a multi-agent customer support system that combines several OpenAI Agents SDK features: a triage agent that routes requests, specialist agents for billing and technical support, input guardrails for content safety, sessions for conversation memory, and structured output for ticket summaries.
+
+## Architecture Overview
+
+```
+User Message
+    ↓
+[Input Guardrail] → Block inappropriate content
+    ↓
+Triage Agent (with session memory)
+    ├── handoff → Billing Agent
+    └── handoff → Technical Agent
+                      ↓
+              [Structured Output: TicketSummary]
+```
+
+## Step 1: Define the Structured Output
+
+Create a Pydantic model for the ticket summary that agents produce:
+
+```python
+from pydantic import BaseModel
+
+class TicketSummary(BaseModel):
+    customer_issue: str
+    category: str
+    resolution: str
+    follow_up_needed: bool
+```
+
+## Step 2: Create the Input Guardrail
+
+Block inappropriate or abusive messages before they reach the agents:
+
+```python
+from agents import input_guardrail, GuardrailFunctionOutput
+
+@input_guardrail
+async def content_safety(ctx, agent, input):
+    """Block abusive or inappropriate messages."""
+    blocked_terms = ["threat", "abuse", "harass"]
+    is_blocked = any(term in input.lower() for term in blocked_terms)
+    return GuardrailFunctionOutput(
+        output_info={"blocked": is_blocked},
+        tripwire_triggered=is_blocked,
+    )
+```
+
+## Step 3: Build the Specialist Agents
+
+Create focused agents for billing and technical support:
+
+```python
+from agents import Agent, function_tool
+
+@function_tool
+def lookup_invoice(invoice_id: str) -> str:
+    """Look up an invoice by ID."""
+    invoices = {
+        "INV-001": "Amount: $99.00, Status: Paid, Date: 2025-01-15",
+        "INV-002": "Amount: $149.00, Status: Overdue, Date: 2025-02-01",
+    }
+    return invoices.get(invoice_id, "Invoice not found.")
+
+billing_agent = Agent(
+    name="Billing Specialist",
+    instructions=(
+        "You handle billing and payment questions. Use the lookup_invoice tool "
+        "when customers ask about specific invoices. When done, summarize the "
+        "issue as a TicketSummary with category='billing'."
+    ),
+    tools=[lookup_invoice],
+    output_type=TicketSummary,
+)
+
+@function_tool
+def check_system_status(service: str) -> str:
+    """Check the status of a system or service."""
+    statuses = {
+        "api": "Operational",
+        "dashboard": "Degraded Performance",
+        "database": "Operational",
+    }
+    return statuses.get(service.lower(), "Unknown service")
+
+technical_agent = Agent(
+    name="Technical Specialist",
+    instructions=(
+        "You handle technical issues and troubleshooting. Use the check_system_status "
+        "tool to verify service health. When done, summarize the issue as a TicketSummary "
+        "with category='technical'."
+    ),
+    tools=[check_system_status],
+    output_type=TicketSummary,
+)
+```
+
+## Step 4: Build the Triage Agent
+
+The triage agent routes requests to the appropriate specialist:
+
+```python
+triage_agent = Agent(
+    name="Support Triage",
+    instructions=(
+        "You are the front-line support agent. Greet the customer and understand their issue. "
+        "Hand off billing questions (invoices, payments, charges) to the Billing Specialist. "
+        "Hand off technical issues (bugs, errors, system status) to the Technical Specialist. "
+        "For general questions, answer them directly."
+    ),
+    handoffs=[billing_agent, technical_agent],
+    input_guardrails=[content_safety],
+)
+```
+
+## Step 5: Add Session Memory
+
+Use `SQLiteSession` so the bot remembers previous interactions:
+
+```python
+from agents import Runner, SQLiteSession
+
+session = SQLiteSession("support.db", session_id="customer_456")
+
+result = Runner.run_sync(
+    triage_agent,
+    "Hi, I have a question about invoice INV-002.",
+    session=session,
+)
+print(result.final_output)
+```
+
+## Step 6: Run a Full Conversation
+
+Simulate a multi-turn support interaction:
+
+```python
+from agents.exceptions import InputGuardrailTripwireTriggered
+
+session = SQLiteSession("support.db", session_id="customer_789")
+
+messages = [
+    "Hi, I'm having trouble with the dashboard. It's really slow.",
+    "Can you check the system status for the dashboard?",
+    "Also, can you look up invoice INV-001 for me?",
+]
+
+for msg in messages:
+    try:
+        result = Runner.run_sync(triage_agent, msg, session=session)
+        print(f"User: {msg}")
+        print(f"Agent ({result.last_agent.name}): {result.final_output}")
+        print("---")
+    except InputGuardrailTripwireTriggered:
+        print(f"User: {msg}")
+        print("Agent: I'm sorry, I can't process that message.")
+        print("---")
+```
+
+## Step 7: Extract Structured Results
+
+When a specialist produces a `TicketSummary`, you can work with it programmatically:
+
+```python
+result = Runner.run_sync(
+    triage_agent,
+    "The API is returning 500 errors.",
+    session=SQLiteSession("support.db", session_id="customer_999"),
+)
+
+if isinstance(result.final_output, TicketSummary):
+    ticket = result.final_output
+    print(f"Issue: {ticket.customer_issue}")
+    print(f"Category: {ticket.category}")
+    print(f"Resolution: {ticket.resolution}")
+    print(f"Follow-up needed: {ticket.follow_up_needed}")
+```
+
+## Key Takeaways
+
+- Combine triage + specialist agents with handoffs for organized support routing
+- Input guardrails block inappropriate content before it reaches any agent
+- `SQLiteSession` gives the bot memory across multiple exchanges with the same customer
+- Structured output (`TicketSummary`) lets you process agent results programmatically
+- Specialist agents use function tools to access external systems (invoices, status checks)

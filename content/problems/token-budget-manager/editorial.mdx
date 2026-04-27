@@ -1,0 +1,275 @@
+## Approach
+
+The starter code makes 11 LLM calls per run (10 research calls plus a synthesis) with zero awareness of cost. In production, this means a single request can burn through budget with no guardrail, and runaway agent loops have no kill switch. The fix adds a token budget manager that tracks cumulative cost across all LLM calls using actual token counts from API responses, enforces a $0.05 per-run limit, and stops gracefully when the budget is exhausted by summarizing whatever research has been gathered so far.
+
+The budget tracker works by intercepting the usage metadata from each LLM response (prompt tokens and completion tokens), multiplying by the model's per-token pricing to get cost, and accumulating this across calls. Before each new call, it checks whether the remaining budget can cover a reasonable response. When the budget is nearly exhausted, the agent skips remaining research calls, synthesizes what it has, and returns a partial result with a clear indication of how much budget was used and how many aspects were covered.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage
+
+BUDGET_LIMIT = 0.05
+PRICING = {"input": 0.15 / 1_000_000, "output": 0.60 / 1_000_000}
+
+
+class BudgetTracker:
+    def __init__(self, limit: float):
+        self.limit = limit
+        self.total_cost = 0.0
+        self.call_count = 0
+        self.call_log = []
+
+    def track(self, response) -> float:
+        usage = response.usage_metadata
+        cost = (usage.input_tokens * PRICING["input"]
+                + usage.output_tokens * PRICING["output"])
+        self.total_cost += cost
+        self.call_count += 1
+        self.call_log.append({
+            "call": self.call_count,
+            "input_tokens": usage.input_tokens,
+            "output_tokens": usage.output_tokens,
+            "cost": cost,
+            "cumulative_cost": self.total_cost,
+        })
+        print(f"  Call {self.call_count}: ${cost:.6f} "
+              f"(cumulative: ${self.total_cost:.6f} / ${self.limit:.2f})")
+        return cost
+
+    @property
+    def remaining(self) -> float:
+        return self.limit - self.total_cost
+
+    @property
+    def exhausted(self) -> bool:
+        return self.remaining < 0.001
+
+
+def research_and_summarize(topic: str) -> str:
+    llm = ChatOpenAI(model="gpt-4o-mini")
+    budget = BudgetTracker(BUDGET_LIMIT)
+    sources = []
+
+    for i in range(10):
+        if budget.exhausted:
+            print(f"  Budget limit reached after {i} aspects.")
+            break
+
+        response = llm.invoke([
+            SystemMessage(content=f"Research aspect {i+1} of this topic. Provide detailed findings."),
+            HumanMessage(content=topic),
+        ])
+        budget.track(response)
+        sources.append(response.content)
+
+    if not sources:
+        return "[Budget exhausted before any research could be done]"
+
+    if not budget.exhausted:
+        summary_response = llm.invoke([
+            SystemMessage(content="Combine these research findings into a comprehensive summary."),
+            HumanMessage(content="\n\n".join(sources)),
+        ])
+        budget.track(summary_response)
+        summary = summary_response.content
+    else:
+        summary = "Partial summary based on available research:\n\n" + "\n\n".join(sources)
+
+    return (f"[Budget: ${budget.total_cost:.4f} / ${budget.limit:.2f} used — "
+            f"{len(sources)} of 10 aspects completed]\n{summary}")
+
+
+result = research_and_summarize("The future of renewable energy")
+print(f"\n{result}")
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from agents.tool import function_tool
+
+BUDGET_LIMIT = 0.05
+PRICING = {
+    "gpt-4o-mini": {"input": 0.15 / 1_000_000, "output": 0.60 / 1_000_000},
+}
+
+
+class BudgetTracker:
+    def __init__(self, limit: float):
+        self.limit = limit
+        self.total_cost = 0.0
+        self.call_count = 0
+
+    def track_run(self, result) -> float:
+        cost = 0.0
+        for resp in result.raw_responses:
+            usage = resp.usage
+            c = (usage.input_tokens * PRICING["gpt-4o-mini"]["input"]
+                 + usage.output_tokens * PRICING["gpt-4o-mini"]["output"])
+            cost += c
+        self.total_cost += cost
+        self.call_count += 1
+        print(f"  Call {self.call_count}: ${cost:.6f} "
+              f"(cumulative: ${self.total_cost:.6f} / ${self.limit:.2f})")
+        return cost
+
+    @property
+    def remaining(self) -> float:
+        return self.limit - self.total_cost
+
+    @property
+    def exhausted(self) -> bool:
+        return self.remaining < 0.001
+
+
+budget = BudgetTracker(BUDGET_LIMIT)
+
+researcher = Agent(
+    name="Aspect Researcher",
+    instructions="Research the given aspect of a topic. Provide detailed findings in 2-3 paragraphs.",
+    model="gpt-4o-mini",
+)
+
+synthesizer = Agent(
+    name="Synthesizer",
+    instructions="Combine these research findings into a comprehensive summary. Identify key themes and conclusions.",
+    model="gpt-4o-mini",
+)
+
+
+def research_and_summarize(topic: str) -> str:
+    sources = []
+
+    for i in range(10):
+        if budget.exhausted:
+            print(f"  Budget limit reached after {i} aspects.")
+            break
+
+        result = Runner.run_sync(researcher, f"Research aspect {i+1} of: {topic}")
+        budget.track_run(result)
+        sources.append(result.final_output)
+
+    if not sources:
+        return "[Budget exhausted before any research could be done]"
+
+    if not budget.exhausted:
+        combined = "\n\n".join(sources)
+        result = Runner.run_sync(synthesizer, f"Synthesize these findings:\n\n{combined}")
+        budget.track_run(result)
+        summary = result.final_output
+    else:
+        summary = "Partial summary based on available research:\n\n" + "\n\n".join(sources)
+
+    return (f"[Budget: ${budget.total_cost:.4f} / ${budget.limit:.2f} used — "
+            f"{len(sources)} of 10 aspects completed]\n{summary}")
+
+
+result = research_and_summarize("The future of renewable energy")
+print(f"\n{result}")
+```
+
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from crewai import LLM
+
+BUDGET_LIMIT = 0.05
+PRICING = {"input": 0.15 / 1_000_000, "output": 0.60 / 1_000_000}
+
+
+class BudgetTracker:
+    def __init__(self, limit: float):
+        self.limit = limit
+        self.total_cost = 0.0
+        self.call_count = 0
+
+    def track(self, token_usage: dict) -> float:
+        cost = (token_usage.get("prompt_tokens", 0) * PRICING["input"]
+                + token_usage.get("completion_tokens", 0) * PRICING["output"])
+        self.total_cost += cost
+        self.call_count += 1
+        print(f"  Call {self.call_count}: ${cost:.6f} "
+              f"(cumulative: ${self.total_cost:.6f} / ${self.limit:.2f})")
+        return cost
+
+    @property
+    def remaining(self) -> float:
+        return self.limit - self.total_cost
+
+    @property
+    def exhausted(self) -> bool:
+        return self.remaining < 0.001
+
+
+def research_and_summarize(topic: str) -> str:
+    llm = LLM(model="gpt-4o-mini")
+    budget = BudgetTracker(BUDGET_LIMIT)
+    sources = []
+
+    for i in range(10):
+        if budget.exhausted:
+            print(f"  Budget limit reached after {i} aspects.")
+            break
+
+        researcher = Agent(
+            role="Researcher",
+            goal=f"Research aspect {i+1} of the topic",
+            backstory=f"Research aspect {i+1} of this topic. Provide detailed findings.",
+            llm=llm,
+        )
+        task = Task(
+            description=topic,
+            expected_output="Detailed research findings",
+            agent=researcher,
+        )
+        crew = Crew(agents=[researcher], tasks=[task])
+        result = crew.kickoff()
+        budget.track(result.token_usage)
+        sources.append(str(result))
+
+    if not sources:
+        return "[Budget exhausted before any research could be done]"
+
+    if not budget.exhausted:
+        summarizer = Agent(
+            role="Summarizer",
+            goal="Combine research into a comprehensive summary",
+            backstory="Combine these research findings into a comprehensive summary.",
+            llm=llm,
+        )
+        summary_task = Task(
+            description="\n\n".join(sources),
+            expected_output="A comprehensive summary",
+            agent=summarizer,
+        )
+        crew = Crew(agents=[summarizer], tasks=[summary_task])
+        summary_result = crew.kickoff()
+        budget.track(summary_result.token_usage)
+        summary = str(summary_result)
+    else:
+        summary = "Partial summary based on available research:\n\n" + "\n\n".join(sources)
+
+    return (f"[Budget: ${budget.total_cost:.4f} / ${budget.limit:.2f} used - "
+            f"{len(sources)} of 10 aspects completed]\n{summary}")
+
+
+result = research_and_summarize("The future of renewable energy")
+print(f"\n{result}")
+```
+
+## Why This Works
+
+The budget tracker acts as a financial circuit breaker. After every LLM call, it reads the actual token counts from the API response metadata (not estimates) and computes the real cost using the model's pricing. Before each subsequent call, it checks whether the remaining budget can sustain another response. When the budget is nearly exhausted, the agent stops making new research calls and either synthesizes what it has (if budget allows one more call) or returns the raw research as a partial result. This guarantees the agent never exceeds its budget, while still returning the maximum amount of useful work it could accomplish within the constraint.
+
+## Key Takeaways
+
+- Every production agent needs a cost guardrail — uncapped LLM call loops are the most common source of runaway bills.
+- Use actual token counts from API response metadata, not estimates, to track cost accurately.
+- When budget runs out, return a partial result rather than crashing — the work already done still has value and should be surfaced to the user.

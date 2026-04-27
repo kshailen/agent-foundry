@@ -1,0 +1,263 @@
+## Approach
+
+The starter code classifies each request as high-risk or low-risk but then auto-approves every action regardless of the classification. The core problem is the absence of a control-flow gate between classification and execution — there is no point at which the workflow pauses to let a human review a dangerous action before it proceeds.
+
+The fix introduces an approval checkpoint that sits between the risk classifier and the action executor. When the classifier labels a request as high-risk (refunds over $100, account deletion, data export), the workflow pauses, presents the proposed action and its risk assessment to a human reviewer, and waits for an explicit approve or reject decision. Low-risk actions bypass this gate entirely and execute immediately. Critically, after the human provides input, the workflow resumes from the approval point — it does not restart from scratch.
+
+In LangGraph, this is achieved using the interrupt pattern with a checkpointer. The graph pauses at the approval node via `interrupt()`, persists its state, and resumes with the human's decision via `Command(resume=...)`. In the OpenAI Agents SDK, we implement the gate by structuring the approval flow as a two-phase process: the agent proposes an action, the code checks the risk level and prompts for input if needed, then the agent executes or declines based on the decision.
+
+## Solution
+
+### LangGraph
+
+```python
+from langgraph.graph import StateGraph, START, END
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.types import interrupt, Command
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage
+from typing import TypedDict, Optional
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+
+class State(TypedDict):
+    request: str
+    risk_level: str
+    proposed_action: str
+    approved: Optional[bool]
+    result: str
+
+
+def classify_risk(state: State) -> dict:
+    response = llm.invoke([
+        SystemMessage(content="Classify this request as high-risk or low-risk. High-risk: refunds over $100, account deletion, data export. Low-risk: everything else. Reply with just 'high' or 'low'."),
+        HumanMessage(content=state["request"]),
+    ])
+    return {"risk_level": response.content.strip().lower()}
+
+
+def propose_action(state: State) -> dict:
+    response = llm.invoke([
+        SystemMessage(content=f"Describe the action you would take for this {state['risk_level']}-risk customer request. Do NOT execute it yet — just describe what you propose to do."),
+        HumanMessage(content=state["request"]),
+    ])
+    return {"proposed_action": response.content}
+
+
+def human_approval(state: State) -> dict:
+    if state["risk_level"] == "low":
+        return {"approved": True}
+    decision = interrupt({
+        "proposed_action": state["proposed_action"],
+        "risk_level": state["risk_level"].upper(),
+        "message": f"Proposed action: {state['proposed_action']}\nRisk: {state['risk_level'].upper()}. Approve or reject?",
+    })
+    return {"approved": decision == "approve"}
+
+
+def execute_action(state: State) -> dict:
+    if not state["approved"]:
+        return {"result": f"[REJECTED] The request '{state['request']}' was rejected by a human reviewer and requires further review."}
+    response = llm.invoke([
+        SystemMessage(content=f"Execute this {state['risk_level']}-risk customer request. Describe the action taken."),
+        HumanMessage(content=state["request"]),
+    ])
+    label = "AUTO-APPROVED" if state["risk_level"] == "low" else "HUMAN-APPROVED"
+    return {"result": f"[{state['risk_level'].upper()} RISK - {label}] {response.content}"}
+
+
+graph = StateGraph(State)
+graph.add_node("classify_risk", classify_risk)
+graph.add_node("propose_action", propose_action)
+graph.add_node("human_approval", human_approval)
+graph.add_node("execute_action", execute_action)
+graph.add_edge(START, "classify_risk")
+graph.add_edge("classify_risk", "propose_action")
+graph.add_edge("propose_action", "human_approval")
+graph.add_edge("human_approval", "execute_action")
+graph.add_edge("execute_action", END)
+
+checkpointer = MemorySaver()
+app = graph.compile(checkpointer=checkpointer)
+
+requests = [
+    "Please refund $250 for order #5678",
+    "What is the status of my order #1234?",
+    "Delete my account and all associated data",
+]
+
+for i, req in enumerate(requests):
+    config = {"configurable": {"thread_id": f"thread-{i}"}}
+    print(f"\nRequest: {req}")
+
+    result = None
+    for event in app.stream({"request": req, "result": ""}, config=config):
+        if "human_approval" in event and "approved" not in event["human_approval"]:
+            pass
+        if "execute_action" in event:
+            result = event["execute_action"]["result"]
+
+    if result is None:
+        snapshot = app.get_state(config)
+        pending = snapshot.tasks[0].interrupts[0].value
+        print(f"  ⏸ PAUSED FOR REVIEW: {pending['message']}")
+        human_decision = "approve"
+        print(f"  Human decision: {human_decision}")
+        for event in app.stream(Command(resume=human_decision), config=config):
+            if "execute_action" in event:
+                result = event["execute_action"]["result"]
+
+    print(f"  Result: {result}")
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+
+classifier_agent = Agent(
+    name="Risk Classifier",
+    instructions="Classify this customer request as high-risk or low-risk. High-risk: refunds over $100, account deletion, data export. Low-risk: everything else. Reply with ONLY 'high' or 'low'.",
+    model="gpt-4o-mini",
+)
+
+action_proposer = Agent(
+    name="Action Proposer",
+    instructions="Describe the action you would take for this customer request. Do NOT execute it — just describe the proposed action concisely.",
+    model="gpt-4o-mini",
+)
+
+executor_agent = Agent(
+    name="Request Executor",
+    instructions="Execute this customer request. Describe the action taken.",
+    model="gpt-4o-mini",
+)
+
+
+def process_request(request: str) -> str:
+    risk_result = Runner.run_sync(classifier_agent, request)
+    risk_level = risk_result.final_output.strip().lower()
+
+    proposal_result = Runner.run_sync(action_proposer, request)
+    proposed_action = proposal_result.final_output
+
+    if risk_level == "high":
+        print(f"  ⏸ PAUSED FOR REVIEW:")
+        print(f"    Proposed action: {proposed_action}")
+        print(f"    Risk: {risk_level.upper()}. Approve or reject?")
+        human_decision = input("    Decision (approve/reject): ").strip().lower()
+
+        if human_decision != "approve":
+            return f"[HIGH RISK - REJECTED] The request was rejected by a human reviewer and requires further review."
+
+        execution_result = Runner.run_sync(executor_agent, request)
+        return f"[HIGH RISK - HUMAN-APPROVED] {execution_result.final_output}"
+    else:
+        execution_result = Runner.run_sync(executor_agent, request)
+        return f"[LOW RISK - AUTO-APPROVED] {execution_result.final_output}"
+
+
+requests = [
+    "Please refund $250 for order #5678",
+    "What is the status of my order #1234?",
+    "Delete my account and all associated data",
+]
+for req in requests:
+    print(f"\nRequest: {req}")
+    result = process_request(req)
+    print(f"  Result: {result}")
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from openai import OpenAI
+
+client = OpenAI()
+
+classifier = Agent(
+    role="Risk Classifier",
+    goal="Classify customer requests as high-risk or low-risk. High-risk: refunds over $100, account deletion, data export. Low-risk: everything else. Reply with ONLY 'high' or 'low'.",
+    backstory="You classify customer request risk levels.",
+)
+
+proposer = Agent(
+    role="Action Proposer",
+    goal="Describe the action you would take for this customer request. Do NOT execute it — just describe the proposed action concisely.",
+    backstory="You propose actions for customer requests.",
+)
+
+executor = Agent(
+    role="Request Executor",
+    goal="Execute the customer request. Describe the action taken.",
+    backstory="You execute approved customer requests.",
+)
+
+
+def process_request(request: str) -> str:
+    classify_task = Task(
+        description=f"Classify this request: {request}",
+        expected_output="Just 'high' or 'low'",
+        agent=classifier,
+    )
+    crew = Crew(agents=[classifier], tasks=[classify_task])
+    risk_level = str(crew.kickoff()).strip().lower()
+
+    propose_task = Task(
+        description=f"Describe the proposed action for: {request}",
+        expected_output="A concise description of the proposed action",
+        agent=proposer,
+    )
+    crew = Crew(agents=[proposer], tasks=[propose_task])
+    proposed_action = str(crew.kickoff())
+
+    if risk_level == "high":
+        print(f"  PAUSED FOR REVIEW:")
+        print(f"    Proposed action: {proposed_action}")
+        print(f"    Risk: {risk_level.upper()}. Approve or reject?")
+        human_decision = input("    Decision (approve/reject): ").strip().lower()
+
+        if human_decision != "approve":
+            return f"[HIGH RISK - REJECTED] The request was rejected by a human reviewer."
+
+        exec_task = Task(
+            description=f"Execute this request: {request}",
+            expected_output="Description of action taken",
+            agent=executor,
+        )
+        crew = Crew(agents=[executor], tasks=[exec_task])
+        return f"[HIGH RISK - HUMAN-APPROVED] {crew.kickoff()}"
+    else:
+        exec_task = Task(
+            description=f"Execute this request: {request}",
+            expected_output="Description of action taken",
+            agent=executor,
+        )
+        crew = Crew(agents=[executor], tasks=[exec_task])
+        return f"[LOW RISK - AUTO-APPROVED] {crew.kickoff()}"
+
+
+requests = [
+    "Please refund $250 for order #5678",
+    "What is the status of my order #1234?",
+    "Delete my account and all associated data",
+]
+for req in requests:
+    print(f"\nRequest: {req}")
+    result = process_request(req)
+    print(f"  Result: {result}")
+```
+
+## Why This Works
+
+The key architectural change is inserting a conditional gate between action proposal and execution. By classifying risk first and storing the proposed action in the workflow state, the human reviewer sees exactly what they are approving before any side effects occur. The LangGraph version uses `interrupt()` to pause the graph mid-execution and persist state via a checkpointer, so resuming after human input continues from the approval point without re-running prior steps. The OpenAI Agents SDK version achieves the same flow procedurally — the code checks the risk classification and gates execution behind an `input()` call for high-risk actions.
+
+Both approaches satisfy all four requirements: high-risk actions pause for review, low-risk actions proceed automatically, the workflow resumes (not restarts) after approval, and the reviewer sees the proposed action and risk assessment before deciding.
+
+## Key Takeaways
+
+- Separate action proposal from action execution — the agent should describe what it intends to do before doing it, creating a natural approval checkpoint.
+- Use framework-native interrupt mechanisms (LangGraph's `interrupt()` with a checkpointer) to pause and resume workflows without losing state, rather than building custom polling or callback loops.
+- Gate high-risk actions on explicit human approval while letting low-risk actions flow through automatically — this balances safety with usability.

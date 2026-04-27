@@ -1,0 +1,57 @@
+{
+  "number": 44,
+  "title": "Conversation Fork Handling",
+  "difficulty": "hard",
+  "categories": [
+    "memory",
+    "orchestration"
+  ],
+  "frameworks": [
+    "langgraph",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "The agent must support saving named checkpoints during conversation",
+    "Restoring a checkpoint must revert the conversation state to that point",
+    "New messages after restoration must continue from the restored state, not the latest",
+    "The agent must list available checkpoints when asked"
+  ],
+  "hints": [
+    "Store snapshots of the conversation history at labeled checkpoints (e.g., 'option_a', 'option_b')",
+    "When the user asks to 'go back to option A,' restore the history snapshot for that checkpoint and continue from there",
+    "Use a dictionary mapping checkpoint names to copies of the message history at that point in time"
+  ],
+  "starterCode": {
+    "langgraph": "from langchain_openai import ChatOpenAI\nfrom langgraph.graph import StateGraph, START, END\nfrom typing import TypedDict, Annotated\nfrom langchain_core.messages import HumanMessage, AIMessage, SystemMessage\nimport operator\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\nclass State(TypedDict):\n    messages: Annotated[list, operator.add]\n\n# BUG: Linear conversation only \u2014 no branching or checkpoint support\ndef chatbot(state: State) -> State:\n    response = llm.invoke(state[\"messages\"])\n    return {\"messages\": [response]}\n\ngraph = StateGraph(State)\ngraph.add_node(\"chatbot\", chatbot)\ngraph.add_edge(START, \"chatbot\")\ngraph.add_edge(\"chatbot\", END)\napp = graph.compile()\n\nmessages = [SystemMessage(content=\"You are a helpful trip planning assistant.\")]\n\ndef chat(user_input: str) -> str:\n    global messages\n    messages.append(HumanMessage(content=user_input))\n    result = app.invoke({\"messages\": messages})\n    messages = result[\"messages\"]\n    return messages[-1].content\n\n# Plan two options\nprint(chat(\"Plan me a 7-day trip. Option A: Japan. Option B: Italy.\"))\nprint(chat(\"Let's explore Option A \u2014 Japan. Give me a day-by-day itinerary.\"))\nprint(chat(\"Add a visit to Mount Fuji on day 3.\"))\n\n# User wants to go back and explore Option B instead\n# BUG: No way to restore state \u2014 the Japan itinerary is baked into history\nprint(chat(\"Actually, go back to where we had both options and let's explore Option B \u2014 Italy.\"))",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai import LLM\n\nllm = LLM(model=\"gpt-4o-mini\")\n\nagent = Agent(\n    role=\"Trip Planning Assistant\",\n    goal=\"Help users plan trips\",\n    backstory=\"You are a helpful trip planning assistant.\",\n    llm=llm,\n)\n\n# BUG: Linear conversation only \u2014 no branching or checkpoint support\nhistory = []\n\ndef chat(user_input: str) -> str:\n    history.append(f\"User: {user_input}\")\n    context = \"\\n\".join(history)\n    task = Task(\n        description=f\"Continue this conversation:\\n{context}\\n\\nRespond to the latest message.\",\n        expected_output=\"A helpful response\",\n        agent=agent,\n    )\n    crew = Crew(agents=[agent], tasks=[task])\n    result = str(crew.kickoff())\n    history.append(f\"Assistant: {result}\")\n    return result\n\n# Plan two options\nprint(chat(\"Plan me a 7-day trip. Option A: Japan. Option B: Italy.\"))\nprint(chat(\"Let's explore Option A \u2014 Japan. Give me a day-by-day itinerary.\"))\nprint(chat(\"Add a visit to Mount Fuji on day 3.\"))\n\n# User wants to go back and explore Option B instead\n# BUG: No way to restore state \u2014 the Japan itinerary is baked into history\nprint(chat(\"Actually, go back to where we had both options and let's explore Option B \u2014 Italy.\"))",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\nagent = Agent(\n    name=\"Trip Planning Assistant\",\n    instructions=\"You are a helpful trip planning assistant.\",\n)\n\n# BUG: Linear conversation only \u2014 no branching or checkpoint support\nhistory = []\n\ndef chat(user_input: str) -> str:\n    history.append({\"role\": \"user\", \"content\": user_input})\n    result = Runner.run_sync(agent, history)\n    response_text = result.final_output\n    history.append({\"role\": \"assistant\", \"content\": response_text})\n    return response_text\n\n# Plan two options\nprint(chat(\"Plan me a 7-day trip. Option A: Japan. Option B: Italy.\"))\nprint(chat(\"Let's explore Option A \u2014 Japan. Give me a day-by-day itinerary.\"))\nprint(chat(\"Add a visit to Mount Fuji on day 3.\"))\n\n# User wants to go back and explore Option B instead\n# BUG: No way to restore state \u2014 the Japan itinerary is baked into history\nprint(chat(\"Actually, go back to where we had both options and let's explore Option B \u2014 Italy.\"))"
+  },
+  "colabUrls": {
+    "langgraph": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/conversation-fork-handling-langgraph.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/conversation-fork-handling-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/conversation-fork-handling-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "checkpoint-save",
+      "label": "Checkpoints can be saved",
+      "description": "The agent can save named snapshots of the conversation state"
+    },
+    {
+      "id": "checkpoint-restore",
+      "label": "Checkpoints can be restored",
+      "description": "Restoring a checkpoint reverts the conversation to that exact state"
+    },
+    {
+      "id": "continues-from-restored",
+      "label": "Continues from restored state",
+      "description": "After restoration, new messages build on the restored state, not the pre-restore state"
+    },
+    {
+      "id": "list-checkpoints",
+      "label": "Can list available checkpoints",
+      "description": "The agent can tell the user which saved checkpoints are available"
+    }
+  ]
+}

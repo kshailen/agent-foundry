@@ -1,0 +1,46 @@
+## The Problem
+
+Your company has a single customer-support AI agent that handles **both** billing questions and technical issues. Because the agent has a broad, unfocused prompt, it frequently gives shallow billing answers and mixes financial advice with debugging steps. The fix is to split the workload: create a **billing agent** and a **tech-support agent**, then add a **router** that inspects the user's message and hands it to the right specialist.
+
+## Examples
+
+### Example 1
+
+**User input:** I was charged twice for my subscription last month.
+
+**Current (bad) output:** A generic response that mixes refund instructions with unrelated troubleshooting tips because the single agent conflates billing and tech support duties.
+
+**Expected (good) output:** The router classifies this as a billing query and delegates to the billing agent, which responds with clear refund/dispute steps without mentioning technical troubleshooting.
+
+### Example 2
+
+**User input:** My app keeps crashing when I try to export PDFs.
+
+**Current (bad) output:** A response that includes both debugging advice and irrelevant billing disclaimers.
+
+**Expected (good) output:** The router classifies this as a tech support query and delegates to the tech-support agent, which focuses on diagnosing the crash and suggesting fixes.
+
+### Example 3
+
+**User input:** Can I upgrade my plan and also reset my password?
+
+**Current (bad) output:** A muddled answer that partially addresses both topics in a single paragraph.
+
+**Expected (good) output:** The router identifies the primary intent (or handles both via sequential delegation), giving a focused plan-upgrade answer from billing and a password-reset walkthrough from tech support.
+
+## Your Task
+
+Refactor the starter code so that:
+
+- There are **two specialized agents**: one for billing, one for tech support.
+- A **router** (triage agent or classification function) inspects each incoming message and delegates it to the correct specialist.
+- Each specialist has a focused system prompt limited to its domain.
+- The overall system correctly handles queries from both domains.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Correct intent routing:** Billing queries reach the billing agent; tech queries reach the tech-support agent.
+- **Two specialized agents exist:** There are exactly two specialist agents with focused, non-overlapping instructions.
+- **Domain isolation maintained:** Each agent only responds within its own domain and does not leak into the other.

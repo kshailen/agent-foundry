@@ -1,0 +1,45 @@
+## The Problem
+
+Your morning briefing agent calls four tools: weather, news, stock prices, and calendar. If any one of them fails, the entire request crashes — the user gets nothing, even though three out of four tools worked perfectly. There is **no isolation between tool calls**, so a single failure in the stock service takes down the weather, news, and calendar results too. Your job is to handle partial failures gracefully: return what succeeded and clearly note what failed.
+
+## Examples
+
+### Example 1
+
+**User input:** Give me my morning briefing for today
+
+**Current (bad) output:** `ConnectionError: Stock service unavailable` — the entire briefing crashes. Weather, news, and calendar results are lost.
+
+**Expected (good) output:**
+```
+Morning Briefing:
+- Weather: 72°F, sunny
+- News: AI advances continue
+- Stocks: ⚠️ Unavailable (stock service is currently down)
+- Calendar: Team standup at 9am
+```
+
+### Example 2
+
+**User input:** What's happening today?
+
+**Current (bad) output:** Unhandled exception — no output at all.
+
+**Expected (good) output:** The agent returns the 3 successful results and includes a note that the stock data could not be fetched.
+
+## Your Task
+
+Add **partial failure handling** so the agent:
+
+- Isolates each tool call so one failure doesn't crash the others.
+- Returns results from all tools that succeeded.
+- Clearly notes which tool(s) failed in the final output.
+- Never crashes entirely due to a single tool failure.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Successful results are returned:** Data from working tools is included in the response.
+- **Failed tool is noted:** The output states which tool failed and that its data is unavailable.
+- **No total crash on partial failure:** A single tool failure does not abort the entire request.

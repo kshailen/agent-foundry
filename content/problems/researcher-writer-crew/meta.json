@@ -1,0 +1,56 @@
+{
+  "number": 78,
+  "title": "Researcher-Writer Crew",
+  "difficulty": "medium",
+  "categories": [
+    "multi-agent"
+  ],
+  "frameworks": [
+    "crewai",
+    "langchain",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "The writer must use the researcher's actual output, not generate from scratch",
+    "Both agents must remain separate with distinct roles",
+    "You may not hard-code research findings into the writer's prompt",
+    "The final report must reference specific data points from the research"
+  ],
+  "hints": [
+    "In CrewAI, set the write_task's context parameter to include the research_task so it receives the output",
+    "In LangChain, pass the research chain's output into the writer's prompt template as a variable",
+    "Check that the writer's prompt template has a placeholder for the research content"
+  ],
+  "starterCode": {
+    "crewai": "from crewai import Agent, Task, Crew, Process\nfrom crewai import LLM\n\nllm = LLM(model=\"gpt-4o-mini\")\n\nresearcher = Agent(\n    role=\"Market Researcher\",\n    goal=\"Find current market data and statistics about a given industry\",\n    backstory=\"You are a senior market analyst with 10 years of experience.\",\n    llm=llm,\n)\n\nwriter = Agent(\n    role=\"Report Writer\",\n    goal=\"Draft a professional market report from research data\",\n    backstory=\"You are a business writer who turns raw data into executive summaries.\",\n    llm=llm,\n)\n\nresearch_task = Task(\n    description=\"Research current market trends and key statistics for the {industry} industry\",\n    expected_output=\"A detailed list of market trends, statistics, and key players\",\n    agent=researcher,\n)\n\n# BUG: The write_task has no context linking it to research_task\n# TODO: Fix context passing so the writer uses the researcher's findings\nwrite_task = Task(\n    description=\"Write a professional market report for the {industry} industry\",\n    expected_output=\"A 300-word executive summary with data-backed insights\",\n    agent=writer,\n)\n\ncrew = Crew(\n    agents=[researcher, writer],\n    tasks=[research_task, write_task],\n    process=Process.sequential,\n)\n\nresult = crew.kickoff(inputs={\"industry\": \"electric vehicles\"})\nprint(result)",
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain_core.prompts import ChatPromptTemplate\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\nresearch_prompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a senior market analyst. Find current market data and statistics.\"),\n    (\"human\", \"Research current market trends and key statistics for the {industry} industry\"),\n])\n\n# BUG: The writer prompt doesn't include a placeholder for research findings\n# TODO: Add a variable for research output and pass it through\nwrite_prompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a business writer who turns raw data into executive summaries.\"),\n    (\"human\", \"Write a professional 300-word market report for the {industry} industry\"),\n])\n\nresearch_chain = research_prompt | llm\nwrite_chain = write_prompt | llm\n\n# Research runs fine\nresearch_result = research_chain.invoke({\"industry\": \"electric vehicles\"})\nprint(\"Research:\", research_result.content)\n\n# Writer ignores research — it generates from scratch\nwrite_result = write_chain.invoke({\"industry\": \"electric vehicles\"})\nprint(\"Report:\", write_result.content)",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\nresearcher = Agent(\n    name=\"Market Researcher\",\n    instructions=\"You are a senior market analyst with 10 years of experience. Find current market data and statistics.\",\n)\n\n# BUG: The writer has no access to the researcher's output\n# TODO: Pass research findings to the writer\nwriter = Agent(\n    name=\"Report Writer\",\n    instructions=\"You are a business writer who turns raw data into executive summaries.\",\n)\n\n# Research runs fine\nresearch_result = Runner.run_sync(researcher, \"Research current market trends and key statistics for the electric vehicles industry\")\nprint(\"Research:\", research_result.final_output)\n\n# Writer ignores research \u2014 it generates from scratch\nwrite_result = Runner.run_sync(writer, \"Write a professional 300-word market report for the electric vehicles industry\")\nprint(\"Report:\", write_result.final_output)"
+  },
+  "colabUrls": {
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/researcher-writer-crew-crewai.ipynb",
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/researcher-writer-crew-langchain.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/researcher-writer-crew-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "context-passed",
+      "label": "Research context reaches the writer",
+      "description": "The writer agent receives the researcher's output as input context"
+    },
+    {
+      "id": "report-grounded",
+      "label": "Report grounded in research",
+      "description": "The final report references specific data points and findings from the research step"
+    },
+    {
+      "id": "roles-separate",
+      "label": "Roles remain separate",
+      "description": "The researcher and writer are distinct agents with different responsibilities"
+    },
+    {
+      "id": "no-hallucinated-data",
+      "label": "No hallucinated statistics",
+      "description": "The writer does not invent data that was not present in the research output"
+    }
+  ]
+}

@@ -1,0 +1,86 @@
+# Structured Outputs with Pydantic
+
+Large language models return **text**. In production you usually need **structured data**: JSON you can store, pass to APIs, or load into typed objects. Parsing free-form prose with regular expressions or ad hoc prompts is fragile and easy to break when the model phrasing shifts.
+
+CrewAI lets you attach a **Pydantic schema** to a task so the crew validates and materializes the model’s answer into a `BaseModel` instance or a plain dictionary—so downstream code reads stable fields instead of hunting through strings.
+
+## `output_pydantic` on a `Task`
+
+Define a model that matches the shape you want. Pass it as `output_pydantic` on the `Task`:
+
+```python
+from pydantic import BaseModel
+
+class BlogPost(BaseModel):
+    title: str
+    content: str
+    tags: list[str]
+
+task = Task(
+    description="Write a blog post about AI agents",
+    expected_output="A blog post with title, content, and tags",
+    agent=writer,
+    output_pydantic=BlogPost,
+)
+```
+
+After `result = crew.kickoff()`, read validated fields on the crew result:
+
+- `result.pydantic.title`
+- `result.pydantic.tags`
+
+You get a real Pydantic instance (IDE autocomplete, `.model_dump()`, nested models, validators).
+
+## `output_json` alternative
+
+If you pass the same model to `output_json` instead of `output_pydantic`, CrewAI still uses the schema to shape the output but gives you a **plain `dict`** rather than a model instance:
+
+```python
+task = Task(
+    description="Write a blog post about AI agents",
+    expected_output="A blog post with title, content, and tags",
+    agent=writer,
+    output_json=BlogPost,
+)
+```
+
+Access fields with normal dict lookups, for example `result.json_dict["title"]`.
+
+## Nested and richer models
+
+Real outputs are often hierarchical. Pydantic composes naturally:
+
+```python
+from pydantic import BaseModel, Field
+
+class Citation(BaseModel):
+    source: str
+    url: str
+
+class Section(BaseModel):
+    heading: str
+    body: str
+
+class ResearchBrief(BaseModel):
+    topic: str
+    summary: str
+    sections: list[Section]
+    citations: list[Citation] = Field(default_factory=list)
+```
+
+Use `ResearchBrief` as `output_pydantic` (or `output_json`) on a research-style task; nested lists and models are validated end to end.
+
+## When to use `output_pydantic` vs `output_json`
+
+- **`output_pydantic`**: Prefer this when you want **type safety**, Pydantic validators, and methods like `model_dump()` / `model_dump_json()`. Best when the rest of your Python code already works with models.
+- **`output_json`**: Prefer this when you only need a **flexible bag of data** (dict) for logging, JSON APIs, or dynamic keys, and you do not need a live `BaseModel` instance.
+
+In both cases the schema still guides the LLM and reduces unstructured drift compared to a single unstructured string.
+
+## Key takeaways
+
+- Raw LLM text is hard to rely on; **schemas** turn answers into data you can depend on.
+- **`output_pydantic`** yields a validated model; use **`result.pydantic.<field>`**.
+- **`output_json`** uses the same schema but returns a **dict**; use **`result.json_dict["field"]`**.
+- **Nested Pydantic models** scale to sections, citations, and other structured reports.
+- Choose **Pydantic** for typed Python workflows and **JSON** when a dictionary is enough.

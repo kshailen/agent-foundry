@@ -1,0 +1,160 @@
+## Approach
+
+The `fetch_report` tool calls an upstream API that recently added a required `output_format` parameter (accepting `"json"`, `"text"`, or `"csv"`). The tool's function signature doesn't include this parameter, so every call fails with `API Error: Missing required parameter 'output_format'`. The agent either crashes or tells the user it can't fetch reports.
+
+The fix is straightforward: add `output_format` as a parameter with a sensible default value (e.g., `"text"`) so that (1) existing callers that don't specify a format still work, and (2) users who want a specific format can request it. The tool's docstring must also be updated to document the new parameter and its accepted values, so the LLM knows when and how to use it. This is a common pattern in tool schema evolution — adding parameters with defaults to maintain backward compatibility.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+
+@tool
+def fetch_report(company: str, year: int, output_format: str = "text") -> str:
+    """Fetch an annual report for a company.
+
+    Args:
+        company: The company name.
+        year: The report year.
+        output_format: Output format - one of 'json', 'text', or 'csv'. Defaults to 'text'.
+    """
+    valid_formats = {"json", "text", "csv"}
+    if output_format not in valid_formats:
+        return f"Invalid format '{output_format}'. Must be one of: {', '.join(valid_formats)}"
+
+    if output_format == "json":
+        return f'{{"company": "{company}", "year": {year}, "revenue": "$394B", "net_income": "$97B", "employees": 164000}}'
+    elif output_format == "csv":
+        return f"company,year,revenue,net_income,employees\n{company},{year},$394B,$97B,164000"
+    else:
+        return f"Annual Report for {company} ({year}):\nRevenue: $394B\nNet Income: $97B\nEmployees: 164,000\nKey highlights: Strong growth in services segment, continued investment in R&D."
+
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", (
+        "You are a financial research assistant. Fetch company reports when asked. "
+        "The fetch_report tool supports output formats: 'text' (default), 'json', and 'csv'. "
+        "Use the format the user requests, or default to 'text' if not specified."
+    )),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}"),
+])
+
+agent = create_tool_calling_agent(llm, [fetch_report], prompt)
+executor = AgentExecutor(agent=agent, tools=[fetch_report])
+
+result = executor.invoke({"input": "Get me Apple's 2024 annual report"})
+print(result["output"])
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from agents.tool import function_tool
+
+
+@function_tool
+def fetch_report(company: str, year: int, output_format: str = "text") -> str:
+    """Fetch an annual report for a company.
+
+    Args:
+        company: The company name.
+        year: The report year.
+        output_format: Output format - one of 'json', 'text', or 'csv'. Defaults to 'text'.
+    """
+    valid_formats = {"json", "text", "csv"}
+    if output_format not in valid_formats:
+        return f"Invalid format '{output_format}'. Must be one of: {', '.join(valid_formats)}"
+
+    if output_format == "json":
+        return f'{{"company": "{company}", "year": {year}, "revenue": "$394B", "net_income": "$97B", "employees": 164000}}'
+    elif output_format == "csv":
+        return f"company,year,revenue,net_income,employees\n{company},{year},$394B,$97B,164000"
+    else:
+        return f"Annual Report for {company} ({year}):\nRevenue: $394B\nNet Income: $97B\nEmployees: 164,000\nKey highlights: Strong growth in services segment, continued investment in R&D."
+
+
+agent = Agent(
+    name="Financial Research Assistant",
+    instructions=(
+        "You are a financial research assistant. Fetch company reports when asked. "
+        "The fetch_report tool supports output formats: 'text' (default), 'json', and 'csv'. "
+        "Use the format the user requests, or default to 'text' if not specified."
+    ),
+    tools=[fetch_report],
+)
+
+result = Runner.run_sync(agent, "Get me Apple's 2024 annual report")
+print(result.final_output)
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai.tools import tool
+
+
+@tool
+def fetch_report(company: str, year: int, output_format: str = "text") -> str:
+    """Fetch an annual report for a company.
+
+    Args:
+        company: The company name.
+        year: The report year.
+        output_format: Output format - one of 'json', 'text', or 'csv'. Defaults to 'text'.
+    """
+    valid_formats = {"json", "text", "csv"}
+    if output_format not in valid_formats:
+        return f"Invalid format '{output_format}'. Must be one of: {', '.join(valid_formats)}"
+
+    if output_format == "json":
+        return f'{{"company": "{company}", "year": {year}, "revenue": "$394B", "net_income": "$97B", "employees": 164000}}'
+    elif output_format == "csv":
+        return f"company,year,revenue,net_income,employees\n{company},{year},$394B,$97B,164000"
+    else:
+        return f"Annual Report for {company} ({year}):\nRevenue: $394B\nNet Income: $97B\nEmployees: 164,000\nKey highlights: Strong growth in services segment, continued investment in R&D."
+
+
+research_agent = Agent(
+    role="Financial Research Assistant",
+    goal="Fetch and present company annual reports in the requested format.",
+    backstory=(
+        "You are a financial research assistant. Fetch company reports when asked. "
+        "The fetch_report tool supports output formats: 'text' (default), 'json', and 'csv'. "
+        "Use the format the user requests, or default to 'text' if not specified."
+    ),
+    tools=[fetch_report],
+)
+
+task = Task(
+    description="Get me Apple's 2024 annual report",
+    expected_output="The annual report content for Apple for the year 2024.",
+    agent=research_agent,
+)
+
+crew = Crew(agents=[research_agent], tasks=[task], process=Process.sequential)
+result = crew.kickoff()
+print(result)
+```
+
+## Why This Works
+
+Adding `output_format` with a default value of `"text"` solves both the forward and backward compatibility requirements. The upstream API now receives the required parameter on every call (eliminating the error), while existing callers that don't specify a format automatically get `"text"` — the most natural default for conversational agents. When a user explicitly asks for JSON or CSV format, the LLM passes the appropriate value because the docstring documents the accepted options.
+
+This is the standard pattern for non-breaking API evolution: new parameters with defaults. The tool's schema evolves to match the upstream API without requiring changes to any existing prompts, workflows, or agent configurations that call the tool.
+
+## Key Takeaways
+
+- When upstream APIs add required parameters, add them to your tool with sensible defaults to maintain backward compatibility.
+- Document new parameters in the tool's docstring so the LLM knows about the new capability and its accepted values.
+- Validate parameter values inside the tool and return a clear error message for invalid inputs rather than passing bad values to the API.

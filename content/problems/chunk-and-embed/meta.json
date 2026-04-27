@@ -1,0 +1,56 @@
+{
+  "number": 47,
+  "title": "Chunk and Embed",
+  "difficulty": "easy",
+  "categories": [
+    "rag"
+  ],
+  "frameworks": [
+    "langchain",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "The document must be split into chunks before embedding",
+    "Chunk size must not exceed 500 characters",
+    "Embeddings must be stored in a vector store for retrieval",
+    "The final answer must come from retrieved chunks, not the full document"
+  ],
+  "hints": [
+    "Use a text splitter to break the document into overlapping chunks of manageable size",
+    "Create embeddings for each chunk and store them in a vector store like FAISS or Chroma",
+    "Retrieve only the most relevant chunks for the question instead of stuffing everything into the prompt"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain_core.prompts import ChatPromptTemplate\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# A 50-page document (simulated as a long string)\nlong_document = \"CHAPTER 1: INTRODUCTION\\n\" + \"\\n\".join(\n    [f\"Section 1.{i}: This section covers topic {i} in great detail. \" * 20 for i in range(1, 51)]\n)\n\n# BUG: Stuffing the entire document into the prompt \u2014 exceeds context window\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"Answer the user's question based on the following document:\\n\\n{document}\"),\n    (\"human\", \"{question}\"),\n])\n\nchain = prompt | llm\n\n# This will fail or produce poor results with very long documents\nresult = chain.invoke({\"document\": long_document, \"question\": \"What does section 1.25 cover?\"})\nprint(result.content)",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai import LLM\n\nllm = LLM(model=\"gpt-4o-mini\")\n\n# A 50-page document (simulated as a long string)\nlong_document = \"CHAPTER 1: INTRODUCTION\\n\" + \"\\n\".join(\n    [f\"Section 1.{i}: This section covers topic {i} in great detail. \" * 20 for i in range(1, 51)]\n)\n\n# BUG: Stuffing the entire document into the agent's backstory \u2014 exceeds context window\nagent = Agent(\n    role=\"Document Q&A Specialist\",\n    goal=\"Answer questions about the document\",\n    backstory=f\"You are a document analyst. Answer based on this document:\\n\\n{long_document}\",\n    llm=llm,\n)\n\ntask = Task(\n    description=\"What does section 1.25 cover?\",\n    expected_output=\"Answer about section 1.25\",\n    agent=agent,\n)\n\ncrew = Crew(agents=[agent], tasks=[task])\nresult = crew.kickoff()\nprint(result)",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\n# A 50-page document (simulated as a long string)\nlong_document = \"CHAPTER 1: INTRODUCTION\\n\" + \"\\n\".join(\n    [f\"Section 1.{i}: This section covers topic {i} in great detail. \" * 20 for i in range(1, 51)]\n)\n\n# BUG: Stuffing the entire document into the prompt \u2014 exceeds context window\nagent = Agent(\n    name=\"Document Q&A\",\n    instructions=f\"Answer the user's question based on this document:\\n\\n{long_document}\",\n)\n\nresult = Runner.run_sync(agent, \"What does section 1.25 cover?\")\nprint(result.final_output)"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/chunk-and-embed-langchain.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/chunk-and-embed-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/chunk-and-embed-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "chunks-document",
+      "label": "Splits document into chunks",
+      "description": "The document is split into chunks of manageable size before processing"
+    },
+    {
+      "id": "creates-embeddings",
+      "label": "Creates and stores embeddings",
+      "description": "Chunks are embedded and stored in a vector store for similarity search"
+    },
+    {
+      "id": "retrieves-relevant",
+      "label": "Retrieves relevant chunks",
+      "description": "Only the most relevant chunks are retrieved and passed to the LLM"
+    },
+    {
+      "id": "correct-answer",
+      "label": "Answers correctly from chunks",
+      "description": "The agent produces correct answers grounded in the retrieved chunks"
+    }
+  ]
+}

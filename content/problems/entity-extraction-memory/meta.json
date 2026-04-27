@@ -1,0 +1,51 @@
+{
+  "number": 38,
+  "title": "Entity Extraction Memory",
+  "difficulty": "medium",
+  "categories": [
+    "memory"
+  ],
+  "frameworks": [
+    "langchain",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "Entities must be extracted automatically from conversation, not manually tagged",
+    "The entity store must support at least people, places, and dates",
+    "Extracted entities must be available to the agent in subsequent turns",
+    "The extraction must not block or significantly slow the main response"
+  ],
+  "hints": [
+    "Use the LLM to extract entities by asking it to return structured JSON with entity types and values",
+    "Run entity extraction as a post-processing step after each assistant response",
+    "Store entities in a dictionary keyed by type (e.g., {'people': ['Alice', 'Bob'], 'places': ['Tokyo']}) and inject it into context"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain_core.messages import HumanMessage, AIMessage, SystemMessage\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# BUG: No entity extraction — the agent doesn't track named entities\nhistory = [SystemMessage(content=\"You are a helpful assistant.\")]\n\ndef chat(user_input: str) -> str:\n    history.append(HumanMessage(content=user_input))\n    response = llm.invoke(history)\n    history.append(response)\n    return response.content\n\n# Turn 1: Mentions people and places\nprint(chat(\"I met with Sarah and David in Tokyo last March to discuss the Q1 report.\"))\n\n# Turn 2: References an entity from turn 1\nprint(chat(\"What city was my meeting in?\"))\n\n# Turn 3: More entities\nprint(chat(\"Next week I'm flying to Berlin to meet Professor Mueller on January 15th.\"))\n\n# Turn 4: Query about people\nprint(chat(\"List all the people I've mentioned so far.\"))",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\n# BUG: No entity extraction — the agent doesn't track named entities\nagent = Agent(\n    name=\"Assistant\",\n    instructions=\"You are a helpful assistant.\",\n)\n\nhistory = []\n\ndef chat(user_input: str) -> str:\n    history.append({\"role\": \"user\", \"content\": user_input})\n    result = Runner.run_sync(agent, history)\n    response_text = result.final_output\n    history.append({\"role\": \"assistant\", \"content\": response_text})\n    return response_text\n\n# Turn 1: Mentions people and places\nprint(chat(\"I met with Sarah and David in Tokyo last March to discuss the Q1 report.\"))\n\n# Turn 2: References an entity from turn 1\nprint(chat(\"What city was my meeting in?\"))\n\n# Turn 3: More entities\nprint(chat(\"Next week I'm flying to Berlin to meet Professor Mueller on January 15th.\"))\n\n# Turn 4: Query about people\nprint(chat(\"List all the people I've mentioned so far.\"))",
+    "crewai": "from crewai import Agent, Task, Crew\n\n# BUG: No entity extraction — the agent doesn't track named entities\nassistant = Agent(\n    role=\"Assistant\",\n    goal=\"Help users with their questions\",\n    backstory=\"You are a helpful assistant.\",\n)\n\nhistory = []\n\ndef chat(user_input: str) -> str:\n    history.append(f\"User: {user_input}\")\n    task = Task(\n        description=\"Conversation so far:\\n\" + \"\\n\".join(history) + f\"\\n\\nRespond to the latest message: {user_input}\",\n        expected_output=\"A helpful response\",\n        agent=assistant,\n    )\n    crew = Crew(agents=[assistant], tasks=[task])\n    result = str(crew.kickoff())\n    history.append(f\"Assistant: {result}\")\n    return result\n\n# Turn 1: Mentions people and places\nprint(chat(\"I met with Sarah and David in Tokyo last March to discuss the Q1 report.\"))\n\n# Turn 2: References an entity from turn 1\nprint(chat(\"What city was my meeting in?\"))\n\n# Turn 3: More entities\nprint(chat(\"Next week I\\'m flying to Berlin to meet Professor Mueller on January 15th.\"))\n\n# Turn 4: Query about people\nprint(chat(\"List all the people I\\'ve mentioned so far.\"))"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/entity-extraction-memory-langchain.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/entity-extraction-memory-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/entity-extraction-memory-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "extracts-entities",
+      "label": "Extracts named entities",
+      "description": "The agent automatically identifies and stores people, places, and dates from conversation"
+    },
+    {
+      "id": "entities-queryable",
+      "label": "Entities are queryable",
+      "description": "The agent can list or reference previously extracted entities when asked"
+    },
+    {
+      "id": "entity-types",
+      "label": "Supports multiple entity types",
+      "description": "The extraction handles at least people, places, and dates correctly"
+    }
+  ]
+}

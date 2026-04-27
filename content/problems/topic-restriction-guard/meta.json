@@ -1,0 +1,51 @@
+{
+  "number": 66,
+  "title": "Topic Restriction Guard",
+  "difficulty": "medium",
+  "categories": [
+    "guardrails"
+  ],
+  "frameworks": [
+    "openai-agents-sdk",
+    "langchain",
+    "crewai"
+  ],
+  "constraints": [
+    "The agent must only respond to questions within its designated domain (finance)",
+    "Off-topic queries must be politely declined with a redirect suggestion",
+    "Topic detection must happen before the LLM generates a full response",
+    "The system prompt alone is not a sufficient guardrail"
+  ],
+  "hints": [
+    "Classify the user's query into a topic category before passing it to the agent",
+    "Use keyword matching or a lightweight LLM classification call to detect off-topic requests",
+    "Return a polite redirect message for off-topic queries instead of answering them"
+  ],
+  "starterCode": {
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom agents.tool import function_tool\n\n@function_tool\ndef get_stock_price(ticker: str) -> str:\n    \"\"\"Get the current stock price for a ticker symbol.\"\"\"\n    prices = {\"AAPL\": \"$185.23\", \"GOOGL\": \"$142.56\", \"MSFT\": \"$378.91\"}\n    return prices.get(ticker, f\"No data for {ticker}\")\n\n# BUG: No topic enforcement — the financial advisor answers any question\nagent = Agent(\n    name=\"Financial Advisor\",\n    instructions=\"You are a financial advisor. Help users with investment and finance questions.\",\n    tools=[get_stock_price],\n)\n\n# Test: The agent happily answers a medical question\nresult = Runner.run_sync(agent, \"What are the symptoms of diabetes?\")\nprint(result.final_output)",
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain.agents import AgentExecutor, create_tool_calling_agent\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom langchain_core.tools import tool\n\n@tool\ndef get_stock_price(ticker: str) -> str:\n    \"\"\"Get the current stock price for a ticker symbol.\"\"\"\n    prices = {\"AAPL\": \"$185.23\", \"GOOGL\": \"$142.56\", \"MSFT\": \"$378.91\"}\n    return prices.get(ticker, f\"No data for {ticker}\")\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a financial advisor. Help users with investment and finance questions.\"),\n    (\"human\", \"{input}\"),\n    (\"placeholder\", \"{agent_scratchpad}\"),\n])\n\n# BUG: No topic enforcement — the financial advisor answers any question\nagent = create_tool_calling_agent(llm, [get_stock_price], prompt)\nexecutor = AgentExecutor(agent=agent, tools=[get_stock_price])\n\n# Test: The agent happily answers a medical question\nresult = executor.invoke({\"input\": \"What are the symptoms of diabetes?\"})\nprint(result[\"output\"])",
+    "crewai": "from crewai import Agent, Task, Crew, Process\nfrom crewai.tools import tool\n\n@tool\ndef get_stock_price(ticker: str) -> str:\n    \"\"\"Get the current stock price for a ticker symbol.\"\"\"\n    prices = {\"AAPL\": \"$185.23\", \"GOOGL\": \"$142.56\", \"MSFT\": \"$378.91\"}\n    return prices.get(ticker, f\"No data for {ticker}\")\n\n# BUG: No topic enforcement — the financial advisor answers any question\nfinancial_agent = Agent(\n    role=\"Financial Advisor\",\n    goal=\"Help users with investment and finance questions.\",\n    backstory=\"You are a financial advisor that helps users with financial decisions.\",\n    tools=[get_stock_price],\n)\n\n# Test: The agent happily answers a medical question\ntask = Task(\n    description=\"What are the symptoms of diabetes?\",\n    expected_output=\"A response to the user's question.\",\n    agent=financial_agent,\n)\n\ncrew = Crew(agents=[financial_agent], tasks=[task], process=Process.sequential)\nresult = crew.kickoff()\nprint(result)"
+  },
+  "colabUrls": {
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/topic-restriction-guard-openai.ipynb",
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/topic-restriction-guard-langchain.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/topic-restriction-guard-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "off-topic-rejected",
+      "label": "Off-topic queries are rejected",
+      "description": "Questions outside the finance domain are politely declined"
+    },
+    {
+      "id": "on-topic-works",
+      "label": "On-topic queries are answered",
+      "description": "Finance-related questions are still answered normally"
+    },
+    {
+      "id": "polite-redirect",
+      "label": "Polite redirect provided",
+      "description": "Off-topic rejections include a suggestion to seek appropriate help elsewhere"
+    }
+  ]
+}

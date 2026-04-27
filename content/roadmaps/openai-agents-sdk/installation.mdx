@@ -1,0 +1,66 @@
+# Installation & Hello Agent
+
+Get the OpenAI Agents SDK installed and create your first agent.
+
+## Prerequisites
+
+- Python 3.9 or later
+- An OpenAI API key
+
+## Install the SDK
+
+```bash
+pip install openai-agents
+```
+
+## Set Up Your API Key
+
+```bash
+export OPENAI_API_KEY="sk-your-key-here"
+```
+
+## Your First Agent
+
+```python
+from agents import Agent, Runner
+
+agent = Agent(
+    name="Assistant",
+    instructions="You are a helpful assistant that answers questions concisely.",
+)
+
+result = Runner.run_sync(agent, "What are AI agents?")
+print(result.final_output)
+```
+
+That's it — three lines to define an agent and run it.
+
+## How It Works
+
+1. **Agent** defines _who_ the agent is — its name, instructions, and capabilities
+2. **Runner.run_sync()** executes the agent loop — sending the user message, processing model responses, handling tool calls, and returning the final result
+3. The result contains the `final_output` string plus the full conversation history
+
+## Async Support
+
+For production applications, use the async runner:
+
+```python
+import asyncio
+from agents import Agent, Runner
+
+agent = Agent(
+    name="Assistant",
+    instructions="You are a helpful assistant.",
+)
+
+async def main():
+    result = await Runner.run(agent, "Explain AI agents in one sentence.")
+    print(result.final_output)
+
+asyncio.run(main())
+```
+
+## Next Steps
+
+Now let's learn how the agent loop works under the hood and how to add tools.

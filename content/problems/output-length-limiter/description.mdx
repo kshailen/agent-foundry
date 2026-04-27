@@ -1,0 +1,47 @@
+## The Problem
+
+Your assistant agent was built to give "thorough, detailed answers" — and it took that instruction to heart. Ask it a simple question and it returns a 2,000-word essay, burning through tokens and overwhelming users who just wanted a quick answer. The LLM is capable of being concise; the problem is that **nothing constrains its output length**. Your job is to add a length limit so the agent's responses stay within a reasonable word or character count while still being helpful.
+
+## Examples
+
+### Example 1
+
+**User input:** Explain how neural networks work
+
+**Current (bad) output:** A 2,000-word essay covering every aspect of neural networks from perceptrons to transformers, with detailed mathematical notation and historical context.
+
+**Expected (good) output:** A concise 150–200 word summary that covers the key concepts (layers, weights, activation functions, backpropagation) without going overboard.
+
+### Example 2
+
+**User input:** What is Python?
+
+**Current (bad) output:** A 1,500-word treatise on Python's history, design philosophy, syntax, standard library, ecosystem, and comparison with other languages.
+
+**Expected (good) output:** A brief 100–150 word answer explaining that Python is a high-level programming language known for readability and versatility.
+
+### Example 3
+
+**User input:** How do I reverse a list in Python?
+
+**Current (bad) output:** An 800-word explanation covering five different methods, with background on list data structures and Big-O analysis.
+
+**Expected (good) output:** A quick answer with one or two methods (`list.reverse()`, `list[::-1]`) in under 100 words.
+
+## Your Task
+
+Add **output length constraints** so the agent:
+
+- Keeps responses within a reasonable limit (e.g. 200 words or 800 characters).
+- Truncates gracefully at sentence boundaries if a hard limit is needed.
+- Still provides a useful, complete answer within the shorter format.
+- Reduces token usage compared to the unconstrained version.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Output is within length limit:** The response stays within the configured word or character cap.
+- **No mid-sentence cutoff:** Truncation, if needed, ends cleanly at a sentence boundary.
+- **Response is still useful:** The shorter answer still meaningfully addresses the user's question.
+- **Token usage reduced:** The output uses significantly fewer tokens than the unconstrained version.

@@ -1,0 +1,132 @@
+# Messages System
+
+LangChain uses a structured message system to represent conversations between humans, AI models, and tools. Understanding message types is essential for building chat applications and agents.
+
+## Message Types
+
+LangChain provides four core message types:
+
+| Message Type | Role | Purpose |
+|-------------|------|---------|
+| `SystemMessage` | `"system"` | Sets the AI's behavior and persona |
+| `HumanMessage` | `"human"` | Represents user input |
+| `AIMessage` | `"ai"` | Represents the model's response |
+| `ToolMessage` | `"tool"` | Returns results from tool execution |
+
+## Creating Messages
+
+Import and instantiate messages from `langchain_core.messages`:
+
+```python
+from langchain_core.messages import (
+    SystemMessage,
+    HumanMessage,
+    AIMessage,
+    ToolMessage,
+)
+
+system = SystemMessage(content="You are a helpful assistant.")
+human = HumanMessage(content="What is the weather today?")
+ai = AIMessage(content="I'll check the weather for you.")
+tool = ToolMessage(content="72°F and sunny", tool_call_id="call_abc123")
+```
+
+A typical conversation is a list of messages passed to `model.invoke()`:
+
+```python
+from langchain.chat_models import init_chat_model
+
+model = init_chat_model("gpt-4o-mini", model_provider="openai")
+
+messages = [
+    SystemMessage(content="You are a concise assistant."),
+    HumanMessage(content="What is LangChain?"),
+]
+
+response = model.invoke(messages)
+print(response.content)
+```
+
+## Dict Format Alternative
+
+Instead of message objects, you can use plain dictionaries with `role` and `content` keys:
+
+```python
+messages = [
+    {"role": "system", "content": "You are a concise assistant."},
+    {"role": "human", "content": "What is LangChain?"},
+]
+
+response = model.invoke(messages)
+print(response.content)
+```
+
+Both formats are interchangeable. The dict format is convenient for quick prototyping, while message classes offer better type safety and IDE support.
+
+## AIMessage Attributes
+
+When a model responds, it returns an `AIMessage` with several useful attributes:
+
+```python
+response = model.invoke("Tell me a joke.")
+
+print(response.content)          # The text response
+print(response.response_metadata) # Provider-specific metadata
+print(response.usage_metadata)    # Token usage stats
+print(response.id)                # Unique message ID
+```
+
+### Content
+
+The `content` field contains the model's text response as a string:
+
+```python
+print(response.content)
+# "Why did the scarecrow win an award? Because he was outstanding in his field!"
+```
+
+### Tool Calls
+
+When a model decides to call a tool, the `tool_calls` attribute contains the parsed tool call details:
+
+```python
+print(response.tool_calls)
+# [{"name": "get_weather", "args": {"city": "London"}, "id": "call_abc123"}]
+```
+
+Each tool call has a `name`, `args` dictionary, and a unique `id` that must be referenced in the corresponding `ToolMessage`.
+
+### Usage Metadata
+
+The `usage_metadata` attribute tracks token consumption:
+
+```python
+print(response.usage_metadata)
+# {"input_tokens": 15, "output_tokens": 42, "total_tokens": 57}
+```
+
+## Building a Conversation
+
+Messages form a conversation when assembled as a list:
+
+```python
+conversation = [
+    SystemMessage(content="You are a pirate assistant. Speak like a pirate."),
+    HumanMessage(content="Hello!"),
+    AIMessage(content="Ahoy, matey! What can I do for ye today?"),
+    HumanMessage(content="Tell me about Python."),
+]
+
+response = model.invoke(conversation)
+print(response.content)
+```
+
+By including prior messages, the model maintains context across turns.
+
+## Key Takeaways
+
+- LangChain has four message types: `SystemMessage`, `HumanMessage`, `AIMessage`, and `ToolMessage`
+- Messages can be created as class instances or plain dictionaries with `role`/`content` keys
+- `AIMessage` carries `content`, `tool_calls`, and `usage_metadata` attributes
+- `ToolMessage` requires a `tool_call_id` linking it back to the originating tool call
+- Conversations are represented as ordered lists of messages

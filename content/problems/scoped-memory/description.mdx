@@ -1,0 +1,46 @@
+## The Problem
+
+You have a multi-agent workflow where a Researcher gathers data and a Writer produces a report. Currently, both agents share a single global memory list. This means the Writer can see the Researcher's **private internal notes**, including sensitive data like PII. Conversely, the Researcher's raw working notes clutter the Writer's context. You need to implement **scoped memory** — each agent gets a private scope for internal notes and a shared scope for cross-agent communication.
+
+## Examples
+
+### Example 1
+
+**Scenario:** Researcher stores an internal note: "Raw data contains PII: user SSN 123-45-6789."
+
+**Current (bad) behavior:** Writer's prompt includes the PII note because all memory is global. The Writer might even include the SSN in the final report.
+
+**Expected (good) behavior:** The PII note stays in the Researcher's private scope. The Writer only sees the shared note: "Found 3 relevant articles about AI safety."
+
+### Example 2
+
+**Scenario:** Writer stores an internal note: "Draft has grammatical issues, fixing..."
+
+**Current (bad) behavior:** If Researcher runs again, it sees the Writer's internal editing notes, which are irrelevant and confusing.
+
+**Expected (good) behavior:** The Writer's editing notes stay in the Writer's private scope. The Researcher never sees them.
+
+### Example 3
+
+**Scenario:** Researcher wants to share findings with the Writer.
+
+**Current (bad) behavior:** The finding is added to global memory along with all private notes.
+
+**Expected (good) behavior:** The Researcher explicitly publishes "Found 3 articles about AI safety" to the shared scope. Only shared-scope items are visible to the Writer.
+
+## Your Task
+
+Implement **scoped memory** with clear boundaries:
+
+- Create **private scopes** for each agent (researcher_private, writer_private).
+- Create a **shared scope** for cross-agent communication.
+- Each agent reads only from its own private scope + the shared scope.
+- Agents must explicitly publish to the shared scope — nothing leaks automatically.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Private memory is isolated:** Agent A's private memory is never visible to agent B.
+- **Shared scope enables collaboration:** Agents can publish information to a shared scope that others can read.
+- **Sensitive data stays private:** Internal notes and PII in private scope never leak to other agents.

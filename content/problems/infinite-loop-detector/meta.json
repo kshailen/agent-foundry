@@ -1,0 +1,57 @@
+{
+  "number": 71,
+  "title": "Infinite Loop Detector",
+  "difficulty": "hard",
+  "categories": [
+    "error-recovery",
+    "orchestration"
+  ],
+  "frameworks": [
+    "langgraph",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "The agent must detect when it is repeating the same action and break out of the loop",
+    "The maximum iteration limit must be configurable",
+    "When the loop is broken, the agent must return a meaningful message about what it tried",
+    "The detection must work for both exact repeats and semantically similar repeated actions"
+  ],
+  "hints": [
+    "Track the history of actions taken and compare new actions against recent history",
+    "Set a hard iteration cap (e.g. 5) and exit the loop when reached",
+    "Compare the current tool call and arguments to the previous N calls to detect repetition"
+  ],
+  "starterCode": {
+    "langgraph": "from langgraph.graph import StateGraph, START, END\nfrom typing import TypedDict, Annotated\nimport operator\n\nclass State(TypedDict):\n    query: str\n    result: str\n    actions: Annotated[list[str], operator.add]\n\ndef analyze(state: State) -> State:\n    return {\"actions\": [\"analyze\"], \"result\": \"Need more data\"}\n\ndef fetch_data(state: State) -> State:\n    return {\"actions\": [\"fetch_data\"], \"result\": \"Data insufficient\"}\n\ndef should_continue(state: State) -> str:\n    # BUG: Always routes back to analyze — creates an infinite loop\n    if state[\"result\"] == \"Done\":\n        return \"end\"\n    return \"analyze\"\n\ngraph = StateGraph(State)\ngraph.add_node(\"analyze\", analyze)\ngraph.add_node(\"fetch_data\", fetch_data)\ngraph.add_edge(START, \"analyze\")\ngraph.add_edge(\"analyze\", \"fetch_data\")\ngraph.add_conditional_edges(\"fetch_data\", should_continue, {\"analyze\": \"analyze\", \"end\": END})\n\napp = graph.compile()\n\n# Test: This will loop forever\nresult = app.invoke({\"query\": \"Analyze sales data\", \"result\": \"\", \"actions\": []})\nprint(result[\"result\"])",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai.tools import tool\n\n@tool\ndef analyze_data(query: str) -> str:\n    \"\"\"Analyze the given data query.\"\"\"\n    return \"Analysis incomplete — need to re-analyze with more context\"\n\n@tool\ndef fetch_more_data(query: str) -> str:\n    \"\"\"Fetch additional data for analysis.\"\"\"\n    return \"Additional data fetched but still insufficient\"\n\n# BUG: Agent keeps calling tools in a loop with no exit condition\n# TODO: Add loop detection and a maximum iteration limit\nassistant = Agent(\n    role=\"Data Analyst\",\n    goal=\"Analyze the data completely. Keep trying until you get a complete result.\",\n    backstory=\"You are a data analyst. You must keep analyzing until done.\",\n    tools=[analyze_data, fetch_more_data],\n)\n\ntask = Task(\n    description=\"Analyze the Q4 sales data\",\n    expected_output=\"A complete analysis of Q4 sales data\",\n    agent=assistant,\n)\n\ncrew = Crew(agents=[assistant], tasks=[task])\nresult = crew.kickoff()\nprint(result)",
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom agents.tool import function_tool\n\n@function_tool\ndef analyze_data(query: str) -> str:\n    \"\"\"Analyze the given data query.\"\"\"\n    return \"Analysis incomplete — need to re-analyze with more context\"\n\n@function_tool\ndef fetch_more_data(query: str) -> str:\n    \"\"\"Fetch additional data for analysis.\"\"\"\n    return \"Additional data fetched but still insufficient\"\n\n# BUG: Agent keeps calling tools in a loop with no exit condition\n# TODO: Add loop detection and a maximum iteration limit\nagent = Agent(\n    name=\"Data Analyst\",\n    instructions=\"You are a data analyst. Analyze the data completely. Keep trying until you get a complete result.\",\n    tools=[analyze_data, fetch_more_data],\n)\n\nresult = Runner.run_sync(agent, \"Analyze the Q4 sales data\")\nprint(result.final_output)"
+  },
+  "colabUrls": {
+    "langgraph": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/infinite-loop-detector-langgraph.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/infinite-loop-detector-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/infinite-loop-detector-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "loop-detected",
+      "label": "Infinite loop is detected",
+      "description": "The agent detects when it is stuck repeating the same actions"
+    },
+    {
+      "id": "loop-broken",
+      "label": "Loop is broken after N iterations",
+      "description": "The agent exits the loop after a configurable maximum number of iterations"
+    },
+    {
+      "id": "meaningful-exit",
+      "label": "Exit message is meaningful",
+      "description": "When breaking out, the agent reports what it tried and why it stopped"
+    },
+    {
+      "id": "normal-flow-works",
+      "label": "Non-looping flows still work",
+      "description": "Queries that complete normally are not affected by the loop detection"
+    }
+  ]
+}

@@ -1,0 +1,199 @@
+# Production Deployment & Observability
+
+Moving agents from prototype to production requires tracing, durable execution, monitoring, and cost controls. LangChain's ecosystem provides LangSmith for observability, Agent Server for durable execution, and OpenTelemetry integration for fitting into existing infrastructure.
+
+## LangSmith Tracing
+
+LangSmith captures every LLM call, tool invocation, and agent step as a trace. Enable it with two environment variables:
+
+```python
+import os
+
+os.environ["LANGSMITH_TRACING"] = "true"
+os.environ["LANGSMITH_API_KEY"] = "your-langsmith-api-key"
+```
+
+Once enabled, every agent invocation is automatically traced — no code changes required:
+
+```python
+from langchain.chat_models import init_chat_model
+from langgraph.prebuilt import create_react_agent
+from langchain_core.messages import HumanMessage
+
+model = init_chat_model("gpt-4o-mini", model_provider="openai")
+
+agent = create_react_agent(
+    model=model,
+    tools=[],
+    prompt="You are a helpful assistant.",
+)
+
+result = agent.invoke({
+    "messages": [HumanMessage(content="What is LangSmith?")]
+})
+print(result["messages"][-1].content)
+```
+
+View traces in the LangSmith dashboard to see the full execution flow, token counts, latency, and errors.
+
+## Trace Metadata
+
+Add metadata to traces for filtering and grouping in the dashboard:
+
+```python
+result = agent.invoke(
+    {"messages": [HumanMessage(content="Explain RAG")]},
+    config={
+        "metadata": {
+            "user_id": "user-123",
+            "session_id": "session-abc",
+            "environment": "production",
+        },
+        "run_name": "rag-explanation",
+    },
+)
+```
+
+## Agent Server for Durable Execution
+
+LangGraph Agent Server provides durable, stateful agent execution with built-in persistence, fault tolerance, and horizontal scaling:
+
+```python
+from langgraph.server import create_server
+
+server = create_server(
+    agent=agent,
+    host="0.0.0.0",
+    port=8000,
+)
+```
+
+Agent Server features:
+
+| Feature | Description |
+|---------|-------------|
+| Durable execution | Agent state survives process restarts |
+| Checkpointing | Automatic state snapshots at each step |
+| Horizontal scaling | Run multiple agent instances behind a load balancer |
+| Streaming | Stream agent responses over HTTP |
+| Thread management | Maintain conversation threads with unique IDs |
+
+## Deployment Options
+
+| Option | Best For | Scaling |
+|--------|----------|---------|
+| Agent Server (self-hosted) | Full control, custom infrastructure | Manual / Kubernetes |
+| LangGraph Cloud | Managed hosting, zero-ops | Automatic |
+| Docker containers | Containerized deployments | Kubernetes / ECS |
+| Serverless functions | Low-traffic, event-driven agents | Auto-scaling |
+
+## Monitoring Patterns
+
+Track key metrics for production agents:
+
+```python
+import time
+
+class MonitoringMiddleware:
+    def __init__(self):
+        self.metrics = {
+            "total_requests": 0,
+            "total_errors": 0,
+            "total_latency_ms": 0,
+            "total_tokens": 0,
+        }
+
+    def before_agent(self, state):
+        state["_request_start"] = time.time()
+        self.metrics["total_requests"] += 1
+        return state
+
+    def after_agent(self, state):
+        elapsed_ms = (time.time() - state.get("_request_start", time.time())) * 1000
+        self.metrics["total_latency_ms"] += elapsed_ms
+        return state
+```
+
+Key metrics to track:
+
+| Metric | Why It Matters |
+|--------|---------------|
+| Latency (p50, p95, p99) | User experience and SLA compliance |
+| Token usage | Cost management and budget alerts |
+| Error rate | Reliability and degradation detection |
+| Tool call frequency | Understanding agent behavior patterns |
+| Trace success rate | End-to-end completion tracking |
+
+## OpenTelemetry Integration
+
+Export LangChain traces to any OpenTelemetry-compatible backend (Datadog, Honeycomb, Jaeger):
+
+```python
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanExporter
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+
+provider = TracerProvider()
+exporter = OTLPSpanExporter(endpoint="http://localhost:4317")
+provider.add_span_processor(BatchSpanExporter(exporter))
+trace.set_tracer_provider(provider)
+```
+
+LangChain automatically emits OpenTelemetry spans when a tracer provider is configured, integrating with your existing observability stack.
+
+## Cost Tracking
+
+Monitor LLM costs by tracking token usage per request:
+
+```python
+class CostTrackingMiddleware:
+    COST_PER_1K_INPUT = 0.00015
+    COST_PER_1K_OUTPUT = 0.0006
+
+    def __init__(self):
+        self.total_cost = 0.0
+        self.request_costs = []
+
+    def after_model(self, state):
+        usage = state.get("_token_usage", {})
+        input_cost = (usage.get("input_tokens", 0) / 1000) * self.COST_PER_1K_INPUT
+        output_cost = (usage.get("output_tokens", 0) / 1000) * self.COST_PER_1K_OUTPUT
+        request_cost = input_cost + output_cost
+        self.total_cost += request_cost
+        self.request_costs.append(request_cost)
+        return state
+```
+
+## A2A Protocol Overview
+
+The Agent-to-Agent (A2A) protocol enables agents built with different frameworks to communicate over a standard HTTP interface:
+
+| Concept | Description |
+|---------|-------------|
+| Agent Card | JSON metadata describing an agent's capabilities and endpoint |
+| Task | A unit of work sent from one agent to another |
+| Message | Communication within a task (text, files, structured data) |
+| Artifact | Output produced by an agent (reports, code, data) |
+
+A2A lets you compose systems where a LangChain agent delegates to an AutoGen agent or a CrewAI agent, all communicating over HTTP without framework lock-in.
+
+```python
+agent_card = {
+    "name": "research-agent",
+    "description": "Researches topics and produces summaries",
+    "url": "https://my-agent.example.com",
+    "capabilities": ["research", "summarization"],
+    "protocol": "a2a/v1",
+}
+```
+
+## Key Takeaways
+
+- Enable LangSmith tracing with `LANGSMITH_TRACING=true` — zero code changes required
+- Add metadata to traces for filtering by user, session, and environment
+- Agent Server provides durable execution with checkpointing and horizontal scaling
+- Track latency, token usage, error rates, and tool call frequency in production
+- OpenTelemetry integration connects LangChain traces to Datadog, Honeycomb, Jaeger, and other backends
+- Cost tracking middleware monitors per-request and cumulative LLM spending
+- A2A protocol enables cross-framework agent communication over standard HTTP

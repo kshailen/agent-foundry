@@ -1,0 +1,301 @@
+## Approach
+
+The shipping assistant's `validate_address` and `calculate_shipping` tools take addresses as flat strings. The agent formats these strings inconsistently — sometimes `"123 Main St, Springfield, IL 62701"`, other times `"Springfield IL 123 Main"`. The downstream API expects structured address components, and parsing a flat string with comma-splitting is fragile (apartment numbers, multi-word city names, and missing commas all break the parser).
+
+The fix replaces the flat `address: str` parameter with separate typed fields: `street`, `city`, `state`, and `zip`. Using individual parameters (or a Pydantic model for more complex schemas) gives the LLM a clear schema to fill — it sees each field name and type, making it much more likely to extract the correct components from natural language. Validation logic checks that all required fields are present and non-empty.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+
+@tool
+def validate_address(street: str, city: str, state: str, zip_code: str) -> str:
+    """Validate a shipping address with separate fields.
+
+    Args:
+        street: Street address (e.g., '742 Evergreen Terrace')
+        city: City name (e.g., 'Springfield')
+        state: Two-letter state code (e.g., 'IL')
+        zip_code: 5-digit ZIP code (e.g., '62704')
+    """
+    missing = []
+    if not street.strip():
+        missing.append("street")
+    if not city.strip():
+        missing.append("city")
+    if not state.strip():
+        missing.append("state")
+    if not zip_code.strip():
+        missing.append("zip_code")
+
+    if missing:
+        return f"Validation failed: missing required fields: {', '.join(missing)}"
+
+    return (
+        f"Address validated successfully:\n"
+        f"  Street: {street}\n"
+        f"  City: {city}\n"
+        f"  State: {state}\n"
+        f"  ZIP: {zip_code}"
+    )
+
+
+@tool
+def calculate_shipping(street: str, city: str, state: str, zip_code: str, weight_lbs: float) -> str:
+    """Calculate shipping cost to a structured address.
+
+    Args:
+        street: Street address
+        city: City name
+        state: Two-letter state code
+        zip_code: 5-digit ZIP code
+        weight_lbs: Package weight in pounds
+    """
+    missing = []
+    if not street.strip():
+        missing.append("street")
+    if not city.strip():
+        missing.append("city")
+    if not state.strip():
+        missing.append("state")
+    if not zip_code.strip():
+        missing.append("zip_code")
+
+    if missing:
+        return f"Cannot calculate shipping: missing address fields: {', '.join(missing)}"
+
+    base_cost = 5.99
+    per_lb = 1.40
+    total = base_cost + (weight_lbs * per_lb)
+
+    return (
+        f"Shipping {weight_lbs}lbs to:\n"
+        f"  {street}\n"
+        f"  {city}, {state} {zip_code}\n"
+        f"Cost: ${total:.2f}"
+    )
+
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", (
+        "You are a shipping assistant. Help users validate addresses and calculate shipping costs. "
+        "When a user provides an address, extract the individual components (street, city, state, zip_code) "
+        "and pass them as separate fields to the tools."
+    )),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}"),
+])
+
+agent = create_tool_calling_agent(llm, [validate_address, calculate_shipping], prompt)
+executor = AgentExecutor(agent=agent, tools=[validate_address, calculate_shipping])
+
+result = executor.invoke({"input": "Validate and get shipping cost for a 5lb package to 742 Evergreen Terrace, Springfield, IL 62704"})
+print(result["output"])
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from agents.tool import function_tool
+
+
+@function_tool
+def validate_address(street: str, city: str, state: str, zip_code: str) -> str:
+    """Validate a shipping address with separate fields.
+
+    Args:
+        street: Street address (e.g., '742 Evergreen Terrace')
+        city: City name (e.g., 'Springfield')
+        state: Two-letter state code (e.g., 'IL')
+        zip_code: 5-digit ZIP code (e.g., '62704')
+    """
+    missing = []
+    if not street.strip():
+        missing.append("street")
+    if not city.strip():
+        missing.append("city")
+    if not state.strip():
+        missing.append("state")
+    if not zip_code.strip():
+        missing.append("zip_code")
+
+    if missing:
+        return f"Validation failed: missing required fields: {', '.join(missing)}"
+
+    return (
+        f"Address validated successfully:\n"
+        f"  Street: {street}\n"
+        f"  City: {city}\n"
+        f"  State: {state}\n"
+        f"  ZIP: {zip_code}"
+    )
+
+
+@function_tool
+def calculate_shipping(street: str, city: str, state: str, zip_code: str, weight_lbs: float) -> str:
+    """Calculate shipping cost to a structured address.
+
+    Args:
+        street: Street address
+        city: City name
+        state: Two-letter state code
+        zip_code: 5-digit ZIP code
+        weight_lbs: Package weight in pounds
+    """
+    missing = []
+    if not street.strip():
+        missing.append("street")
+    if not city.strip():
+        missing.append("city")
+    if not state.strip():
+        missing.append("state")
+    if not zip_code.strip():
+        missing.append("zip_code")
+
+    if missing:
+        return f"Cannot calculate shipping: missing address fields: {', '.join(missing)}"
+
+    base_cost = 5.99
+    per_lb = 1.40
+    total = base_cost + (weight_lbs * per_lb)
+
+    return (
+        f"Shipping {weight_lbs}lbs to:\n"
+        f"  {street}\n"
+        f"  {city}, {state} {zip_code}\n"
+        f"Cost: ${total:.2f}"
+    )
+
+
+agent = Agent(
+    name="Shipping Assistant",
+    instructions=(
+        "You are a shipping assistant. Help users validate addresses and calculate shipping costs. "
+        "When a user provides an address, extract the individual components (street, city, state, zip_code) "
+        "and pass them as separate fields to the tools."
+    ),
+    tools=[validate_address, calculate_shipping],
+)
+
+result = Runner.run_sync(agent, "Validate and get shipping cost for a 5lb package to 742 Evergreen Terrace, Springfield, IL 62704")
+print(result.final_output)
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai.tools import tool
+
+
+@tool
+def validate_address(street: str, city: str, state: str, zip_code: str) -> str:
+    """Validate a shipping address with separate fields.
+
+    Args:
+        street: Street address (e.g., '742 Evergreen Terrace')
+        city: City name (e.g., 'Springfield')
+        state: Two-letter state code (e.g., 'IL')
+        zip_code: 5-digit ZIP code (e.g., '62704')
+    """
+    missing = []
+    if not street.strip():
+        missing.append("street")
+    if not city.strip():
+        missing.append("city")
+    if not state.strip():
+        missing.append("state")
+    if not zip_code.strip():
+        missing.append("zip_code")
+
+    if missing:
+        return f"Validation failed: missing required fields: {', '.join(missing)}"
+
+    return (
+        f"Address validated successfully:\n"
+        f"  Street: {street}\n"
+        f"  City: {city}\n"
+        f"  State: {state}\n"
+        f"  ZIP: {zip_code}"
+    )
+
+
+@tool
+def calculate_shipping(street: str, city: str, state: str, zip_code: str, weight_lbs: float) -> str:
+    """Calculate shipping cost to a structured address.
+
+    Args:
+        street: Street address
+        city: City name
+        state: Two-letter state code
+        zip_code: 5-digit ZIP code
+        weight_lbs: Package weight in pounds
+    """
+    missing = []
+    if not street.strip():
+        missing.append("street")
+    if not city.strip():
+        missing.append("city")
+    if not state.strip():
+        missing.append("state")
+    if not zip_code.strip():
+        missing.append("zip_code")
+
+    if missing:
+        return f"Cannot calculate shipping: missing address fields: {', '.join(missing)}"
+
+    base_cost = 5.99
+    per_lb = 1.40
+    total = base_cost + (weight_lbs * per_lb)
+
+    return (
+        f"Shipping {weight_lbs}lbs to:\n"
+        f"  {street}\n"
+        f"  {city}, {state} {zip_code}\n"
+        f"Cost: ${total:.2f}"
+    )
+
+
+shipping_agent = Agent(
+    role="Shipping Assistant",
+    goal="Help users validate addresses and calculate shipping costs using structured address fields.",
+    backstory=(
+        "You are a shipping assistant. Help users validate addresses and calculate shipping costs. "
+        "When a user provides an address, extract the individual components (street, city, state, zip_code) "
+        "and pass them as separate fields to the tools."
+    ),
+    tools=[validate_address, calculate_shipping],
+)
+
+task = Task(
+    description="Validate and get shipping cost for a 5lb package to 742 Evergreen Terrace, Springfield, IL 62704",
+    expected_output="Address validation result and shipping cost estimate.",
+    agent=shipping_agent,
+)
+
+crew = Crew(agents=[shipping_agent], tasks=[task], process=Process.sequential)
+result = crew.kickoff()
+print(result)
+```
+
+## Why This Works
+
+Replacing a flat string with typed, named parameters solves the parsing problem at its root. Instead of the tool receiving `"742 Evergreen Terrace, Springfield, IL 62704"` and trying to split it by commas (which fails for addresses with apartment numbers, multi-word city names, or missing commas), the LLM fills in each field individually. The tool's parameter schema — with names like `street`, `city`, `state`, and `zip_code` plus example values in the docstring — gives the LLM clear guidance on what goes where.
+
+Validation inside the tool checks that no required field is empty, catching cases where the LLM couldn't extract a component from the natural language input. This provides clear error feedback (e.g., "missing required fields: zip_code") rather than silently passing incomplete data to the downstream API.
+
+## Key Takeaways
+
+- Replace flat string parameters with structured fields when the downstream system expects parsed components — let the LLM do the parsing via its tool-calling schema.
+- Include example values in parameter docstrings to guide the LLM on expected formats (e.g., two-letter state codes, 5-digit ZIP).
+- Add validation for required fields inside the tool to catch incomplete extractions early.

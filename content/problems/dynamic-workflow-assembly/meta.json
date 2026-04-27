@@ -1,0 +1,56 @@
+{
+  "number": 99,
+  "title": "Dynamic Workflow Assembly",
+  "difficulty": "hard",
+  "categories": [
+    "orchestration"
+  ],
+  "frameworks": [
+    "langgraph",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "The workflow graph must be constructed at runtime based on the task description, not hardcoded",
+    "The planner must select from a registry of available steps and determine their execution order",
+    "The assembled workflow must be a valid executable graph, not just a plan document",
+    "At least 5 different step types must be available in the registry"
+  ],
+  "hints": [
+    "Use an LLM as a planner that reads the task description and outputs a list of steps from the registry along with their dependencies",
+    "In LangGraph, dynamically add nodes and edges to a StateGraph based on the planner's output before compiling",
+    "Define a registry of step functions (summarize, translate, extract_entities, classify, format_report) that the planner can choose from"
+  ],
+  "starterCode": {
+    "langgraph": "from langchain_openai import ChatOpenAI\nfrom langchain_core.messages import HumanMessage, SystemMessage\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# BUG: Workflow is hardcoded — same 3 steps run regardless of the task\n# TODO: Dynamically assemble the workflow graph based on the task description\ndef process_task(task: str, data: str) -> str:\n    # Hardcoded pipeline: always summarize → translate → format\n    summary = llm.invoke([\n        SystemMessage(content=\"Summarize this text.\"),\n        HumanMessage(content=data),\n    ])\n\n    translation = llm.invoke([\n        SystemMessage(content=\"Translate this to Spanish.\"),\n        HumanMessage(content=summary.content),\n    ])\n\n    report = llm.invoke([\n        SystemMessage(content=\"Format this as a professional report.\"),\n        HumanMessage(content=translation.content),\n    ])\n\n    return report.content\n\n# These tasks need different workflows, but all get the same hardcoded pipeline\ntasks = [\n    (\"Analyze sentiment and extract entities\", \"Apple reported record Q4 earnings. Tim Cook praised the iPhone 16 sales.\"),\n    (\"Summarize and translate to French\", \"The climate summit concluded with 40 nations pledging carbon neutrality by 2050.\"),\n    (\"Classify, extract key facts, and generate a briefing\", \"A 7.2 magnitude earthquake struck central Turkey at 4:17 AM local time.\"),\n]\nfor task, data in tasks:\n    result = process_task(task, data)\n    print(f\"Task: {task}\\nResult: {result}\\n\")",
+    "crewai": "from crewai import Agent, Task, Crew\n\n# BUG: Workflow is hardcoded — same 3 steps run regardless of the task\n# TODO: Dynamically assemble the workflow based on the task description\nanalyst = Agent(\n    role=\"Analyst\",\n    goal=\"Process data according to instructions\",\n    backstory=\"You are a versatile data analyst.\",\n)\n\ndef process_task(task_desc: str, data: str) -> str:\n    # Hardcoded pipeline: always summarize → translate → format\n    tasks = [\n        Task(description=f\"Summarize this text: {data}\", expected_output=\"Summary\", agent=analyst),\n        Task(description=\"Translate the summary to Spanish.\", expected_output=\"Spanish translation\", agent=analyst),\n        Task(description=\"Format as a professional report.\", expected_output=\"Formatted report\", agent=analyst),\n    ]\n\n    crew = Crew(agents=[analyst], tasks=tasks)\n    return str(crew.kickoff())\n\ntasks = [\n    (\"Analyze sentiment and extract entities\", \"Apple reported record Q4 earnings. Tim Cook praised the iPhone 16 sales.\"),\n    (\"Summarize and translate to French\", \"The climate summit concluded with 40 nations pledging carbon neutrality by 2050.\"),\n    (\"Classify, extract key facts, and generate a briefing\", \"A 7.2 magnitude earthquake struck central Turkey at 4:17 AM local time.\"),\n]\nfor task_desc, data in tasks:\n    result = process_task(task_desc, data)\n    print(f\"Task: {task_desc}\\nResult: {result}\\n\")",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\n# BUG: Workflow is hardcoded — same 3 steps run regardless of the task\n# TODO: Dynamically assemble the workflow based on the task description\nagent = Agent(\n    name=\"Analyst\",\n    instructions=\"You are a versatile data analyst. Process data according to instructions.\",\n)\n\ndef process_task(task_desc: str, data: str) -> str:\n    # Hardcoded pipeline: always summarize → translate → format\n    summary = Runner.run_sync(agent, f\"Summarize this text: {data}\")\n    translation = Runner.run_sync(agent, f\"Translate this to Spanish: {summary.final_output}\")\n    report = Runner.run_sync(agent, f\"Format this as a professional report: {translation.final_output}\")\n    return report.final_output\n\ntasks = [\n    (\"Analyze sentiment and extract entities\", \"Apple reported record Q4 earnings. Tim Cook praised the iPhone 16 sales.\"),\n    (\"Summarize and translate to French\", \"The climate summit concluded with 40 nations pledging carbon neutrality by 2050.\"),\n    (\"Classify, extract key facts, and generate a briefing\", \"A 7.2 magnitude earthquake struck central Turkey at 4:17 AM local time.\"),\n]\nfor task_desc, data in tasks:\n    result = process_task(task_desc, data)\n    print(f\"Task: {task_desc}\\nResult: {result}\\n\")"
+  },
+  "colabUrls": {
+    "langgraph": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/dynamic-workflow-assembly-langgraph.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/dynamic-workflow-assembly-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/dynamic-workflow-assembly-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "runtime-graph-construction",
+      "label": "Runtime graph construction",
+      "description": "The workflow graph is built dynamically based on the task description, not hardcoded"
+    },
+    {
+      "id": "step-registry",
+      "label": "Step registry",
+      "description": "The planner selects from a registry of at least 5 available step types"
+    },
+    {
+      "id": "executable-workflow",
+      "label": "Executable workflow",
+      "description": "The assembled graph is a valid executable workflow, not just a plan"
+    },
+    {
+      "id": "task-appropriate-steps",
+      "label": "Task-appropriate steps",
+      "description": "Different task descriptions produce different workflow compositions"
+    }
+  ]
+}

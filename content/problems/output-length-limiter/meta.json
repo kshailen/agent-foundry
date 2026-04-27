@@ -1,0 +1,56 @@
+{
+  "number": 63,
+  "title": "Output Length Limiter",
+  "difficulty": "easy",
+  "categories": [
+    "guardrails",
+    "cost-optimization"
+  ],
+  "frameworks": [
+    "langchain",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "You must cap the agent's output to a reasonable length (e.g. 200 words or 800 characters)",
+    "The truncation must not cut mid-sentence if possible",
+    "The agent should still provide a complete, useful answer within the limit"
+  ],
+  "hints": [
+    "A post-processing step can truncate or summarize the output after the agent responds",
+    "Alternatively, add explicit length instructions to the system prompt",
+    "Combining prompt-level guidance with a hard truncation fallback gives the best results"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain_core.prompts import ChatPromptTemplate\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# BUG: No length constraints — the agent writes 2000-word essays\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a helpful assistant. Provide thorough, detailed answers.\"),\n    (\"human\", \"{input}\"),\n])\n\nchain = prompt | llm\n\nresult = chain.invoke({\"input\": \"Explain how neural networks work\"})\nprint(result.content)\nprint(f\"\\n--- Output length: {len(result.content.split())} words ---\")",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\n# BUG: No length constraints — the agent writes 2000-word essays\nagent = Agent(\n    name=\"Explainer\",\n    instructions=\"You are a helpful assistant. Provide thorough, detailed answers.\",\n)\n\nresult = Runner.run_sync(agent, \"Explain how neural networks work\")\nprint(result.final_output)\nprint(f\"\\n--- Output length: {len(result.final_output.split())} words ---\")",
+    "crewai": "from crewai import Agent, Task, Crew\n\n# BUG: No length constraints — the agent writes 2000-word essays\nexplainer = Agent(\n    role=\"Explainer\",\n    goal=\"Provide thorough, detailed answers to any question\",\n    backstory=\"You are a helpful assistant who explains concepts in detail.\",\n)\n\ntask = Task(\n    description=\"Explain how neural networks work\",\n    expected_output=\"A thorough explanation of neural networks\",\n    agent=explainer,\n)\n\ncrew = Crew(agents=[explainer], tasks=[task])\nresult = crew.kickoff()\nprint(result)\nprint(f\"\\n--- Output length: {len(str(result).split())} words ---\")"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/output-length-limiter-langchain.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/output-length-limiter-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/output-length-limiter-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "output-capped",
+      "label": "Output is within length limit",
+      "description": "The agent's response stays within the configured word or character limit"
+    },
+    {
+      "id": "clean-truncation",
+      "label": "No mid-sentence cutoff",
+      "description": "If truncation is needed, it ends at a sentence boundary rather than mid-word"
+    },
+    {
+      "id": "still-useful",
+      "label": "Response is still useful",
+      "description": "The shorter response still answers the user's question meaningfully"
+    },
+    {
+      "id": "cost-reduced",
+      "label": "Token usage reduced",
+      "description": "The output uses significantly fewer tokens than the unconstrained version"
+    }
+  ]
+}

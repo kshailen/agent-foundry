@@ -1,0 +1,56 @@
+{
+  "number": 31,
+  "title": "Multi-Tool Conflict Resolution",
+  "difficulty": "hard",
+  "categories": [
+    "tool-calling"
+  ],
+  "frameworks": [
+    "langchain",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "The agent must call both data sources before answering",
+    "When data conflicts, the agent must acknowledge the discrepancy",
+    "The agent must not silently pick one source over the other",
+    "The resolution strategy must be transparent to the user"
+  ],
+  "hints": [
+    "Update the system prompt to instruct the agent to always cross-reference both sources and flag differences",
+    "Consider adding a reconciliation step that compares outputs and highlights conflicts before forming a final answer",
+    "You can implement a scoring or confidence-based strategy where the agent explains which source it trusts more and why"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain.agents import AgentExecutor, create_tool_calling_agent\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom langchain_core.tools import tool\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n@tool\ndef get_price_source_a(product: str) -> str:\n    \"\"\"Get product price from Source A (retail aggregator).\"\"\"\n    prices = {\n        \"laptop x1\": {\"price\": \"$999\", \"in_stock\": True, \"rating\": \"4.2/5\"},\n        \"headphones z3\": {\"price\": \"$199\", \"in_stock\": True, \"rating\": \"4.7/5\"},\n        \"keyboard k5\": {\"price\": \"$149\", \"in_stock\": False, \"rating\": \"4.0/5\"},\n    }\n    data = prices.get(product.lower())\n    if data:\n        return f\"Source A - {product}: Price {data['price']}, In Stock: {data['in_stock']}, Rating: {data['rating']}\"\n    return f\"Source A: Product '{product}' not found\"\n\n@tool\ndef get_price_source_b(product: str) -> str:\n    \"\"\"Get product price from Source B (manufacturer database).\"\"\"\n    prices = {\n        \"laptop x1\": {\"price\": \"$1,049\", \"in_stock\": True, \"rating\": \"4.5/5\"},\n        \"headphones z3\": {\"price\": \"$199\", \"in_stock\": False, \"rating\": \"4.6/5\"},\n        \"keyboard k5\": {\"price\": \"$129\", \"in_stock\": True, \"rating\": \"4.1/5\"},\n    }\n    data = prices.get(product.lower())\n    if data:\n        return f\"Source B - {product}: Price {data['price']}, In Stock: {data['in_stock']}, Rating: {data['rating']}\"\n    return f\"Source B: Product '{product}' not found\"\n\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a shopping assistant. Look up product information for users.\"),\n    (\"human\", \"{input}\"),\n    (\"placeholder\", \"{agent_scratchpad}\"),\n])\n\n# BUG: The agent often calls only one source, or calls both but silently picks\n# whichever result it saw first — even when the two sources disagree on price or stock\n# TODO: Make the agent call both sources and explicitly handle conflicts\nagent = create_tool_calling_agent(llm, [get_price_source_a, get_price_source_b], prompt)\nexecutor = AgentExecutor(agent=agent, tools=[get_price_source_a, get_price_source_b])\n\nresult = executor.invoke({\"input\": \"What's the price of Laptop X1 and is it in stock?\"})\nprint(result[\"output\"])",
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom agents.tool import function_tool\n\n@function_tool\ndef get_price_source_a(product: str) -> str:\n    \"\"\"Get product price from Source A (retail aggregator).\"\"\"\n    prices = {\n        \"laptop x1\": {\"price\": \"$999\", \"in_stock\": True, \"rating\": \"4.2/5\"},\n        \"headphones z3\": {\"price\": \"$199\", \"in_stock\": True, \"rating\": \"4.7/5\"},\n        \"keyboard k5\": {\"price\": \"$149\", \"in_stock\": False, \"rating\": \"4.0/5\"},\n    }\n    data = prices.get(product.lower())\n    if data:\n        return f\"Source A - {product}: Price {data['price']}, In Stock: {data['in_stock']}, Rating: {data['rating']}\"\n    return f\"Source A: Product '{product}' not found\"\n\n@function_tool\ndef get_price_source_b(product: str) -> str:\n    \"\"\"Get product price from Source B (manufacturer database).\"\"\"\n    prices = {\n        \"laptop x1\": {\"price\": \"$1,049\", \"in_stock\": True, \"rating\": \"4.5/5\"},\n        \"headphones z3\": {\"price\": \"$199\", \"in_stock\": False, \"rating\": \"4.6/5\"},\n        \"keyboard k5\": {\"price\": \"$129\", \"in_stock\": True, \"rating\": \"4.1/5\"},\n    }\n    data = prices.get(product.lower())\n    if data:\n        return f\"Source B - {product}: Price {data['price']}, In Stock: {data['in_stock']}, Rating: {data['rating']}\"\n    return f\"Source B: Product '{product}' not found\"\n\n# BUG: The agent often calls only one source, or calls both but silently picks\n# whichever result it saw first — even when the two sources disagree on price or stock\n# TODO: Make the agent call both sources and explicitly handle conflicts\nagent = Agent(\n    name=\"Shopping Assistant\",\n    instructions=\"You are a shopping assistant. Look up product information for users.\",\n    tools=[get_price_source_a, get_price_source_b],\n)\n\nresult = Runner.run_sync(agent, \"What's the price of Laptop X1 and is it in stock?\")\nprint(result.final_output)",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai.tools import tool\n\n@tool\ndef get_price_source_a(product: str) -> str:\n    \"\"\"Get product price from Source A (retail aggregator).\"\"\"\n    prices = {\n        \"laptop x1\": {\"price\": \"$999\", \"in_stock\": True, \"rating\": \"4.2/5\"},\n        \"headphones z3\": {\"price\": \"$199\", \"in_stock\": True, \"rating\": \"4.7/5\"},\n        \"keyboard k5\": {\"price\": \"$149\", \"in_stock\": False, \"rating\": \"4.0/5\"},\n    }\n    data = prices.get(product.lower())\n    if data:\n        return f\"Source A - {product}: Price {data['price']}, In Stock: {data['in_stock']}, Rating: {data['rating']}\"\n    return f\"Source A: Product '{product}' not found\"\n\n@tool\ndef get_price_source_b(product: str) -> str:\n    \"\"\"Get product price from Source B (manufacturer database).\"\"\"\n    prices = {\n        \"laptop x1\": {\"price\": \"$1,049\", \"in_stock\": True, \"rating\": \"4.5/5\"},\n        \"headphones z3\": {\"price\": \"$199\", \"in_stock\": False, \"rating\": \"4.6/5\"},\n        \"keyboard k5\": {\"price\": \"$129\", \"in_stock\": True, \"rating\": \"4.1/5\"},\n    }\n    data = prices.get(product.lower())\n    if data:\n        return f\"Source B - {product}: Price {data['price']}, In Stock: {data['in_stock']}, Rating: {data['rating']}\"\n    return f\"Source B: Product '{product}' not found\"\n\n# BUG: The agent often calls only one source, or calls both but silently picks\n# whichever result it saw first — even when the two sources disagree on price or stock\n# TODO: Make the agent call both sources and explicitly handle conflicts\nassistant = Agent(\n    role=\"Shopping Assistant\",\n    goal=\"Help users find product information\",\n    backstory=\"You are a shopping assistant. Look up product information for users.\",\n    tools=[get_price_source_a, get_price_source_b],\n)\n\ntask = Task(\n    description=\"What's the price of Laptop X1 and is it in stock?\",\n    expected_output=\"Product information with pricing and availability\",\n    agent=assistant,\n)\n\ncrew = Crew(agents=[assistant], tasks=[task])\nprint(crew.kickoff())"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/multi-tool-conflict-resolution-langchain.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/multi-tool-conflict-resolution-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/multi-tool-conflict-resolution-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "both-sources-called",
+      "label": "Both sources are consulted",
+      "description": "The agent calls both get_price_source_a and get_price_source_b before answering"
+    },
+    {
+      "id": "conflicts-flagged",
+      "label": "Conflicts are flagged",
+      "description": "When sources disagree, the agent explicitly highlights the discrepancy to the user"
+    },
+    {
+      "id": "no-silent-pick",
+      "label": "No silent preference",
+      "description": "The agent does not silently pick one source's data when there is a conflict"
+    },
+    {
+      "id": "transparent-resolution",
+      "label": "Resolution is transparent",
+      "description": "The agent explains its reasoning when choosing one value over another or presenting both"
+    }
+  ]
+}

@@ -1,0 +1,43 @@
+## The Problem
+
+Your data analyst agent has a single monolithic tool called `process_data` that does everything: fetching raw data, cleaning it, running analysis, and formatting a report. This makes it impossible to reuse individual steps — if a user only wants to fetch data without analysis, or run a different type of analysis on already-fetched data, the entire pipeline runs anyway. Your job is to **decompose the monolith into small, single-purpose tools** that the agent can compose into different pipelines depending on the query.
+
+## Examples
+
+### Example 1
+
+**User input:** Get financial data for Acme Corp and analyze their growth
+
+**Current (bad) output:** The monolithic tool runs all four stages regardless. If the user later asks for a financial analysis (not growth) on the same data, the tool re-fetches and re-cleans everything.
+
+**Expected (good) output:** The agent calls `fetch_data("Acme Corp")` → `clean_data(raw_data)` → `analyze_data(cleaned_data, "growth")` → `format_report(analysis)`. Each step is separate, and the intermediate results could be reused.
+
+### Example 2
+
+**User input:** I already have this data: "revenue: $10M, costs: $6M". Just run a financial analysis.
+
+**Current (bad) output:** The monolithic tool ignores the user's data and fetches fresh data from scratch, running the full pipeline.
+
+**Expected (good) output:** The agent skips `fetch_data` and `clean_data`, directly calls `analyze_data(user_data, "financial")` → `format_report(analysis)`. Only the needed steps are executed.
+
+### Example 3
+
+**User input:** Fetch data for TechCorp but don't analyze it yet, just show me the raw numbers.
+
+**Expected (good) output:** The agent calls only `fetch_data("TechCorp")` and `clean_data(raw)`, then presents the cleaned data without running analysis or formatting a full report.
+
+## Your Task
+
+- Break the monolithic `process_data` tool into at least 4 small tools (e.g., fetch, clean, analyze, format).
+- Each tool should accept the output of the previous step and be independently callable.
+- The agent should dynamically decide which tools to compose based on the user's query.
+- Ensure the decomposed pipeline produces correct results equivalent to the monolithic version.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Monolith is decomposed:** The single tool is broken into at least 4 independent, single-purpose tools.
+- **Tools are composable:** The agent can chain tools in different orders depending on the query.
+- **Each tool works independently:** Any single tool can be called on its own without the full pipeline.
+- **Output is still correct:** The decomposed pipeline produces equivalent analysis quality.

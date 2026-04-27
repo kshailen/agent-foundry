@@ -1,0 +1,58 @@
+## The Problem
+
+You want to know whether your customer-support agent should use `gpt-4o` with a detailed prompt or `gpt-4o-mini` with a concise prompt. Today, there is only one configuration—no way to compare alternatives on quality or cost. Your job is to **build an A/B testing framework** that runs both configurations side-by-side on the same inputs, scores each on quality and cost, and recommends a winner.
+
+## Examples
+
+### Example 1
+
+**Test input:** What is your return policy?
+
+**Current (bad) output:** Only one configuration runs. You have no idea if a cheaper model would produce equivalent quality.
+
+**Expected (good) output:**
+```
+Config A (gpt-4o, detailed prompt):
+  Quality: 4.5/5  |  Cost: $0.0035  |  Latency: 1.8s
+
+Config B (gpt-4o-mini, concise prompt):
+  Quality: 4.2/5  |  Cost: $0.0004  |  Latency: 0.6s
+```
+
+### Example 2
+
+**A/B test summary across 5 queries:**
+
+**Current (bad) output:** No comparison data exists.
+
+**Expected (good) output:**
+```
+=== A/B Test Results ===
+Config A (gpt-4o):      Avg quality: 4.6/5  |  Total cost: $0.0180  |  Avg latency: 1.9s
+Config B (gpt-4o-mini): Avg quality: 4.1/5  |  Total cost: $0.0020  |  Avg latency: 0.5s
+
+Cost-effectiveness (quality per $):
+  Config A: 255.6 quality-points/$
+  Config B: 2050.0 quality-points/$
+
+RECOMMENDATION: Config B — 89% cheaper with only 11% quality reduction.
+  Use Config A only for complex queries requiring deep reasoning.
+```
+
+## Your Task
+
+Build an A/B testing framework so that:
+
+- **Two agent configurations** run on the **same set of test inputs**.
+- Each is scored on **quality** (via LLM-as-judge) and **cost** (via token tracking).
+- A **summary report** compares the two and recommends a winner with justification.
+- The framework is **configurable** — swapping in new configurations requires no code changes.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Same inputs for both:** Both agent configurations run on the same set of test inputs.
+- **Quality and cost scores:** Each configuration is scored on both quality and cost metrics.
+- **Winner recommendation:** The comparison produces a winner recommendation with justification.
+- **Swappable configurations:** New agent configurations can be added without modifying the comparison framework.

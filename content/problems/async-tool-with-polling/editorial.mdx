@@ -1,0 +1,237 @@
+## Approach
+
+The report generator tool blocks synchronously for the entire duration of the job — if the report takes 30 seconds, the agent hangs for 30 seconds with no feedback. In production, long jobs cause timeouts and a frozen user experience. The fix is to decompose the single blocking `generate_report` tool into three non-blocking tools: `start_job` (kicks off the work and returns a job ID immediately), `check_status` (polls the job's current state), and `get_result` (retrieves the finished output).
+
+The agent's workflow becomes: call `start_job` to get a job ID, then call `check_status` in a loop until the status is "completed," and finally call `get_result` to fetch the output. A maximum retry count on the polling prevents infinite loops. The job simulation uses a background thread so that `start_job` returns immediately while the work proceeds asynchronously.
+
+## Solution
+
+### LangGraph
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.tools import tool
+from langgraph.prebuilt import create_react_agent
+import time
+import threading
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+job_store = {}
+
+
+def _run_job(job_id: str, topic: str):
+    time.sleep(3)
+    job_store[job_id]["status"] = "completed"
+    job_store[job_id]["result"] = (
+        f"Comprehensive report on {topic}: Key findings include market growth of 25%, "
+        f"emerging trends in AI adoption, and regulatory changes expected in Q3."
+    )
+
+
+@tool
+def start_job(topic: str) -> str:
+    """Start a long-running report generation job. Returns a job ID immediately without waiting."""
+    job_id = f"JOB-{hash(topic) % 10000:04d}"
+    job_store[job_id] = {"status": "processing", "topic": topic, "started": time.time()}
+    thread = threading.Thread(target=_run_job, args=(job_id, topic))
+    thread.start()
+    return f"Job started with ID: {job_id}. Use check_status to monitor progress."
+
+
+@tool
+def check_status(job_id: str) -> str:
+    """Check the current status of a report generation job."""
+    job = job_store.get(job_id)
+    if not job:
+        return f"No job found with ID: {job_id}"
+    elapsed = int(time.time() - job["started"])
+    return f"Job {job_id}: status={job['status']}, elapsed={elapsed}s, topic='{job['topic']}'"
+
+
+@tool
+def get_result(job_id: str) -> str:
+    """Get the final result of a completed report job."""
+    job = job_store.get(job_id)
+    if not job:
+        return f"No job found with ID: {job_id}"
+    if job["status"] != "completed":
+        return f"Job {job_id} is not yet completed (status: {job['status']}). Check back later."
+    return job["result"]
+
+
+agent = create_react_agent(
+    llm,
+    [start_job, check_status, get_result],
+    prompt=(
+        "You are an assistant that generates detailed reports. Follow this workflow:\n\n"
+        "1. Call start_job to begin report generation. It returns a job ID immediately.\n"
+        "2. Call check_status with the job ID to monitor progress. Repeat until status is 'completed'.\n"
+        "3. Once completed, call get_result with the job ID to retrieve the final report.\n\n"
+        "Do NOT call get_result before the job is completed. "
+        "If the job is still processing after 5 status checks, inform the user it is taking longer than expected."
+    ),
+)
+
+result = agent.invoke({"messages": [("human", "Generate a detailed report on the electric vehicle market")]})
+print(result["messages"][-1].content)
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from agents.tool import function_tool
+import time
+import threading
+
+job_store = {}
+
+
+def _run_job(job_id: str, topic: str):
+    time.sleep(3)
+    job_store[job_id]["status"] = "completed"
+    job_store[job_id]["result"] = (
+        f"Comprehensive report on {topic}: Key findings include market growth of 25%, "
+        f"emerging trends in AI adoption, and regulatory changes expected in Q3."
+    )
+
+
+@function_tool
+def start_job(topic: str) -> str:
+    """Start a long-running report generation job. Returns a job ID immediately without waiting."""
+    job_id = f"JOB-{hash(topic) % 10000:04d}"
+    job_store[job_id] = {"status": "processing", "topic": topic, "started": time.time()}
+    thread = threading.Thread(target=_run_job, args=(job_id, topic))
+    thread.start()
+    return f"Job started with ID: {job_id}. Use check_status to monitor progress."
+
+
+@function_tool
+def check_status(job_id: str) -> str:
+    """Check the current status of a report generation job."""
+    job = job_store.get(job_id)
+    if not job:
+        return f"No job found with ID: {job_id}"
+    elapsed = int(time.time() - job["started"])
+    return f"Job {job_id}: status={job['status']}, elapsed={elapsed}s, topic='{job['topic']}'"
+
+
+@function_tool
+def get_result(job_id: str) -> str:
+    """Get the final result of a completed report job."""
+    job = job_store.get(job_id)
+    if not job:
+        return f"No job found with ID: {job_id}"
+    if job["status"] != "completed":
+        return f"Job {job_id} is not yet completed (status: {job['status']}). Check back later."
+    return job["result"]
+
+
+agent = Agent(
+    name="Report Generator",
+    instructions=(
+        "You are an assistant that generates detailed reports. Follow this workflow:\n\n"
+        "1. Call start_job to begin report generation. It returns a job ID immediately.\n"
+        "2. Call check_status with the job ID to monitor progress. Repeat until status is 'completed'.\n"
+        "3. Once completed, call get_result with the job ID to retrieve the final report.\n\n"
+        "Do NOT call get_result before the job is completed. "
+        "If the job is still processing after 5 status checks, inform the user it is taking longer than expected."
+    ),
+    tools=[start_job, check_status, get_result],
+)
+
+result = Runner.run_sync(agent, "Generate a detailed report on the electric vehicle market")
+print(result.final_output)
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai import LLM
+from crewai.tools import tool
+import time
+import threading
+
+llm = LLM(model="gpt-4o-mini")
+job_store = {}
+
+
+def _run_job(job_id: str, topic: str):
+    time.sleep(3)
+    job_store[job_id]["status"] = "completed"
+    job_store[job_id]["result"] = (
+        f"Comprehensive report on {topic}: Key findings include market growth of 25%, "
+        f"emerging trends in AI adoption, and regulatory changes expected in Q3."
+    )
+
+
+@tool
+def start_job(topic: str) -> str:
+    """Start a long-running report generation job. Returns a job ID immediately without waiting."""
+    job_id = f"JOB-{hash(topic) % 10000:04d}"
+    job_store[job_id] = {"status": "processing", "topic": topic, "started": time.time()}
+    thread = threading.Thread(target=_run_job, args=(job_id, topic))
+    thread.start()
+    return f"Job started with ID: {job_id}. Use check_status to monitor progress."
+
+
+@tool
+def check_status(job_id: str) -> str:
+    """Check the current status of a report generation job."""
+    job = job_store.get(job_id)
+    if not job:
+        return f"No job found with ID: {job_id}"
+    elapsed = int(time.time() - job["started"])
+    return f"Job {job_id}: status={job['status']}, elapsed={elapsed}s, topic='{job['topic']}'"
+
+
+@tool
+def get_result(job_id: str) -> str:
+    """Get the final result of a completed report job."""
+    job = job_store.get(job_id)
+    if not job:
+        return f"No job found with ID: {job_id}"
+    if job["status"] != "completed":
+        return f"Job {job_id} is not yet completed (status: {job['status']}). Check back later."
+    return job["result"]
+
+
+agent = Agent(
+    role="Report Generator",
+    goal="Generate detailed reports by starting jobs, polling status, and retrieving results",
+    backstory=(
+        "You are an assistant that generates detailed reports. Follow this workflow:\n\n"
+        "1. Call start_job to begin report generation. It returns a job ID immediately.\n"
+        "2. Call check_status with the job ID to monitor progress. Repeat until status is 'completed'.\n"
+        "3. Once completed, call get_result with the job ID to retrieve the final report.\n\n"
+        "Do NOT call get_result before the job is completed. "
+        "If the job is still processing after 5 status checks, inform the user it is taking longer than expected."
+    ),
+    tools=[start_job, check_status, get_result],
+    llm=llm,
+)
+
+task = Task(
+    description="Generate a detailed report on the electric vehicle market",
+    expected_output="The completed report content",
+    agent=agent,
+)
+
+crew = Crew(agents=[agent], tasks=[task], process=Process.sequential)
+result = crew.kickoff()
+print(result)
+```
+
+## Why This Works
+
+Splitting the blocking tool into three non-blocking tools transforms the interaction model from synchronous to asynchronous. `start_job` returns immediately with a job ID, which the agent uses as a handle to poll status. The actual work happens in a background thread (or in production, on a remote server). This pattern prevents timeouts because no single tool call blocks for more than a fraction of a second.
+
+The agent's prompt enforces the correct sequence (start, poll, retrieve) and includes a timeout condition ("after 5 status checks, inform the user"). This prevents infinite polling loops while still giving the job enough time to complete. The three-tool design mirrors real-world async APIs (think AWS Lambda invocations, CI/CD pipelines, or ML training jobs) where you submit a job, poll for status, and fetch results separately.
+
+## Key Takeaways
+
+- Split blocking operations into start, check, and retrieve tools to prevent timeouts and provide progress feedback.
+- Use background threads (or remote job queues in production) so `start_job` returns immediately.
+- Include a maximum retry count or timeout in the agent's instructions to prevent infinite polling.

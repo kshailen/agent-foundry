@@ -1,0 +1,216 @@
+# Project: Research Assistant
+
+In this project, you'll build a research assistant that uses the orchestrator pattern — a manager agent delegates to specialist agents via `as_tool()`, streams results in real time, and produces a structured `ResearchReport` output. This combines agents-as-tools, streaming, and structured output into a practical workflow.
+
+## Architecture Overview
+
+```
+User Query
+    ↓
+Orchestrator Agent
+    ├── as_tool() → Web Researcher (searches the web)
+    ├── as_tool() → Data Analyst (analyzes and summarizes data)
+    ↓
+Structured Output: ResearchReport
+    ↓
+Streamed to user in real time
+```
+
+## Step 1: Define the Structured Output
+
+Create a Pydantic model for the research report:
+
+```python
+from pydantic import BaseModel
+
+class ResearchReport(BaseModel):
+    title: str
+    summary: str
+    key_findings: list[str]
+    sources: list[str]
+    confidence: str
+```
+
+## Step 2: Create the Specialist Agents
+
+Build focused agents for web research and data analysis:
+
+```python
+from agents import Agent, WebSearchTool, function_tool
+
+web_researcher = Agent(
+    name="Web Researcher",
+    instructions=(
+        "You are a web research specialist. Search the web to find accurate, "
+        "up-to-date information on the given topic. Provide detailed findings "
+        "with source references."
+    ),
+    tools=[WebSearchTool(search_context_size="high")],
+)
+
+@function_tool
+def calculate_statistics(numbers: str) -> str:
+    """Calculate basic statistics for a comma-separated list of numbers."""
+    nums = [float(n.strip()) for n in numbers.split(",")]
+    total = sum(nums)
+    avg = total / len(nums)
+    return f"Count: {len(nums)}, Sum: {total:.2f}, Average: {avg:.2f}, Min: {min(nums):.2f}, Max: {max(nums):.2f}"
+
+data_analyst = Agent(
+    name="Data Analyst",
+    instructions=(
+        "You are a data analysis specialist. Analyze the provided data or information, "
+        "identify patterns and trends, and provide clear, concise analytical summaries. "
+        "Use the calculate_statistics tool for numerical analysis."
+    ),
+    tools=[calculate_statistics],
+)
+```
+
+## Step 3: Build the Orchestrator
+
+The orchestrator uses specialist agents as tools and produces a structured report:
+
+```python
+orchestrator = Agent(
+    name="Research Orchestrator",
+    instructions=(
+        "You are a research manager. When given a research question:\n"
+        "1. Use the web_research tool to gather information from the web.\n"
+        "2. Use the analyze_data tool to analyze and synthesize the findings.\n"
+        "3. Produce a final ResearchReport with a title, summary, key findings, "
+        "sources, and confidence level (high/medium/low)."
+    ),
+    tools=[
+        web_researcher.as_tool(
+            tool_name="web_research",
+            tool_description="Search the web and gather information on a topic",
+        ),
+        data_analyst.as_tool(
+            tool_name="analyze_data",
+            tool_description="Analyze data and provide analytical summaries",
+        ),
+    ],
+    output_type=ResearchReport,
+)
+```
+
+## Step 4: Run with Streaming
+
+Stream the orchestrator's progress to see each step in real time:
+
+```python
+from agents import Runner
+from agents.stream_events import RawResponsesStreamEvent, RunItemStreamEvent
+
+async def run_research(query: str):
+    result = await Runner.run_streamed(orchestrator, query)
+
+    async for event in result.stream_events():
+        if isinstance(event, RunItemStreamEvent):
+            if event.name == "tool_called":
+                print(f"\n[Calling: {event.item.raw_item.name}]")
+            elif event.name == "tool_output":
+                print("[Result received]")
+        elif isinstance(event, RawResponsesStreamEvent):
+            if hasattr(event.data, "delta"):
+                print(event.data.delta, end="", flush=True)
+
+    return result
+
+result = await run_research("What are the latest trends in renewable energy?")
+```
+
+## Step 5: Process the Structured Output
+
+Extract and display the structured research report:
+
+```python
+report = result.final_output
+print(f"\n{'='*60}")
+print(f"Title: {report.title}")
+print(f"Confidence: {report.confidence}")
+print(f"\nSummary:\n{report.summary}")
+print(f"\nKey Findings:")
+for i, finding in enumerate(report.key_findings, 1):
+    print(f"  {i}. {finding}")
+print(f"\nSources:")
+for source in report.sources:
+    print(f"  - {source}")
+```
+
+## Step 6: Adding a Custom Output Extractor
+
+Customize how specialist results are returned to the orchestrator:
+
+```python
+async def format_research(run_result):
+    output = run_result.final_output
+    agent_name = run_result.last_agent.name
+    return f"[{agent_name}]\n{output}"
+
+orchestrator_v2 = Agent(
+    name="Research Orchestrator",
+    instructions=(
+        "You manage research tasks. Use web_research and analyze_data tools, "
+        "then produce a ResearchReport."
+    ),
+    tools=[
+        web_researcher.as_tool(
+            tool_name="web_research",
+            tool_description="Search the web for information",
+            custom_output_extractor=format_research,
+        ),
+        data_analyst.as_tool(
+            tool_name="analyze_data",
+            tool_description="Analyze and summarize data",
+            custom_output_extractor=format_research,
+        ),
+    ],
+    output_type=ResearchReport,
+)
+```
+
+## Step 7: Full Research Pipeline
+
+Put it all together for a complete research workflow:
+
+```python
+from agents import Runner
+from agents.stream_events import RawResponsesStreamEvent, RunItemStreamEvent
+
+async def research_pipeline(query: str):
+    print(f"Researching: {query}\n")
+
+    result = await Runner.run_streamed(orchestrator, query)
+
+    async for event in result.stream_events():
+        if isinstance(event, RunItemStreamEvent):
+            if event.name == "tool_called":
+                print(f"\n>>> Delegating to: {event.item.raw_item.name}")
+            elif event.name == "tool_output":
+                print(">>> Result received\n")
+        elif isinstance(event, RawResponsesStreamEvent):
+            if hasattr(event.data, "delta"):
+                print(event.data.delta, end="", flush=True)
+
+    report = result.final_output
+    print(f"\n\n{'='*60}")
+    print(f"RESEARCH REPORT: {report.title}")
+    print(f"Confidence: {report.confidence}")
+    print(f"\n{report.summary}")
+    print(f"\nKey Findings:")
+    for i, finding in enumerate(report.key_findings, 1):
+        print(f"  {i}. {finding}")
+    return report
+
+report = await research_pipeline("What is the current state of quantum computing?")
+```
+
+## Key Takeaways
+
+- The orchestrator pattern uses `as_tool()` to delegate to specialist agents while retaining control
+- `WebSearchTool` gives the researcher real-time web access for up-to-date information
+- `Runner.run_streamed()` provides real-time visibility into the multi-agent workflow
+- Structured output (`ResearchReport`) ensures consistent, machine-readable results
+- `custom_output_extractor` lets you customize how specialist results are returned to the orchestrator

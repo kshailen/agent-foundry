@@ -1,0 +1,257 @@
+# Project: Customer Service Bot
+
+In this project, you'll build a customer service agent that combines four intermediate LangChain concepts: PII detection with `PIIMiddleware`, structured ticket output with Pydantic, short-term memory with `InMemorySaver`, and human-in-the-loop approval for refund requests.
+
+## What You'll Build
+
+A customer service bot that can:
+
+- Detect and redact PII (emails, credit cards) from customer messages
+- Output structured support tickets as Pydantic models
+- Remember conversation context across turns using short-term memory
+- Pause for human approval before processing refunds
+
+## Step 1: Define the Support Ticket Schema
+
+Use a Pydantic model to structure the agent's ticket output:
+
+```python
+from pydantic import BaseModel, Field
+from typing import Optional
+from enum import Enum
+
+class TicketCategory(str, Enum):
+    billing = "billing"
+    technical = "technical"
+    refund = "refund"
+    general = "general"
+
+class SupportTicket(BaseModel):
+    customer_name: str = Field(description="The customer's name")
+    issue_summary: str = Field(description="Brief summary of the issue")
+    category: TicketCategory = Field(description="Ticket category")
+    priority: str = Field(description="Priority: low, medium, or high")
+    resolution: str = Field(description="Proposed resolution or next steps")
+    requires_refund: bool = Field(description="Whether a refund is needed")
+    refund_amount: Optional[float] = Field(default=None, description="Refund amount if applicable")
+```
+
+## Step 2: Create the Refund Tool
+
+Define a tool for processing refunds — this will require human approval:
+
+```python
+from langchain_core.tools import tool
+
+@tool
+def process_refund(order_id: str, amount: float, reason: str) -> str:
+    """Process a refund for a customer order. This action requires approval and cannot be undone."""
+    return f"Refund of ${amount:.2f} processed for order {order_id}. Reason: {reason}"
+```
+
+## Step 3: Set Up PII Protection
+
+Use `PIIMiddleware` to redact sensitive data before it reaches the agent:
+
+```python
+from langgraph.prebuilt.middleware import PIIMiddleware
+
+pii_middleware = PIIMiddleware(strategy="redact")
+```
+
+## Step 4: Configure Memory
+
+Add `InMemorySaver` for conversation persistence across turns:
+
+```python
+from langgraph.checkpoint.memory import InMemorySaver
+
+checkpointer = InMemorySaver()
+```
+
+## Step 5: Assemble the Agent
+
+Combine all components into a single agent:
+
+```python
+from langchain.chat_models import init_chat_model
+from langgraph.prebuilt import create_react_agent
+
+model = init_chat_model("gpt-4o-mini", model_provider="openai")
+
+agent = create_react_agent(
+    model=model,
+    tools=[process_refund],
+    prompt=(
+        "You are a customer service agent for an online store. "
+        "Help customers with billing questions, technical issues, and refund requests. "
+        "Always be polite and professional. "
+        "When a customer needs a refund, use the process_refund tool. "
+        "Summarize each interaction as a support ticket."
+    ),
+    response_format=SupportTicket,
+    checkpointer=checkpointer,
+    middleware=[pii_middleware],
+)
+```
+
+## Step 6: Handle a Customer Conversation with Memory
+
+Use `thread_id` to maintain context across multiple turns:
+
+```python
+from langchain_core.messages import HumanMessage
+
+config = {"configurable": {"thread_id": "customer-alice-001"}}
+
+result = agent.invoke(
+    {"messages": [HumanMessage(content="Hi, I'm Alice. I ordered a laptop (order ORD-5521) but it arrived damaged.")]},
+    config=config,
+)
+ticket = result["structured_response"]
+print(f"Category: {ticket.category}")
+print(f"Priority: {ticket.priority}")
+print(f"Summary: {ticket.issue_summary}")
+```
+
+Follow up in the same thread — the agent remembers the context:
+
+```python
+result = agent.invoke(
+    {"messages": [HumanMessage(content="I'd like a refund of $899 for the damaged laptop.")]},
+    config=config,
+)
+ticket = result["structured_response"]
+print(f"Requires refund: {ticket.requires_refund}")
+print(f"Refund amount: ${ticket.refund_amount}")
+print(f"Resolution: {ticket.resolution}")
+```
+
+## Step 7: Human-in-the-Loop for Refund Approval
+
+For refund requests, pause the agent and require human approval:
+
+```python
+from langgraph.types import Command
+
+config_refund = {"configurable": {"thread_id": "refund-review-001"}}
+
+result = agent.invoke(
+    {"messages": [HumanMessage(content="I'm Bob. Please refund $150 for order ORD-7789, the item was defective.")]},
+    config=config_refund,
+    interrupt_before=["tools"],
+)
+
+state = agent.get_state(config_refund)
+for msg in state.values["messages"]:
+    if hasattr(msg, "tool_calls") and msg.tool_calls:
+        for tc in msg.tool_calls:
+            print(f"Pending: {tc['name']}({tc['args']})")
+
+result = agent.invoke(Command(resume=True), config=config_refund)
+print(result["messages"][-1].content)
+```
+
+## Step 8: PII Protection in Action
+
+The middleware redacts sensitive data before the agent processes it:
+
+```python
+config_pii = {"configurable": {"thread_id": "pii-test-001"}}
+
+result = agent.invoke(
+    {"messages": [HumanMessage(
+        content="My name is Carol, email carol@example.com, card 4111-1111-1111-1111. I need help with order ORD-3345."
+    )]},
+    config=config_pii,
+)
+ticket = result["structured_response"]
+print(f"Summary: {ticket.issue_summary}")
+print(f"Resolution: {ticket.resolution}")
+```
+
+The agent never sees the raw email or credit card number — they are redacted before processing.
+
+## Full Code
+
+```python
+from langchain.chat_models import init_chat_model
+from langchain_core.messages import HumanMessage
+from langchain_core.tools import tool
+from langgraph.prebuilt import create_react_agent
+from langgraph.prebuilt.middleware import PIIMiddleware
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import Command
+from pydantic import BaseModel, Field
+from typing import Optional
+from enum import Enum
+
+class TicketCategory(str, Enum):
+    billing = "billing"
+    technical = "technical"
+    refund = "refund"
+    general = "general"
+
+class SupportTicket(BaseModel):
+    customer_name: str = Field(description="The customer's name")
+    issue_summary: str = Field(description="Brief summary of the issue")
+    category: TicketCategory = Field(description="Ticket category")
+    priority: str = Field(description="Priority: low, medium, or high")
+    resolution: str = Field(description="Proposed resolution or next steps")
+    requires_refund: bool = Field(description="Whether a refund is needed")
+    refund_amount: Optional[float] = Field(default=None, description="Refund amount if applicable")
+
+@tool
+def process_refund(order_id: str, amount: float, reason: str) -> str:
+    """Process a refund for a customer order. This action requires approval and cannot be undone."""
+    return f"Refund of ${amount:.2f} processed for order {order_id}. Reason: {reason}"
+
+model = init_chat_model("gpt-4o-mini", model_provider="openai")
+checkpointer = InMemorySaver()
+pii_middleware = PIIMiddleware(strategy="redact")
+
+agent = create_react_agent(
+    model=model,
+    tools=[process_refund],
+    prompt=(
+        "You are a customer service agent for an online store. "
+        "Help customers with billing, technical issues, and refunds. "
+        "Always be polite. Use process_refund for refund requests. "
+        "Summarize each interaction as a support ticket."
+    ),
+    response_format=SupportTicket,
+    checkpointer=checkpointer,
+    middleware=[pii_middleware],
+)
+
+config = {"configurable": {"thread_id": "demo-001"}}
+
+result = agent.invoke(
+    {"messages": [HumanMessage(content="Hi, I'm Alice. My order ORD-5521 arrived damaged. I need a refund of $899.")]},
+    config=config,
+    interrupt_before=["tools"],
+)
+
+state = agent.get_state(config)
+for msg in state.values["messages"]:
+    if hasattr(msg, "tool_calls") and msg.tool_calls:
+        for tc in msg.tool_calls:
+            print(f"Pending: {tc['name']}({tc['args']})")
+
+result = agent.invoke(Command(resume=True), config=config)
+ticket = result["structured_response"]
+print(f"Customer: {ticket.customer_name}")
+print(f"Category: {ticket.category}")
+print(f"Priority: {ticket.priority}")
+print(f"Resolution: {ticket.resolution}")
+print(f"Refund: ${ticket.refund_amount}")
+```
+
+## Key Takeaways
+
+- Combine `PIIMiddleware`, `InMemorySaver`, `response_format`, and `interrupt_before` in a single agent
+- Pydantic schemas enforce structured ticket output with `response_format=SupportTicket`
+- `PIIMiddleware(strategy="redact")` protects sensitive customer data before the agent sees it
+- `InMemorySaver` with `thread_id` maintains conversation context across multiple turns
+- `interrupt_before=["tools"]` pauses for human approval on sensitive actions like refunds
+- `Command(resume=True)` approves pending actions; pass a string to reject

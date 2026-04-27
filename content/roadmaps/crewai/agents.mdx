@@ -1,0 +1,86 @@
+# Defining Agents with Roles & Goals
+
+Agents are the core building block of CrewAI. Each agent is an autonomous unit with a clear identity that guides its behavior.
+
+## Anatomy of an Agent
+
+Every CrewAI agent has these key properties:
+
+```python
+from crewai import Agent
+
+agent = Agent(
+    role="Data Analyst",
+    goal="Analyze datasets and extract actionable insights",
+    backstory="You are a senior data analyst with 10 years of experience in business intelligence. You excel at finding patterns in data and communicating findings clearly.",
+    verbose=True,
+    allow_delegation=False,
+)
+```
+
+### Properties Explained
+
+| Property | Purpose |
+|----------|---------|
+| `role` | The agent's job title — shapes how the LLM approaches tasks |
+| `goal` | What the agent is trying to achieve — drives decision-making |
+| `backstory` | Context and expertise — gives the agent a "personality" and domain knowledge |
+| `verbose` | Whether to print the agent's thought process |
+| `allow_delegation` | Whether this agent can delegate work to other agents in the crew |
+
+## Writing Effective Roles
+
+The role should be **specific and professional**:
+
+```python
+# Too vague
+role="Helper"
+
+# Much better
+role="Senior Backend Engineer specializing in Python microservices"
+```
+
+## Writing Effective Goals
+
+Goals should be **action-oriented and measurable**:
+
+```python
+# Too vague
+goal="Help with code"
+
+# Much better
+goal="Review Python code for bugs, security issues, and performance problems, providing specific fix suggestions"
+```
+
+## Writing Effective Backstories
+
+Backstories give the agent domain expertise and a consistent personality:
+
+```python
+backstory="""You are a security-focused code reviewer with 8 years of experience 
+at top tech companies. You have deep expertise in OWASP Top 10 vulnerabilities 
+and Python-specific security pitfalls. You believe in actionable feedback — 
+every issue you flag comes with a concrete fix."""
+```
+
+## Agent with Tools
+
+Agents become much more powerful when equipped with tools:
+
+```python
+from crewai_tools import SerperDevTool, WebsiteSearchTool
+
+researcher = Agent(
+    role="Market Researcher",
+    goal="Gather competitive intelligence from the web",
+    backstory="You are a market research analyst skilled at finding and synthesizing information from multiple online sources.",
+    tools=[SerperDevTool(), WebsiteSearchTool()],
+)
+```
+
+## Key Takeaways
+
+- Agents are defined by their **role**, **goal**, and **backstory**
+- Specific, detailed descriptions produce dramatically better results
+- Tools extend what an agent can do beyond just LLM reasoning
+- `allow_delegation` controls whether agents can hand off work to teammates

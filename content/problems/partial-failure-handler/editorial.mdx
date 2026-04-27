@@ -1,0 +1,218 @@
+## Approach
+
+The bug is that the morning briefing agent calls four tools (weather, news, stocks, calendar) in sequence, and when any one of them fails, the entire request crashes. The stock service throws a `ConnectionError`, and because there's no error isolation, the weather, news, and calendar results — which all succeeded — are lost. The user gets nothing instead of 75% of their briefing.
+
+The fix is to isolate each tool call in its own error boundary. Wrap each call in a try/except block so a failure in one tool doesn't propagate to the others. Collect results and errors separately: successful results go into the output normally, and failed tools get a placeholder message noting what went wrong. The final response includes everything that succeeded and clearly marks what failed. This way, the user always gets the maximum amount of useful information, even when some data sources are down.
+
+In LangGraph, this means wrapping each node function's logic in its own try/except so the graph continues to the next node even if one fails. In LangChain, the same pattern applies to the tool functions themselves — each tool catches its own exceptions and returns a failure message instead of raising.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+
+@tool
+def get_weather(city: str) -> str:
+    """Get current weather for a city."""
+    return f"Weather in {city}: 72°F, sunny"
+
+@tool
+def get_news(topic: str) -> str:
+    """Get latest news on a topic."""
+    return f"Latest news on {topic}: [headlines]"
+
+@tool
+def get_stock_price(ticker: str) -> str:
+    """Get current stock price."""
+    try:
+        raise ConnectionError("Stock service unavailable")
+    except ConnectionError as e:
+        return f"⚠️ Stock data unavailable ({e})"
+
+@tool
+def get_calendar(date: str) -> str:
+    """Get calendar events for a date."""
+    return f"Events for {date}: Team standup at 9am"
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a daily briefing assistant. Gather weather, news, stocks, and calendar info. If any source is unavailable, include the others and note which source failed."),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}"),
+])
+
+tools = [get_weather, get_news, get_stock_price, get_calendar]
+agent = create_tool_calling_agent(llm, tools, prompt)
+executor = AgentExecutor(agent=agent, tools=tools)
+
+result = executor.invoke({"input": "Give me my morning briefing for today"})
+print(result["output"])
+```
+
+### LangGraph
+
+```python
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict
+
+class State(TypedDict):
+    weather: str
+    news: str
+    stocks: str
+    calendar: str
+    summary: str
+
+def fetch_weather(state: State) -> State:
+    try:
+        return {"weather": "72°F, sunny"}
+    except Exception as e:
+        return {"weather": f"⚠️ Unavailable ({e})"}
+
+def fetch_news(state: State) -> State:
+    try:
+        return {"news": "Latest headlines: AI advances continue"}
+    except Exception as e:
+        return {"news": f"⚠️ Unavailable ({e})"}
+
+def fetch_stocks(state: State) -> State:
+    try:
+        raise ConnectionError("Stock service unavailable")
+    except Exception as e:
+        return {"stocks": f"⚠️ Unavailable ({e})"}
+
+def fetch_calendar(state: State) -> State:
+    try:
+        return {"calendar": "Team standup at 9am"}
+    except Exception as e:
+        return {"calendar": f"⚠️ Unavailable ({e})"}
+
+def summarize(state: State) -> State:
+    parts = [
+        f"Weather: {state['weather']}",
+        f"News: {state['news']}",
+        f"Stocks: {state['stocks']}",
+        f"Calendar: {state['calendar']}",
+    ]
+    return {"summary": "Morning Briefing:\n- " + "\n- ".join(parts)}
+
+graph = StateGraph(State)
+graph.add_node("weather", fetch_weather)
+graph.add_node("news", fetch_news)
+graph.add_node("stocks", fetch_stocks)
+graph.add_node("calendar", fetch_calendar)
+graph.add_node("summarize", summarize)
+
+graph.add_edge(START, "weather")
+graph.add_edge("weather", "news")
+graph.add_edge("news", "stocks")
+graph.add_edge("stocks", "calendar")
+graph.add_edge("calendar", "summarize")
+graph.add_edge("summarize", END)
+
+app = graph.compile()
+
+result = app.invoke({"weather": "", "news": "", "stocks": "", "calendar": "", "summary": ""})
+print(result["summary"])
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from crewai.tools import tool
+
+@tool
+def get_weather(city: str) -> str:
+    """Get current weather for a city."""
+    return f"Weather in {city}: 72°F, sunny"
+
+@tool
+def get_news(topic: str) -> str:
+    """Get latest news on a topic."""
+    return f"Latest news on {topic}: [headlines]"
+
+@tool
+def get_stock_price(ticker: str) -> str:
+    """Get current stock price."""
+    try:
+        raise ConnectionError("Stock service unavailable")
+    except ConnectionError as e:
+        return f"\u26a0\ufe0f Stock data unavailable ({e})"
+
+@tool
+def get_calendar(date: str) -> str:
+    """Get calendar events for a date."""
+    return f"Events for {date}: Team standup at 9am"
+
+briefing_agent = Agent(
+    role="Daily Briefing Assistant",
+    goal="Gather weather, news, stocks, and calendar info for a daily briefing",
+    backstory="You are a daily briefing assistant. If any source is unavailable, include the others and note which source failed.",
+    tools=[get_weather, get_news, get_stock_price, get_calendar],
+)
+
+task = Task(
+    description="Give me my morning briefing for today. Gather weather, news, stocks, and calendar info. If any source fails, include the others and note what failed.",
+    expected_output="A morning briefing with all available data and notes about any unavailable sources",
+    agent=briefing_agent,
+)
+
+crew = Crew(agents=[briefing_agent], tasks=[task])
+result = crew.kickoff()
+print(result)
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from agents.tool import function_tool
+
+@function_tool
+def get_weather(city: str) -> str:
+    """Get current weather for a city."""
+    return f"Weather in {city}: 72°F, sunny"
+
+@function_tool
+def get_news(topic: str) -> str:
+    """Get latest news on a topic."""
+    return f"Latest news on {topic}: [headlines]"
+
+@function_tool
+def get_stock_price(ticker: str) -> str:
+    """Get current stock price."""
+    try:
+        raise ConnectionError("Stock service unavailable")
+    except ConnectionError as e:
+        return f"\u26a0\ufe0f Stock data unavailable ({e})"
+
+@function_tool
+def get_calendar(date: str) -> str:
+    """Get calendar events for a date."""
+    return f"Events for {date}: Team standup at 9am"
+
+agent = Agent(
+    name="Daily Briefing Assistant",
+    instructions="You are a daily briefing assistant. Gather weather, news, stocks, and calendar info. If any source is unavailable, include the others and note which source failed.",
+    tools=[get_weather, get_news, get_stock_price, get_calendar],
+)
+
+result = Runner.run_sync(agent, "Give me my morning briefing for today")
+print(result.final_output)
+```
+
+## Why This Works
+
+Each tool or node function handles its own exceptions internally, so an error in one never propagates to the others. When the stock service throws a `ConnectionError`, the `fetch_stocks` function catches it and returns a failure placeholder instead of letting the exception crash the pipeline. The other nodes (weather, news, calendar) are completely unaffected and return their results normally. The `summarize` node then aggregates everything — successful results and failure markers alike — into a single coherent briefing. The user sees three out of four data points plus a clear note about what's missing, instead of seeing nothing at all.
+
+## Key Takeaways
+
+- Isolate each tool or data source in its own error boundary so one failure doesn't take down the entire request.
+- Always return partial results when possible — 75% of an answer is far better than 0%.
+- Clearly report which tools failed and why, so users know what's missing and can act accordingly.

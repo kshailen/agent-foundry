@@ -1,0 +1,122 @@
+## Approach
+
+The root cause of this bug is that the system prompt encourages the agent to "answer questions thoroughly" without any guardrails on fabricating information. Large language models are prone to hallucinating plausible-looking URLs, citations, and links when asked for resources — especially when the prompt rewards thoroughness over accuracy. The search tool returns real results, but the model supplements them with invented URLs from its training data.
+
+The fix is purely a system prompt change. We add explicit instructions that forbid the agent from generating any URL, link, or citation that did not come directly from a tool's output. When the agent lacks a verified source, it must say so transparently rather than filling the gap with a fabricated link. This preserves helpfulness — the agent can still summarize, give guidance, and suggest next steps — while eliminating the trust-destroying behavior of presenting fake URLs as real.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_community.tools import DuckDuckGoSearchRun
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+search = DuckDuckGoSearchRun()
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", (
+        "You are a helpful research assistant. Answer questions thoroughly using information from your tools.\n\n"
+        "STRICT RULES:\n"
+        "- Never fabricate, guess, or invent URLs, links, or citations.\n"
+        "- Only include a URL in your response if it was explicitly returned by a tool you called.\n"
+        "- If your search results do not contain a specific URL for a claim, do NOT make one up. "
+        "Instead, summarize what you found and say: 'I don't have a verified link for this.'\n"
+        "- You may still provide helpful summaries, guidance, and next steps based on search snippets, "
+        "but clearly distinguish between information from search results and your general knowledge.\n"
+        "- When in doubt, err on the side of transparency — tell the user what you know and what you couldn't verify."
+    )),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}"),
+])
+
+agent = create_tool_calling_agent(llm, [search], prompt)
+executor = AgentExecutor(agent=agent, tools=[search])
+
+result = executor.invoke({"input": "What are the best resources to learn LangChain?"})
+print(result["output"])
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from agents.tool import function_tool
+import httpx
+
+@function_tool
+def search_web(query: str) -> str:
+    """Search the web for information."""
+    return f"Search results for: {query}"
+
+agent = Agent(
+    name="Research Assistant",
+    instructions=(
+        "You are a helpful research assistant. Answer questions thoroughly using information from your tools.\n\n"
+        "STRICT RULES:\n"
+        "- Never fabricate, guess, or invent URLs, links, or citations.\n"
+        "- Only include a URL in your response if it was explicitly returned by a tool you called.\n"
+        "- If your search results do not contain a specific URL for a claim, do NOT make one up. "
+        "Instead, summarize what you found and say: 'I don't have a verified link for this.'\n"
+        "- You may still provide helpful summaries, guidance, and next steps based on search snippets, "
+        "but clearly distinguish between information from search results and your general knowledge.\n"
+        "- When in doubt, err on the side of transparency — tell the user what you know and what you couldn't verify."
+    ),
+    tools=[search_web],
+)
+
+result = Runner.run_sync(agent, "What are the best resources to learn about AI agents?")
+print(result.final_output)
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from crewai.tools import tool
+
+@tool
+def search_web(query: str) -> str:
+    """Search the web for information."""
+    return f"Search results for: {query}"
+
+assistant = Agent(
+    role="Research Assistant",
+    goal=(
+        "Answer questions thoroughly using information from your tools.\n\n"
+        "STRICT RULES:\n"
+        "- Never fabricate, guess, or invent URLs, links, or citations.\n"
+        "- Only include a URL in your response if it was explicitly returned by a tool you called.\n"
+        "- If your search results do not contain a specific URL for a claim, do NOT make one up. "
+        "Instead, summarize what you found and say: 'I don't have a verified link for this.'\n"
+        "- You may still provide helpful summaries, guidance, and next steps based on search snippets, "
+        "but clearly distinguish between information from search results and your general knowledge.\n"
+        "- When in doubt, err on the side of transparency — tell the user what you know and what you couldn't verify."
+    ),
+    backstory="You are a helpful research assistant that never fabricates URLs or citations.",
+    tools=[search_web],
+)
+
+task = Task(
+    description="What are the best resources to learn about AI agents?",
+    expected_output="A helpful answer with resources, only including URLs that came from search results",
+    agent=assistant,
+)
+
+crew = Crew(agents=[assistant], tasks=[task])
+result = crew.kickoff()
+print(result)
+```
+
+## Why This Works
+
+The key insight is that hallucination happens when the model is rewarded for completeness but not penalized for fabrication. By adding an explicit "never fabricate URLs" rule and telling the agent what to do instead (summarize snippets, state uncertainty), we redirect the model's helpfulness instinct into a safe channel. The agent remains useful — it still searches, summarizes, and guides — but it no longer fills knowledge gaps with invented links. This pattern of "constrained helpfulness" is foundational in production agent design.
+
+## Key Takeaways
+
+- System prompts must explicitly forbid hallucination of verifiable artifacts like URLs, citations, and data points.
+- Telling the model what to do when it lacks information (e.g., "say you don't have a verified link") is just as important as telling it what not to do.
+- Adding grounding rules to the prompt does not make the agent less helpful — it makes it more trustworthy.

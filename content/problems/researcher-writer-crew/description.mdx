@@ -1,0 +1,39 @@
+## The Problem
+
+You have a two-agent crew for generating market reports: a **researcher** gathers industry data and a **writer** drafts an executive summary. The problem is that the writer **ignores the researcher's output** and generates a report from scratch. The result is a report full of generic or hallucinated statistics that don't match the research. Your task is to **fix the context passing** so the writer receives and uses the researcher's actual findings.
+
+## Examples
+
+### Example 1
+
+**User input:** Industry: electric vehicles
+
+**Current (bad) output:** The researcher finds specific EV market statistics (e.g., "global EV sales grew 35% in 2024"). The writer produces a report with completely different numbers it made up, ignoring the research.
+
+**Expected (good) output:** The writer's report directly references the researcher's findings: "According to our research, global EV sales grew 35% in 2024…" and builds the executive summary around those data points.
+
+### Example 2
+
+**User input:** Industry: cloud computing
+
+**Current (bad) output:** The researcher identifies key players and market size. The writer drafts a generic cloud computing overview with no connection to the specific findings.
+
+**Expected (good) output:** The writer's summary synthesizes the researcher's specific findings about key players and market size into a coherent executive report.
+
+## Your Task
+
+Fix the starter code so that:
+
+- The **researcher** runs first and gathers market data.
+- The **writer** receives the researcher's output as explicit context/input.
+- The final report is grounded in the specific data points from the research, not generated independently.
+- Both agents remain separate with distinct roles.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Research context reaches the writer:** The writer agent receives the researcher's output as input context.
+- **Report grounded in research:** The final report references specific data points and findings from the research step.
+- **Roles remain separate:** The researcher and writer are distinct agents with different responsibilities.
+- **No hallucinated statistics:** The writer does not invent data that was not present in the research output.

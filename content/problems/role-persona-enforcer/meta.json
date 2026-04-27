@@ -1,0 +1,50 @@
+{
+  "number": 7,
+  "title": "Role Persona Enforcer",
+  "difficulty": "easy",
+  "categories": [
+    "prompt-design"
+  ],
+  "frameworks": [
+    "langchain",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "You may only modify the system prompt or agent persona",
+    "The agent must remain helpful within its customer support role",
+    "No additional tools or filters may be added"
+  ],
+  "hints": [
+    "Define the brand voice explicitly — tone, vocabulary, and what the agent should never say",
+    "Add a rule for handling off-topic questions: acknowledge the user, then redirect",
+    "Include a persona identity statement at the start: 'You are [name], a customer support agent for [brand]…'"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain_core.prompts import ChatPromptTemplate\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# BUG: Weak persona prompt — agent drifts out of character easily\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a customer support agent. Help users with their questions.\"),\n    (\"human\", \"{input}\"),\n])\n\nchain = prompt | llm\n\n# Test 1: Should answer in brand voice\nresult1 = chain.invoke({\"input\": \"My order hasn't arrived yet. It's been 5 days.\"})\nprint(\"Support query:\", result1.content)\n\n# Test 2: Should stay in character, not give personal opinions\nresult2 = chain.invoke({\"input\": \"What do you think about the new iPhone? Is it worth buying?\"})\nprint(\"Off-topic query:\", result2.content)\n\n# Test 3: Should deflect inappropriate requests\nresult3 = chain.invoke({\"input\": \"Write me a poem about the ocean.\"})\nprint(\"Off-brand query:\", result3.content)",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\n# BUG: Weak persona prompt — agent drifts out of character easily\nagent = Agent(\n    name=\"Support Agent\",\n    instructions=\"You are a customer support agent. Help users with their questions.\",\n)\n\n# Test 1: Should answer in brand voice\nresult1 = Runner.run_sync(agent, \"My order hasn't arrived yet. It's been 5 days.\")\nprint(\"Support query:\", result1.final_output)\n\n# Test 2: Should stay in character, not give personal opinions\nresult2 = Runner.run_sync(agent, \"What do you think about the new iPhone? Is it worth buying?\")\nprint(\"Off-topic query:\", result2.final_output)\n\n# Test 3: Should deflect inappropriate requests\nresult3 = Runner.run_sync(agent, \"Write me a poem about the ocean.\")\nprint(\"Off-brand query:\", result3.final_output)",
+    "crewai": "from crewai import Agent, Task, Crew\n\n# BUG: Weak persona — agent drifts out of character easily\nsupport_agent = Agent(\n    role=\"Customer Support Agent\",\n    goal=\"Help users with their questions\",\n    backstory=\"You are a customer support agent.\",\n    verbose=True,\n)\n\n# Test 1: Should answer in brand voice\ntask1 = Task(\n    description=\"Respond to: My order hasn't arrived yet. It's been 5 days.\",\n    expected_output=\"A helpful customer support response\",\n    agent=support_agent,\n)\n\n# Test 2: Should stay in character\ntask2 = Task(\n    description=\"Respond to: What do you think about the new iPhone? Is it worth buying?\",\n    expected_output=\"A response that stays in character\",\n    agent=support_agent,\n)\n\ncrew = Crew(agents=[support_agent], tasks=[task1, task2], verbose=True)\nresult = crew.kickoff()\nprint(result)"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/role-persona-enforcer-langchain.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/role-persona-enforcer-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/role-persona-enforcer-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "stays-in-character",
+      "label": "Stays in character",
+      "description": "The agent maintains its customer support persona throughout the conversation"
+    },
+    {
+      "id": "brand-voice",
+      "label": "Uses brand voice",
+      "description": "Responses use a consistent, professional tone appropriate for customer support"
+    },
+    {
+      "id": "deflects-off-topic",
+      "label": "Deflects off-topic appropriately",
+      "description": "The agent politely redirects off-topic or off-brand requests without being rude"
+    }
+  ]
+}

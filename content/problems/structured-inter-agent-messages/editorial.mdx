@@ -1,0 +1,204 @@
+## Approach
+
+The core problem is that the extractor agent passes its results as free-text prose to the analyzer. When the analyzer receives a paragraph like "The customer John reported a screen flickering issue with a ProMax laptop," it has to re-parse natural language to find the customer name, issue, and product — and it sometimes misses or misinterprets fields. This is fragile and lossy.
+
+The fix is to introduce structured message schemas using Pydantic models. The extractor outputs a JSON object conforming to a defined schema (with explicit fields for customer name, issue, and product), and the analyzer receives this structured data directly. No information is lost because fields are named and typed, not buried in prose.
+
+In CrewAI, you use the `output_json` parameter on tasks along with a Pydantic model to enforce structured output. In LangGraph, you use the LLM's `with_structured_output` method to get typed responses and store them in the state dict. The receiving agent then accesses individual fields by name rather than parsing free text.
+
+## Solution
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai import LLM
+from pydantic import BaseModel
+
+llm = LLM(model="gpt-4o-mini")
+
+class ExtractedFeedback(BaseModel):
+    customer_name: str
+    issue: str
+    product: str
+
+class SentimentAnalysis(BaseModel):
+    customer_name: str
+    product: str
+    sentiment: str
+    priority: str
+
+extractor = Agent(
+    role="Data Extractor",
+    goal="Extract key information from customer feedback",
+    backstory="You parse customer reviews for actionable insights.",
+    llm=llm,
+)
+
+analyzer = Agent(
+    role="Sentiment Analyzer",
+    goal="Analyze sentiment and priority from extracted data",
+    backstory="You classify feedback by sentiment and urgency.",
+    llm=llm,
+)
+
+extract_task = Task(
+    description="Extract the customer name, issue, and product from this feedback: '{feedback}'",
+    expected_output="A JSON object with customer_name, issue, and product fields",
+    agent=extractor,
+    output_json=ExtractedFeedback,
+)
+
+analyze_task = Task(
+    description="Analyze the sentiment and assign a priority level based on the extracted feedback data",
+    expected_output="A JSON object with customer_name, product, sentiment (positive/negative/neutral), and priority (low/medium/high)",
+    agent=analyzer,
+    output_json=SentimentAnalysis,
+    context=[extract_task],
+)
+
+crew = Crew(
+    agents=[extractor, analyzer],
+    tasks=[extract_task, analyze_task],
+    process=Process.sequential,
+)
+
+result = crew.kickoff(inputs={"feedback": "I'm John and my ProMax laptop screen flickered twice today. Very frustrated!"})
+print(result)
+```
+
+### LangGraph
+
+```python
+from langchain_openai import ChatOpenAI
+from langgraph.graph import StateGraph, START, END
+from pydantic import BaseModel
+from typing import TypedDict, Optional
+import json
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+class ExtractedFeedback(BaseModel):
+    customer_name: str
+    issue: str
+    product: str
+
+class SentimentAnalysis(BaseModel):
+    customer_name: str
+    product: str
+    sentiment: str
+    priority: str
+
+class State(TypedDict):
+    feedback: str
+    extracted: Optional[dict]
+    analysis: Optional[dict]
+
+def extract(state: State) -> dict:
+    structured_llm = llm.with_structured_output(ExtractedFeedback)
+    result = structured_llm.invoke(
+        f"Extract the customer name, issue, and product from: '{state['feedback']}'"
+    )
+    return {"extracted": result.model_dump()}
+
+def analyze(state: State) -> dict:
+    structured_llm = llm.with_structured_output(SentimentAnalysis)
+    extracted = state["extracted"]
+    prompt = (
+        f"Analyze sentiment and priority for this feedback:\n"
+        f"Customer: {extracted['customer_name']}\n"
+        f"Product: {extracted['product']}\n"
+        f"Issue: {extracted['issue']}"
+    )
+    result = structured_llm.invoke(prompt)
+    return {"analysis": result.model_dump()}
+
+graph = StateGraph(State)
+graph.add_node("extract", extract)
+graph.add_node("analyze", analyze)
+graph.add_edge(START, "extract")
+graph.add_edge("extract", "analyze")
+graph.add_edge("analyze", END)
+
+app = graph.compile()
+result = app.invoke({
+    "feedback": "I'm John and my ProMax laptop screen flickered twice today. Very frustrated!",
+    "extracted": None,
+    "analysis": None,
+})
+print(json.dumps(result["analysis"], indent=2))
+```
+
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from pydantic import BaseModel
+import json
+
+
+class ExtractedFeedback(BaseModel):
+    customer_name: str
+    issue: str
+    product: str
+
+
+class SentimentAnalysis(BaseModel):
+    customer_name: str
+    product: str
+    sentiment: str
+    priority: str
+
+
+def extract_feedback(feedback: str) -> dict:
+    extractor = Agent(
+        name="Data Extractor",
+        instructions=(
+            "Extract the customer name, issue, and product from customer feedback. "
+            "Respond with ONLY a JSON object with keys: customer_name, issue, product."
+        ),
+    )
+    result = Runner.run_sync(
+        extractor,
+        f"Extract the customer name, issue, and product from this feedback: '{feedback}'",
+    )
+    return json.loads(result.final_output)
+
+
+def analyze_feedback(extracted: dict) -> dict:
+    analyzer = Agent(
+        name="Sentiment Analyzer",
+        instructions=(
+            "Analyze sentiment and assign a priority level from the structured feedback data. "
+            "Respond with ONLY a JSON object with keys: customer_name, product, sentiment (positive/negative/neutral), priority (low/medium/high)."
+        ),
+    )
+    prompt = (
+        f"Analyze sentiment and priority for this feedback:\n"
+        f"Customer: {extracted['customer_name']}\n"
+        f"Product: {extracted['product']}\n"
+        f"Issue: {extracted['issue']}"
+    )
+    result = Runner.run_sync(analyzer, prompt)
+    return json.loads(result.final_output)
+
+
+feedback = "I'm John and my ProMax laptop screen flickered twice today. Very frustrated!"
+extracted = extract_feedback(feedback)
+print("Extracted:", json.dumps(extracted, indent=2))
+analysis = analyze_feedback(extracted)
+print("Analysis:", json.dumps(analysis, indent=2))
+```
+
+## Why This Works
+
+Structured schemas eliminate the ambiguity of free-text inter-agent communication. When the extractor outputs `{"customer_name": "John", "issue": "screen flickered twice", "product": "ProMax laptop"}`, there is zero ambiguity about which field contains which information. The analyzer can access `extracted["customer_name"]` directly instead of trying to parse a sentence for a name.
+
+Pydantic models also provide validation — if the LLM omits a required field, the schema enforcement catches it immediately rather than silently propagating missing data through the pipeline.
+
+## Key Takeaways
+
+- Free-text inter-agent communication is fragile — fields get lost, misinterpreted, or reformatted as they pass between agents.
+- Pydantic models (or equivalent schemas) enforce explicit field names and types, ensuring all data survives agent boundaries intact.
+- In CrewAI, `output_json` on tasks enforces structured output; in LangChain/LangGraph, `with_structured_output` achieves the same with any Pydantic model.

@@ -1,0 +1,300 @@
+## Approach
+
+The starter code has a rigid retrieve-then-answer pipeline with no decision logic. Every query — from complex enterprise questions to "What is 2 + 2?" — gets routed through the vector store. This wastes resources on trivial queries, pollutes simple answers with irrelevant document context, and cannot handle complex queries that need multiple retrieval rounds.
+
+The fix is to make the agent agentic: give it the ability to decide when to retrieve, what query to use, and whether the results are sufficient. This requires three additions. First, a routing step that classifies queries as needing retrieval or direct answer. Second, a query formulation step where the agent generates a targeted search query. Third, an evaluation step after retrieval that checks if the results are sufficient and can trigger another retrieval round with a refined query if needed. LangGraph's conditional edges make this loop structure natural.
+
+## Solution
+
+### LangGraph
+
+```python
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict, Literal
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="Our enterprise plan includes SSO, audit logs, and 99.9% SLA."),
+    Document(page_content="The API rate limit for enterprise customers is 10,000 requests per minute."),
+    Document(page_content="Data residency options: US-East, EU-West, and AP-Southeast regions."),
+    Document(page_content="Custom integrations require a minimum 12-month contract."),
+    Document(page_content="Our SOC 2 Type II certification was renewed in January 2024."),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+
+class State(TypedDict):
+    question: str
+    search_query: str
+    context: str
+    answer: str
+    needs_retrieval: bool
+    retrieval_sufficient: bool
+    retrieval_attempts: int
+
+def route_query(state: State) -> State:
+    response = llm.invoke(
+        f"Determine if this question requires searching a knowledge base about "
+        f"enterprise software products, or if it can be answered directly from "
+        f"general knowledge. Reply with ONLY 'retrieve' or 'direct'.\n\n"
+        f"Question: {state['question']}"
+    )
+    needs_retrieval = "retrieve" in response.content.lower()
+    return {"needs_retrieval": needs_retrieval, "retrieval_attempts": 0}
+
+def formulate_query(state: State) -> State:
+    response = llm.invoke(
+        f"Generate a specific search query to find information in enterprise "
+        f"software documentation for this question. Return ONLY the search query.\n\n"
+        f"Question: {state['question']}"
+    )
+    return {"search_query": response.content}
+
+def retrieve(state: State) -> State:
+    query = state.get("search_query", state["question"])
+    docs = retriever.invoke(query)
+    context = "\n".join([doc.page_content for doc in docs])
+    attempts = state.get("retrieval_attempts", 0) + 1
+    return {"context": context, "retrieval_attempts": attempts}
+
+def evaluate_results(state: State) -> State:
+    response = llm.invoke(
+        f"Does the following context contain enough information to answer the question? "
+        f"Reply with ONLY 'sufficient' or 'insufficient'.\n\n"
+        f"Question: {state['question']}\n\n"
+        f"Context:\n{state['context']}"
+    )
+    sufficient = "sufficient" in response.content.lower()
+    return {"retrieval_sufficient": sufficient}
+
+def answer_with_context(state: State) -> State:
+    response = llm.invoke(
+        f"Answer the question based on the context below.\n\n"
+        f"Context:\n{state['context']}\n\n"
+        f"Question: {state['question']}"
+    )
+    return {"answer": response.content}
+
+def answer_directly(state: State) -> State:
+    response = llm.invoke(state["question"])
+    return {"answer": response.content}
+
+def route_decision(state: State) -> Literal["formulate_query", "answer_directly"]:
+    if state.get("needs_retrieval"):
+        return "formulate_query"
+    return "answer_directly"
+
+def eval_decision(state: State) -> Literal["answer_with_context", "formulate_query"]:
+    if state.get("retrieval_sufficient") or state.get("retrieval_attempts", 0) >= 2:
+        return "answer_with_context"
+    return "formulate_query"
+
+graph = StateGraph(State)
+graph.add_node("route", route_query)
+graph.add_node("formulate_query", formulate_query)
+graph.add_node("retrieve", retrieve)
+graph.add_node("evaluate", evaluate_results)
+graph.add_node("answer_with_context", answer_with_context)
+graph.add_node("answer_directly", answer_directly)
+
+graph.add_edge(START, "route")
+graph.add_conditional_edges("route", route_decision)
+graph.add_edge("formulate_query", "retrieve")
+graph.add_edge("retrieve", "evaluate")
+graph.add_conditional_edges("evaluate", eval_decision)
+graph.add_edge("answer_with_context", END)
+graph.add_edge("answer_directly", END)
+
+app = graph.compile()
+
+print(app.invoke({"question": "What is the enterprise API rate limit?"})["answer"])
+print(app.invoke({"question": "What is 2 + 2?"})["answer"])
+```
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="Our enterprise plan includes SSO, audit logs, and 99.9% SLA."),
+    Document(page_content="The API rate limit for enterprise customers is 10,000 requests per minute."),
+    Document(page_content="Data residency options: US-East, EU-West, and AP-Southeast regions."),
+    Document(page_content="Custom integrations require a minimum 12-month contract."),
+    Document(page_content="Our SOC 2 Type II certification was renewed in January 2024."),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+
+route_prompt = ChatPromptTemplate.from_messages([
+    ("system",
+     "Determine if this question requires searching a knowledge base about "
+     "enterprise software, or can be answered directly. Reply ONLY 'retrieve' or 'direct'."),
+    ("human", "{question}"),
+])
+
+answer_prompt = ChatPromptTemplate.from_messages([
+    ("system", "Answer the question based on the context.\n\nContext:\n{context}"),
+    ("human", "{question}"),
+])
+
+eval_prompt = ChatPromptTemplate.from_messages([
+    ("system",
+     "Does this context sufficiently answer the question? "
+     "Reply ONLY 'sufficient' or 'insufficient'."),
+    ("human", "Question: {question}\n\nContext: {context}"),
+])
+
+def ask(question: str) -> str:
+    route_chain = route_prompt | llm
+    route_result = route_chain.invoke({"question": question})
+
+    if "direct" in route_result.content.lower():
+        return llm.invoke(question).content
+
+    rewrite = llm.invoke(
+        f"Generate a specific search query for enterprise software docs. "
+        f"Return ONLY the query.\n\nQuestion: {question}"
+    ).content
+
+    for attempt in range(2):
+        docs = retriever.invoke(rewrite)
+        context = "\n".join([doc.page_content for doc in docs])
+
+        eval_chain = eval_prompt | llm
+        eval_result = eval_chain.invoke({"question": question, "context": context})
+
+        if "sufficient" in eval_result.content.lower() or attempt == 1:
+            answer_chain = answer_prompt | llm
+            return answer_chain.invoke({"context": context, "question": question}).content
+
+        rewrite = llm.invoke(
+            f"The previous search didn't find enough info. Generate a different "
+            f"search query.\n\nQuestion: {question}\nPrevious query: {rewrite}"
+        ).content
+
+print(ask("What is the enterprise API rate limit?"))
+print(ask("What is 2 + 2?"))
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai import LLM
+from crewai.tools import tool
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+
+llm = LLM(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="Our enterprise plan includes SSO, audit logs, and 99.9% SLA."),
+    Document(page_content="The API rate limit for enterprise customers is 10,000 requests per minute."),
+    Document(page_content="Data residency options: US-East, EU-West, and AP-Southeast regions."),
+    Document(page_content="Custom integrations require a minimum 12-month contract."),
+    Document(page_content="Our SOC 2 Type II certification was renewed in January 2024."),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+
+
+@tool
+def search_docs(query: str) -> str:
+    """Search the enterprise knowledge base for relevant documents. Use this for questions about enterprise software products, plans, APIs, certifications, and integrations. Do NOT use for general knowledge questions."""
+    docs = retriever.invoke(query)
+    return "\n".join([doc.page_content for doc in docs])
+
+
+rag_agent = Agent(
+    role="Knowledge Assistant",
+    goal="Answer questions accurately, using the search tool only when the question is about enterprise software products",
+    backstory=(
+        "You are a knowledge assistant for enterprise software documentation. "
+        "For questions about the enterprise product (plans, APIs, certifications, integrations, data residency), "
+        "use the search_docs tool to find answers. For general knowledge questions (math, science, common facts), "
+        "answer directly without using the tool."
+    ),
+    tools=[search_docs],
+    llm=llm,
+)
+
+for q in ["What is the enterprise API rate limit?", "What is 2 + 2?"]:
+    task = Task(description=q, expected_output="An accurate answer", agent=rag_agent)
+    crew = Crew(agents=[rag_agent], tasks=[task], process=Process.sequential)
+    result = crew.kickoff()
+    print(f"Q: {q}\nA: {result}\n")
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from agents.tool import function_tool
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="Our enterprise plan includes SSO, audit logs, and 99.9% SLA."),
+    Document(page_content="The API rate limit for enterprise customers is 10,000 requests per minute."),
+    Document(page_content="Data residency options: US-East, EU-West, and AP-Southeast regions."),
+    Document(page_content="Custom integrations require a minimum 12-month contract."),
+    Document(page_content="Our SOC 2 Type II certification was renewed in January 2024."),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+
+
+@function_tool
+def search_docs(query: str) -> str:
+    """Search the enterprise knowledge base for relevant documents. Use this for questions about enterprise software products, plans, APIs, certifications, and integrations. Do NOT use for general knowledge questions."""
+    docs = retriever.invoke(query)
+    return "\n".join([doc.page_content for doc in docs])
+
+
+agent = Agent(
+    name="Knowledge Assistant",
+    instructions=(
+        "You are a knowledge assistant for enterprise software documentation. "
+        "For questions about the enterprise product (plans, APIs, certifications, integrations, data residency), "
+        "use the search_docs tool to find answers. For general knowledge questions (math, science, common facts), "
+        "answer directly without using the tool."
+    ),
+    tools=[search_docs],
+    model="gpt-4o-mini",
+)
+
+for q in ["What is the enterprise API rate limit?", "What is 2 + 2?"]:
+    result = Runner.run_sync(agent, q)
+    print(f"Q: {q}\nA: {result.final_output}\n")
+```
+
+## Why This Works
+
+The routing step prevents trivial queries from polluting results with irrelevant document context. The query formulation step generates targeted searches that are more likely to find the right documents than raw user input. The evaluation loop allows the agent to try again with a refined query when the first retrieval is insufficient, handling complex multi-part questions that a single retrieval might miss. The max-attempts guard prevents infinite loops.
+
+## Key Takeaways
+
+- Not every query needs retrieval — routing prevents wasted computation and irrelevant context contamination.
+- Agent-formulated search queries outperform raw user input for retrieval, especially for complex or vague questions.
+- A retrieve-evaluate-retry loop with a max-attempts cap handles multi-part queries without risking infinite loops.

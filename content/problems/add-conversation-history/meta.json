@@ -1,0 +1,50 @@
+{
+  "number": 32,
+  "title": "Add Conversation History",
+  "difficulty": "easy",
+  "categories": [
+    "memory"
+  ],
+  "frameworks": [
+    "langchain",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "The agent must remember at least the last 5 turns of conversation",
+    "You may not use external databases or file storage",
+    "The conversation history must include both user and assistant messages"
+  ],
+  "hints": [
+    "Think about how to accumulate messages across multiple invocations",
+    "Most frameworks have a built-in concept of message history—check for a list or buffer you can pass between turns",
+    "Maintain a list of messages and pass it into each agent call so the model sees prior context"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom langchain_core.output_parsers import StrOutputParser\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# BUG: Each call is independent — the agent has no memory of prior turns\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a helpful assistant.\"),\n    (\"human\", \"{input}\"),\n])\n\nchain = prompt | llm | StrOutputParser()\n\n# Turn 1\nresponse1 = chain.invoke({\"input\": \"My name is Alice and I work at Acme Corp.\"})\nprint(\"Turn 1:\", response1)\n\n# Turn 2\nresponse2 = chain.invoke({\"input\": \"What company do I work at?\"})\nprint(\"Turn 2:\", response2)\n\n# Turn 3\nresponse3 = chain.invoke({\"input\": \"What is my name?\"})\nprint(\"Turn 3:\", response3)",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\n# BUG: Each run is independent — the agent has no memory of prior turns\nagent = Agent(\n    name=\"Assistant\",\n    instructions=\"You are a helpful assistant.\",\n)\n\n# Turn 1\nresult1 = Runner.run_sync(agent, \"My name is Alice and I work at Acme Corp.\")\nprint(\"Turn 1:\", result1.final_output)\n\n# Turn 2\nresult2 = Runner.run_sync(agent, \"What company do I work at?\")\nprint(\"Turn 2:\", result2.final_output)\n\n# Turn 3\nresult3 = Runner.run_sync(agent, \"What is my name?\")\nprint(\"Turn 3:\", result3.final_output)",
+    "crewai": "from crewai import Agent, Task, Crew, Process\nfrom crewai import LLM\n\nllm = LLM(model=\"gpt-4o-mini\")\n\nassistant = Agent(\n    role=\"Assistant\",\n    goal=\"Help the user with their questions\",\n    backstory=\"You are a helpful assistant.\",\n    llm=llm,\n)\n\n# BUG: Each task is independent — the agent has no memory of prior turns\n# Turn 1\ntask1 = Task(description=\"My name is Alice and I work at Acme Corp.\", expected_output=\"A friendly acknowledgment\", agent=assistant)\ncrew = Crew(agents=[assistant], tasks=[task1], process=Process.sequential)\nresult1 = crew.kickoff()\nprint(\"Turn 1:\", result1)\n\n# Turn 2\ntask2 = Task(description=\"What company do I work at?\", expected_output=\"The company name\", agent=assistant)\ncrew = Crew(agents=[assistant], tasks=[task2], process=Process.sequential)\nresult2 = crew.kickoff()\nprint(\"Turn 2:\", result2)\n\n# Turn 3\ntask3 = Task(description=\"What is my name?\", expected_output=\"The user's name\", agent=assistant)\ncrew = Crew(agents=[assistant], tasks=[task3], process=Process.sequential)\nresult3 = crew.kickoff()\nprint(\"Turn 3:\", result3)"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/add-conversation-history-langchain.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/add-conversation-history-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/add-conversation-history-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "remembers-name",
+      "label": "Remembers user's name",
+      "description": "When asked 'What is my name?' after introduction, the agent correctly recalls the name"
+    },
+    {
+      "id": "remembers-details",
+      "label": "Remembers contextual details",
+      "description": "The agent correctly recalls facts shared in earlier turns (e.g., workplace)"
+    },
+    {
+      "id": "multi-turn-coherent",
+      "label": "Coherent across 5+ turns",
+      "description": "The agent maintains context through at least 5 consecutive turns without losing information"
+    }
+  ]
+}

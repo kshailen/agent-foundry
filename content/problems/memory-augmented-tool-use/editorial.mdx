@@ -1,0 +1,205 @@
+## Approach
+
+The bug is that the agent calls tools on every query, even when it has already fetched the exact same data moments ago. Asking "What's the weather in Tokyo?" twice results in two API calls. Asking about AAPL stock price in two different phrasings also triggers two calls. This wastes API quota, increases latency, and costs money for no additional value.
+
+The fix adds a memory cache layer that sits between the agent and the tools. Before calling any tool, the system checks the cache for a matching result. If found, the cached result is returned without calling the tool. If not found, the tool is called and the result is stored in the cache for future queries. The agent's system prompt is updated to instruct it to check previously fetched data before making new tool calls, and to mention when it uses cached data.
+
+The cache is keyed by tool name and the normalized argument (e.g., `("get_weather", "tokyo")`). This handles the case where semantically identical queries use slightly different phrasing — the tool argument normalization ensures "Tokyo" and "tokyo" map to the same cache key.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+call_count = 0
+tool_cache = {}
+
+def cached_tool_call(tool_name: str, key: str, tool_fn):
+    global call_count
+    cache_key = (tool_name, key.lower().strip())
+    if cache_key in tool_cache:
+        return f"[CACHED] {tool_cache[cache_key]}"
+    result = tool_fn(key)
+    call_count += 1
+    print(f"  [API CALL #{call_count}] {tool_name}({key})")
+    tool_cache[cache_key] = result
+    return result
+
+@tool
+def get_weather(city: str) -> str:
+    """Get the current weather for a city."""
+    return cached_tool_call("get_weather", city, lambda c: f"Weather in {c}: 72°F, sunny.")
+
+@tool
+def get_stock_price(symbol: str) -> str:
+    """Get the current stock price for a ticker symbol."""
+    return cached_tool_call("get_stock_price", symbol, lambda s: f"{s.upper()}: $150.25 (+2.3%)")
+
+SYSTEM_PROMPT = """You are a helpful assistant with access to weather and stock tools.
+
+IMPORTANT: Before calling a tool, check if you have already fetched that data.
+If a tool result starts with [CACHED], mention that you are using previously fetched data.
+When data is fresh from an API call, present it normally."""
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", SYSTEM_PROMPT),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}"),
+])
+
+tools = [get_weather, get_stock_price]
+agent = create_tool_calling_agent(llm, tools, prompt)
+executor = AgentExecutor(agent=agent, tools=tools)
+
+# Query 1: First time — should call the tool
+print(executor.invoke({"input": "What's the weather in Tokyo?"})["output"])
+
+# Query 2: Same question — should use cached data
+print(executor.invoke({"input": "What's the weather in Tokyo?"})["output"])
+
+# Query 3: Different query — should call the tool
+print(executor.invoke({"input": "What's AAPL stock price?"})["output"])
+
+# Query 4: Same stock query — should use cache
+print(executor.invoke({"input": "What's the price of AAPL?"})["output"])
+
+print(f"\nTotal API calls made: {call_count} (should be 2, not 4)")
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from agents.tool import function_tool
+
+call_count = 0
+tool_cache = {}
+
+def cached_tool_call(tool_name: str, key: str, tool_fn):
+    global call_count
+    cache_key = (tool_name, key.lower().strip())
+    if cache_key in tool_cache:
+        return f"[CACHED] {tool_cache[cache_key]}"
+    result = tool_fn(key)
+    call_count += 1
+    print(f"  [API CALL #{call_count}] {tool_name}({key})")
+    tool_cache[cache_key] = result
+    return result
+
+@function_tool
+def get_weather(city: str) -> str:
+    """Get the current weather for a city."""
+    return cached_tool_call("get_weather", city, lambda c: f"Weather in {c}: 72°F, sunny.")
+
+@function_tool
+def get_stock_price(symbol: str) -> str:
+    """Get the current stock price for a ticker symbol."""
+    return cached_tool_call("get_stock_price", symbol, lambda s: f"{s.upper()}: $150.25 (+2.3%)")
+
+SYSTEM_PROMPT = """You are a helpful assistant with access to weather and stock tools.
+
+IMPORTANT: Before calling a tool, check if you have already fetched that data.
+If a tool result starts with [CACHED], mention that you are using previously fetched data.
+When data is fresh from an API call, present it normally."""
+
+agent = Agent(
+    name="Assistant",
+    instructions=SYSTEM_PROMPT,
+    tools=[get_weather, get_stock_price],
+)
+
+# Query 1: First time — should call the tool
+result1 = Runner.run_sync(agent, "What's the weather in Tokyo?")
+print(result1.final_output)
+
+# Query 2: Same question — should use cached data
+result2 = Runner.run_sync(agent, "What's the weather in Tokyo?")
+print(result2.final_output)
+
+# Query 3: Different query — should call the tool
+result3 = Runner.run_sync(agent, "What's AAPL stock price?")
+print(result3.final_output)
+
+# Query 4: Same stock query — should use cache
+result4 = Runner.run_sync(agent, "What's the price of AAPL?")
+print(result4.final_output)
+
+print(f"\nTotal API calls made: {call_count} (should be 2, not 4)")
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from crewai.tools import tool
+
+call_count = 0
+tool_cache = {}
+
+def cached_tool_call(tool_name: str, key: str, tool_fn):
+    global call_count
+    cache_key = (tool_name, key.lower().strip())
+    if cache_key in tool_cache:
+        return f"[CACHED] {tool_cache[cache_key]}"
+    result = tool_fn(key)
+    call_count += 1
+    print(f"  [API CALL #{call_count}] {tool_name}({key})")
+    tool_cache[cache_key] = result
+    return result
+
+@tool
+def get_weather(city: str) -> str:
+    """Get the current weather for a city."""
+    return cached_tool_call("get_weather", city, lambda c: f"Weather in {c}: 72°F, sunny.")
+
+@tool
+def get_stock_price(symbol: str) -> str:
+    """Get the current stock price for a ticker symbol."""
+    return cached_tool_call("get_stock_price", symbol, lambda s: f"{s.upper()}: $150.25 (+2.3%)")
+
+SYSTEM_PROMPT = """You are a helpful assistant with access to weather and stock tools.
+
+IMPORTANT: Before calling a tool, check if you have already fetched that data.
+If a tool result starts with [CACHED], mention that you are using previously fetched data.
+When data is fresh from an API call, present it normally."""
+
+assistant = Agent(
+    role="Assistant",
+    goal="Help users with weather and stock information",
+    backstory=SYSTEM_PROMPT,
+    tools=[get_weather, get_stock_price],
+)
+
+for query in [
+    "What's the weather in Tokyo?",
+    "What's the weather in Tokyo?",
+    "What's AAPL stock price?",
+    "What's the price of AAPL?",
+]:
+    task = Task(description=query, expected_output="Relevant information", agent=assistant)
+    crew = Crew(agents=[assistant], tasks=[task])
+    print(crew.kickoff())
+
+print(f"\nTotal API calls made: {call_count} (should be 2, not 4)")
+```
+
+## Why This Works
+
+The caching layer intercepts every tool call and checks for a matching result before executing the actual API call. The cache key is a tuple of `(tool_name, normalized_argument)`, so asking for weather in "Tokyo" and "tokyo" resolves to the same cache entry. When a cache hit occurs, the cached result is returned immediately — no API call, no latency, no cost.
+
+The `[CACHED]` prefix in cached results serves two purposes: it signals to the agent that this data is from a previous fetch (so it can tell the user), and it makes the caching behavior transparent. The system prompt instructs the agent to mention when it uses cached data, maintaining honesty with the user about data freshness.
+
+This pattern is particularly valuable for tools that call external APIs with rate limits, usage costs, or latency. In a real system, you would add cache expiration (TTL) to ensure stale data is eventually refreshed, but for within-session caching, a simple dictionary is sufficient.
+
+## Key Takeaways
+
+- Caching tool results eliminates redundant API calls, reducing cost, latency, and rate-limit pressure.
+- Normalizing cache keys (lowercasing, stripping whitespace) handles minor phrasing variations in tool arguments.
+- Transparency about cached vs. fresh data builds user trust — the agent should mention when it uses previously fetched results.

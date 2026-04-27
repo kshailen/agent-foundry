@@ -1,0 +1,50 @@
+{
+  "number": 8,
+  "title": "Build a Weather Tool",
+  "difficulty": "easy",
+  "categories": [
+    "tool-calling"
+  ],
+  "frameworks": [
+    "langchain",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "The tool must have a proper docstring and type hints",
+    "The tool must handle invalid city names gracefully",
+    "The tool must return structured weather data, not free text"
+  ],
+  "hints": [
+    "Define the tool function with a clear docstring explaining what it does and its parameters",
+    "Use a dictionary as a simulated weather database and return a helpful error for unknown cities",
+    "Return a structured dictionary with keys like temperature, condition, and humidity"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain.agents import AgentExecutor, create_tool_calling_agent\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom langchain_core.tools import tool\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# TODO: Implement the weather lookup tool\n# Requirements:\n# 1. Add a proper docstring describing the tool and its parameters\n# 2. Add type hints for the function signature\n# 3. Use the WEATHER_DATA dict below as the data source\n# 4. Return a structured dict with: city, temperature, condition, humidity\n# 5. Handle invalid cities by returning a helpful error message\n\nWEATHER_DATA = {\n    \"new york\": {\"temperature\": \"72°F\", \"condition\": \"Sunny\", \"humidity\": \"45%\"},\n    \"london\": {\"temperature\": \"58°F\", \"condition\": \"Cloudy\", \"humidity\": \"78%\"},\n    \"tokyo\": {\"temperature\": \"68°F\", \"condition\": \"Clear\", \"humidity\": \"55%\"},\n    \"paris\": {\"temperature\": \"64°F\", \"condition\": \"Rainy\", \"humidity\": \"82%\"},\n    \"sydney\": {\"temperature\": \"75°F\", \"condition\": \"Partly Cloudy\", \"humidity\": \"60%\"},\n}\n\n@tool\ndef get_weather(city):\n    # TODO: Implement this tool\n    pass\n\ntools = [get_weather]\n\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a weather assistant. Use the weather tool to answer questions about the weather.\"),\n    (\"human\", \"{input}\"),\n    (\"placeholder\", \"{agent_scratchpad}\"),\n])\n\nagent = create_tool_calling_agent(llm, tools, prompt)\nexecutor = AgentExecutor(agent=agent, tools=tools)\n\n# Test\nresult = executor.invoke({\"input\": \"What's the weather in Tokyo?\"})\nprint(result[\"output\"])",
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom agents.tool import function_tool\n\n# TODO: Implement the weather lookup tool\n# Requirements:\n# 1. Add a proper docstring describing the tool and its parameters\n# 2. Add type hints for the function signature\n# 3. Use the WEATHER_DATA dict below as the data source\n# 4. Return a structured dict with: city, temperature, condition, humidity\n# 5. Handle invalid cities by returning a helpful error message\n\nWEATHER_DATA = {\n    \"new york\": {\"temperature\": \"72°F\", \"condition\": \"Sunny\", \"humidity\": \"45%\"},\n    \"london\": {\"temperature\": \"58°F\", \"condition\": \"Cloudy\", \"humidity\": \"78%\"},\n    \"tokyo\": {\"temperature\": \"68°F\", \"condition\": \"Clear\", \"humidity\": \"55%\"},\n    \"paris\": {\"temperature\": \"64°F\", \"condition\": \"Rainy\", \"humidity\": \"82%\"},\n    \"sydney\": {\"temperature\": \"75°F\", \"condition\": \"Partly Cloudy\", \"humidity\": \"60%\"},\n}\n\n@function_tool\ndef get_weather(city):\n    # TODO: Implement this tool\n    pass\n\nagent = Agent(\n    name=\"Weather Assistant\",\n    instructions=\"You are a weather assistant. Use the weather tool to answer questions about the weather.\",\n    tools=[get_weather],\n)\n\n# Test\nresult = Runner.run_sync(agent, \"What's the weather in Tokyo?\")\nprint(result.final_output)",
+    "crewai": "from crewai import Agent, Task, Crew, Process\nfrom crewai import LLM\nfrom crewai.tools import tool\n\nllm = LLM(model=\"gpt-4o-mini\")\n\n# TODO: Implement the weather lookup tool\n# Requirements:\n# 1. Add a proper docstring describing the tool and its parameters\n# 2. Add type hints for the function signature\n# 3. Use the WEATHER_DATA dict below as the data source\n# 4. Return a structured dict with: city, temperature, condition, humidity\n# 5. Handle invalid cities by returning a helpful error message\n\nWEATHER_DATA = {\n    \"new york\": {\"temperature\": \"72°F\", \"condition\": \"Sunny\", \"humidity\": \"45%\"},\n    \"london\": {\"temperature\": \"58°F\", \"condition\": \"Cloudy\", \"humidity\": \"78%\"},\n    \"tokyo\": {\"temperature\": \"68°F\", \"condition\": \"Clear\", \"humidity\": \"55%\"},\n    \"paris\": {\"temperature\": \"64°F\", \"condition\": \"Rainy\", \"humidity\": \"82%\"},\n    \"sydney\": {\"temperature\": \"75°F\", \"condition\": \"Partly Cloudy\", \"humidity\": \"60%\"},\n}\n\n@tool\ndef get_weather(city):\n    # TODO: Implement this tool\n    pass\n\nagent = Agent(\n    role=\"Weather Assistant\",\n    goal=\"Answer questions about the weather\",\n    backstory=\"You are a weather assistant. Use the weather tool to answer questions about the weather.\",\n    tools=[get_weather],\n    llm=llm,\n)\n\ntask = Task(description=\"What's the weather in Tokyo?\", expected_output=\"Weather info\", agent=agent)\ncrew = Crew(agents=[agent], tasks=[task], process=Process.sequential)\nresult = crew.kickoff()\nprint(result)"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/build-a-weather-tool-langchain.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/build-a-weather-tool-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/build-a-weather-tool-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "proper-schema",
+      "label": "Tool has proper schema",
+      "description": "The tool has a descriptive docstring, type hints, and is properly decorated"
+    },
+    {
+      "id": "handles-invalid-cities",
+      "label": "Handles invalid cities",
+      "description": "The tool returns a helpful error message when given an unrecognized city name"
+    },
+    {
+      "id": "structured-data",
+      "label": "Returns structured weather data",
+      "description": "The tool returns a structured object with city, temperature, condition, and humidity"
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "number": 21,
+  "title": "Parallel Tool Execution",
+  "difficulty": "medium",
+  "categories": [
+    "tool-calling",
+    "orchestration"
+  ],
+  "frameworks": [
+    "langgraph",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "All three city weather lookups must execute in parallel, not sequentially",
+    "The total execution time must be roughly that of one lookup, not three",
+    "The agent must collect and present all results together",
+    "No changes to the weather tool's internal logic"
+  ],
+  "hints": [
+    "In LangChain, the LLM can emit multiple tool calls in a single response if prompted to fetch all cities at once",
+    "In LangGraph, use a fan-out/fan-in pattern with parallel branches in the graph",
+    "Make sure the agent prompt encourages fetching all cities simultaneously rather than one at a time"
+  ],
+  "starterCode": {
+    "langgraph": "from langchain_openai import ChatOpenAI\nfrom langchain_core.tools import tool\nfrom langgraph.prebuilt import create_react_agent\nimport time\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n@tool\ndef get_weather(city: str) -> str:\n    \"\"\"Get current weather for a city.\"\"\"\n    time.sleep(1)  # Simulates API latency\n    weather_data = {\n        \"new york\": \"72\u00b0F, Sunny\",\n        \"london\": \"58\u00b0F, Cloudy\",\n        \"tokyo\": \"68\u00b0F, Partly Cloudy\",\n    }\n    return weather_data.get(city.lower(), f\"Weather data not available for {city}\")\n\n# BUG: The agent calls get_weather sequentially for each city\n# TODO: Build a LangGraph workflow that fans out weather lookups in parallel\nagent = create_react_agent(llm, [get_weather])\n\nstart = time.time()\nresult = agent.invoke({\"messages\": [(\"human\", \"What's the weather in New York, London, and Tokyo?\")]})\nprint(f\"Time: {time.time() - start:.1f}s\")\nprint(result[\"messages\"][-1].content)",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai.tools import tool\nimport time\n\n@tool\ndef get_weather(city: str) -> str:\n    \"\"\"Get current weather for a city.\"\"\"\n    time.sleep(1)\n    weather_data = {\n        \"new york\": \"72\u00b0F, Sunny\",\n        \"london\": \"58\u00b0F, Cloudy\",\n        \"tokyo\": \"68\u00b0F, Partly Cloudy\",\n    }\n    return weather_data.get(city.lower(), f\"Weather data not available for {city}\")\n\n# BUG: The agent calls get_weather sequentially for each city\nweather_agent = Agent(\n    role=\"Weather Reporter\",\n    goal=\"Get weather for requested cities\",\n    backstory=\"You are a weather assistant.\",\n    tools=[get_weather],\n)\n\ntask = Task(\n    description=\"Get the current weather in New York, London, and Tokyo. Look up each city one at a time.\",\n    expected_output=\"Weather for all three cities\",\n    agent=weather_agent,\n)\n\ncrew = Crew(agents=[weather_agent], tasks=[task])\n\nstart = time.time()\nresult = crew.kickoff()\nprint(f\"Time: {time.time() - start:.1f}s\")\nprint(result)",
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom agents.tool import function_tool\nimport time\n\n@function_tool\ndef get_weather(city: str) -> str:\n    \"\"\"Get current weather for a city.\"\"\"\n    time.sleep(1)\n    weather_data = {\n        \"new york\": \"72\u00b0F, Sunny\",\n        \"london\": \"58\u00b0F, Cloudy\",\n        \"tokyo\": \"68\u00b0F, Partly Cloudy\",\n    }\n    return weather_data.get(city.lower(), f\"Weather data not available for {city}\")\n\n# BUG: The agent calls get_weather sequentially for each city\nagent = Agent(\n    name=\"Weather Reporter\",\n    instructions=\"You are a weather assistant. Get the weather for each city requested.\",\n    tools=[get_weather],\n)\n\nstart = time.time()\nresult = Runner.run_sync(agent, \"What's the weather in New York, London, and Tokyo?\")\nprint(f\"Time: {time.time() - start:.1f}s\")\nprint(result.final_output)"
+  },
+  "colabUrls": {
+    "langgraph": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/parallel-tool-execution-langgraph.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/parallel-tool-execution-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/parallel-tool-execution-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "parallel-calls",
+      "label": "Weather lookups run in parallel",
+      "description": "All three city lookups execute concurrently rather than one after another"
+    },
+    {
+      "id": "time-improvement",
+      "label": "Total time is roughly one lookup",
+      "description": "The wall-clock time is approximately 1 second, not 3 seconds"
+    },
+    {
+      "id": "all-results",
+      "label": "All city results are returned",
+      "description": "The agent presents weather data for all three cities in a single response"
+    }
+  ]
+}

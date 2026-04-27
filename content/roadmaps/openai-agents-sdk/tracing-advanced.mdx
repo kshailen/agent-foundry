@@ -1,0 +1,212 @@
+# Advanced Tracing & RunConfig
+
+The OpenAI Agents SDK ships with built-in tracing that records every LLM call, tool invocation, and handoff. For production systems, you need more — custom trace backends, sensitive data redaction, model input filtering, error handling strategies, and fine-grained run configuration. This topic covers the advanced tracing and `RunConfig` features that make agents production-ready.
+
+## Custom Trace Processors
+
+By default, traces are sent to the OpenAI backend. Use `add_trace_processor` to send traces to your own systems (logging, observability platforms, databases):
+
+```python
+from agents.tracing import add_trace_processor, TracingProcessor, Trace, Span
+
+class LoggingTraceProcessor(TracingProcessor):
+    def on_trace_start(self, trace: Trace) -> None:
+        print(f"[TRACE START] {trace.trace_id} - {trace.name}")
+
+    def on_trace_end(self, trace: Trace) -> None:
+        print(f"[TRACE END] {trace.trace_id}")
+
+    def on_span_start(self, span: Span) -> None:
+        print(f"  [SPAN START] {span.span_id} - {span.span_data}")
+
+    def on_span_end(self, span: Span) -> None:
+        print(f"  [SPAN END] {span.span_id}")
+
+add_trace_processor(LoggingTraceProcessor())
+```
+
+## Replacing All Trace Processors
+
+Use `set_trace_processors` to replace the default processor entirely:
+
+```python
+from agents.tracing import set_trace_processors
+
+set_trace_processors([LoggingTraceProcessor()])
+```
+
+This removes the built-in OpenAI trace exporter. Use this when you want traces sent exclusively to your own backend.
+
+## Sensitive Data Redaction
+
+Disable sensitive data in traces to comply with privacy policies:
+
+```python
+from agents import Runner, RunConfig
+
+result = await Runner.run(
+    agent,
+    "Process this customer's credit card ending in 4242",
+    run_config=RunConfig(trace_include_sensitive_data=False),
+)
+```
+
+When `trace_include_sensitive_data=False`, the SDK strips user inputs, LLM outputs, and tool arguments from trace data — only structural information (which tools were called, timing, success/failure) is retained.
+
+## RunConfig Deep Dive
+
+`RunConfig` controls every aspect of a run beyond the agent definition:
+
+```python
+from agents import RunConfig
+
+config = RunConfig(
+    model="gpt-4o",
+    max_turns=10,
+    trace_include_sensitive_data=False,
+    max_retries=3,
+    retry_delay=1.0,
+)
+
+result = await Runner.run(agent, "Analyze this data", run_config=config)
+```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `model` | `str \| Model` | Override the agent's model for this run |
+| `max_turns` | `int` | Maximum number of agent loop iterations |
+| `trace_include_sensitive_data` | `bool` | Whether to include sensitive data in traces |
+| `max_retries` | `int` | Number of retries for transient API errors |
+| `retry_delay` | `float` | Delay between retries in seconds |
+
+## Filtering Model Inputs with call_model_input_filter
+
+Use `call_model_input_filter` to modify or inspect the messages sent to the model before each LLM call:
+
+```python
+from agents import RunConfig
+
+def filter_model_input(messages):
+    """Log and optionally modify messages before they reach the model."""
+    print(f"Sending {len(messages)} messages to model")
+    for msg in messages:
+        if hasattr(msg, "content") and isinstance(msg.content, str):
+            if "CONFIDENTIAL" in msg.content:
+                msg.content = msg.content.replace("CONFIDENTIAL", "[REDACTED]")
+    return messages
+
+config = RunConfig(
+    call_model_input_filter=filter_model_input,
+)
+
+result = await Runner.run(agent, "Summarize this CONFIDENTIAL report", run_config=config)
+```
+
+## Error Handlers
+
+Configure error handlers in `RunConfig` to intercept and handle errors during the agent loop:
+
+```python
+from agents import RunConfig
+
+def handle_max_turns(error):
+    """Handle the case where the agent exceeds max_turns."""
+    print(f"Agent exceeded max turns: {error}")
+    return "I apologize, but I wasn't able to complete the task within the allowed steps. Please try breaking your request into smaller parts."
+
+config = RunConfig(
+    max_turns=5,
+    error_handlers={"max_turns": handle_max_turns},
+)
+
+result = await Runner.run(agent, "Do a very complex multi-step analysis", run_config=config)
+```
+
+## max_turns Handling
+
+`max_turns` limits how many iterations the agent loop can run. This prevents runaway agents and controls costs:
+
+```python
+from agents import Agent, Runner, RunConfig, function_tool
+
+@function_tool
+def research(topic: str) -> str:
+    """Research a topic."""
+    return f"Research results for: {topic}"
+
+research_agent = Agent(
+    name="Researcher",
+    instructions="Research topics thoroughly. Use the research tool multiple times if needed.",
+    tools=[research],
+)
+
+result = await Runner.run(
+    research_agent,
+    "Research quantum computing and its applications",
+    run_config=RunConfig(max_turns=3),
+)
+print(result.final_output)
+```
+
+## Agent Cloning with agent.clone()
+
+Use `agent.clone()` to create a modified copy of an agent without mutating the original:
+
+```python
+from agents import Agent
+
+base_agent = Agent(
+    name="Base Agent",
+    instructions="You are a helpful assistant.",
+    model="gpt-4o",
+)
+
+fast_clone = base_agent.clone(
+    name="Fast Agent",
+    model="gpt-4o-mini",
+)
+
+verbose_clone = base_agent.clone(
+    instructions="You are a helpful assistant. Provide detailed, thorough answers with examples.",
+)
+```
+
+This is useful for A/B testing, creating specialized variants, or overriding specific settings without redefining the entire agent.
+
+## Combining Tracing and RunConfig
+
+A production setup typically combines custom tracing, data redaction, input filtering, and error handling:
+
+```python
+from agents import Agent, Runner, RunConfig
+from agents.tracing import add_trace_processor
+
+add_trace_processor(LoggingTraceProcessor())
+
+production_config = RunConfig(
+    model="gpt-4o",
+    max_turns=10,
+    trace_include_sensitive_data=False,
+    call_model_input_filter=filter_model_input,
+    error_handlers={"max_turns": handle_max_turns},
+    max_retries=3,
+    retry_delay=1.0,
+)
+
+agent = Agent(
+    name="Production Agent",
+    instructions="You are a production assistant.",
+)
+
+result = await Runner.run(agent, "Help me with my account", run_config=production_config)
+```
+
+## Key Takeaways
+
+- Use `add_trace_processor` to send traces to custom backends alongside the default OpenAI exporter
+- Use `set_trace_processors` to replace the default exporter entirely with your own processors
+- Set `trace_include_sensitive_data=False` in `RunConfig` to strip PII from traces
+- Use `call_model_input_filter` to inspect or modify messages before each LLM call
+- Configure `error_handlers` in `RunConfig` for graceful handling of max_turns and other errors
+- Use `max_turns` to limit agent loop iterations and prevent runaway behavior
+- Clone agents with `agent.clone()` for variant creation without mutating the original

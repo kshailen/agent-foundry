@@ -1,0 +1,56 @@
+{
+  "number": 16,
+  "title": "Self-Correction Loop",
+  "difficulty": "hard",
+  "categories": [
+    "prompt-design",
+    "evaluation"
+  ],
+  "frameworks": [
+    "langchain",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "The agent must review its own output before sending the final response",
+    "The review step must catch factual inconsistencies and logical errors",
+    "The loop must terminate — no infinite revision cycles"
+  ],
+  "hints": [
+    "Add a second LLM call that acts as a reviewer, checking the first draft for errors",
+    "Use a structured review format: list issues found, then either approve or request revision",
+    "Set a maximum number of revision cycles (e.g., 2) to prevent infinite loops"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain_core.prompts import ChatPromptTemplate\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# BUG: Agent sends first draft without any review or self-correction\ndef answer_question(question: str) -> str:\n    prompt = ChatPromptTemplate.from_messages([\n        (\"system\", \"You are a knowledgeable assistant. Answer the user's question accurately.\"),\n        (\"human\", \"{input}\"),\n    ])\n    chain = prompt | llm\n    result = chain.invoke({\"input\": question})\n    # BUG: No review step — first draft goes directly to the user\n    return result.content\n\n# Test: Questions where first drafts often contain errors\nprint(answer_question(\"What is the population of Tokyo and how does it compare to New York?\"))\nprint(\"---\")\nprint(answer_question(\"Explain how photosynthesis works and what its chemical equation is.\"))\nprint(\"---\")\nprint(answer_question(\"What were the causes of World War I and when did key events occur?\"))",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai import LLM\n\nllm = LLM(model=\"gpt-4o-mini\")\n\n# BUG: Agent sends first draft without any review or self-correction\ndef answer_question(question: str) -> str:\n    agent = Agent(\n        role=\"Knowledgeable Assistant\",\n        goal=\"Answer questions accurately\",\n        backstory=\"You are a knowledgeable assistant. Answer the user's question accurately.\",\n        llm=llm,\n    )\n    task = Task(\n        description=question,\n        expected_output=\"An accurate and detailed answer\",\n        agent=agent,\n    )\n    crew = Crew(agents=[agent], tasks=[task])\n    # BUG: No review step — first draft goes directly to the user\n    result = crew.kickoff()\n    return str(result)\n\n# Test: Questions where first drafts often contain errors\nprint(answer_question(\"What is the population of Tokyo and how does it compare to New York?\"))\nprint(\"---\")\nprint(answer_question(\"Explain how photosynthesis works and what its chemical equation is.\"))\nprint(\"---\")\nprint(answer_question(\"What were the causes of World War I and when did key events occur?\"))",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\n# BUG: Agent sends first draft without any review or self-correction\ndef answer_question(question: str) -> str:\n    agent = Agent(\n        name=\"Assistant\",\n        instructions=\"You are a knowledgeable assistant. Answer the user's question accurately.\",\n    )\n    # BUG: No review step — first draft goes directly to the user\n    result = Runner.run_sync(agent, question)\n    return result.final_output\n\n# Test: Questions where first drafts often contain errors\nprint(answer_question(\"What is the population of Tokyo and how does it compare to New York?\"))\nprint(\"---\")\nprint(answer_question(\"Explain how photosynthesis works and what its chemical equation is.\"))\nprint(\"---\")\nprint(answer_question(\"What were the causes of World War I and when did key events occur?\"))"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/self-correction-loop-langchain.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/self-correction-loop-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/self-correction-loop-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "output-reviewed",
+      "label": "Output is reviewed",
+      "description": "The agent performs an explicit review step on its draft before finalizing"
+    },
+    {
+      "id": "errors-caught",
+      "label": "Errors are caught and fixed",
+      "description": "Factual inconsistencies and logical errors in the draft are identified and corrected"
+    },
+    {
+      "id": "higher-quality",
+      "label": "Final output is higher quality",
+      "description": "The final answer is more accurate and complete than the first draft"
+    },
+    {
+      "id": "loop-terminates",
+      "label": "Loop terminates",
+      "description": "The revision cycle has a maximum bound and does not run indefinitely"
+    }
+  ]
+}

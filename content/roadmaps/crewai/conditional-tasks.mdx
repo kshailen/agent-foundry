@@ -1,0 +1,153 @@
+# Conditional Tasks
+
+**ConditionalTask** is a CrewAI task type that runs **only** when a **condition function** returns `True`. If the function returns `False`, the task is **skipped**. That lets you build workflows that **branch dynamically** based on what earlier steps actually produced—without hard-coding every path up front.
+
+## Import
+
+```python
+from crewai.tasks.conditional_task import ConditionalTask
+```
+
+You will often use **`TaskOutput`** inside your condition so you can inspect the previous step’s result:
+
+```python
+from crewai.tasks.task_output import TaskOutput
+```
+
+## Basic usage
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai.tasks.conditional_task import ConditionalTask
+from crewai.tasks.task_output import TaskOutput
+
+researcher = Agent(
+    role="Research Analyst",
+    goal="Gather accurate information on the topic",
+    backstory="You research thoroughly and flag when data is thin or unclear.",
+    verbose=True,
+)
+
+def needs_more_data(output: TaskOutput) -> bool:
+    return "insufficient" in output.raw.lower()
+
+initial_task = Task(
+    description="Gather initial data on the topic",
+    expected_output="A data summary",
+    agent=researcher,
+)
+
+fallback_task = ConditionalTask(
+    description="Gather additional data from alternative sources",
+    expected_output="Supplementary data",
+    condition=needs_more_data,
+    agent=researcher,
+)
+```
+
+### What the condition receives
+
+The **condition callable receives the output of the task immediately before this one in the crew’s task order** (the “previous” task in the pipeline). You typically use `output.raw` (and other fields on `TaskOutput` if your version exposes them) to decide whether the conditional step should run.
+
+## Example pipeline: research → conditional deep-dive → analysis → report
+
+Below, a **research** task runs first. **Deep dive** is a `ConditionalTask`: it runs only if the research output suggests more depth is needed. **Analysis** and **report** always run; when the conditional is skipped, the next task still receives the **last non-skipped** task output as its prior context in a **sequential** crew.
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai.tasks.conditional_task import ConditionalTask
+from crewai.tasks.task_output import TaskOutput
+
+researcher = Agent(
+    role="Research Analyst",
+    goal="Collect and summarize facts",
+    backstory="You produce clear summaries and note gaps explicitly.",
+    verbose=True,
+)
+
+analyst = Agent(
+    role="Analyst",
+    goal="Turn research into structured insights",
+    backstory="You synthesize findings into actionable conclusions.",
+    verbose=True,
+)
+
+writer = Agent(
+    role="Report Writer",
+    goal="Produce a polished final report",
+    backstory="You write concise, executive-ready prose.",
+    verbose=True,
+)
+
+def needs_deep_dive(output: TaskOutput) -> bool:
+    text = output.raw.lower()
+    return any(
+        phrase in text
+        for phrase in ("insufficient", "unclear", "more research", "gaps in")
+    )
+
+research_task = Task(
+    description="Research the assigned topic and summarize key facts and open questions.",
+    expected_output="A structured summary; explicitly say if information is insufficient.",
+    agent=researcher,
+)
+
+deep_dive_task = ConditionalTask(
+    description="If prior output flagged gaps, dig into alternative angles and sources.",
+    expected_output="Supplementary findings that address the gaps",
+    condition=needs_deep_dive,
+    agent=researcher,
+)
+
+analysis_task = Task(
+    description="Synthesize all available research into themes, risks, and recommendations.",
+    expected_output="Bullet analysis: themes, risks, 3–5 recommendations",
+    agent=analyst,
+)
+
+report_task = Task(
+    description="Write a short executive report from the analysis.",
+    expected_output="Under 400 words, professional tone, sections: Summary, Findings, Recommendations",
+    agent=writer,
+)
+
+crew = Crew(
+    agents=[researcher, analyst, writer],
+    tasks=[research_task, deep_dive_task, analysis_task, report_task],
+    process=Process.sequential,
+    verbose=True,
+)
+
+result = crew.kickoff()
+print(result)
+```
+
+## Sequential process behavior
+
+With **`Process.sequential`**:
+
+- If the **condition is `True`**, the `ConditionalTask` runs like a normal task.
+- If the **condition is `False`**, that task is **skipped**.
+- The **next** task in the list still runs; it receives context from the **previous task that actually executed** (the last non-skipped output), not from a skipped step. That keeps the chain consistent when optional branches do not fire.
+
+## Related: task guardrails
+
+**Guardrails** are instructions attached to a regular **`Task`** to constrain style, length, or policy—not conditional execution. They complement branching logic by shaping each step’s output.
+
+```python
+task = Task(
+    description="...",
+    expected_output="...",
+    agent=writer,
+    guardrail="Output must be under 200 words and professional in tone",
+)
+```
+
+Use **ConditionalTask** when the *existence* of a step depends on prior results; use **guardrails** when a step always runs but its *output* must satisfy extra rules.
+
+## Key takeaways
+
+- **ConditionalTask** runs only when `condition(previous_task_output)` is **`True`**; otherwise it is **skipped**.
+- The condition typically inspects a **`TaskOutput`** from the **immediately preceding** task.
+- **Sequential** crews keep the pipeline linear: skipped conditionals do not block later tasks; the next task builds on the **last executed** output.
+- **Guardrails** add output constraints to a **`Task`**; they are a separate idea from conditional execution.

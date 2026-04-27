@@ -1,0 +1,177 @@
+# MCP Integration
+
+The Model Context Protocol (MCP) provides a standard way for agents to connect to external tools and data sources. The `langchain-mcp-adapters` package bridges MCP servers with LangChain agents, letting you use any MCP-compatible tool as a LangChain tool without writing custom wrappers.
+
+## langchain-mcp-adapters
+
+The `langchain-mcp-adapters` package converts MCP tools into LangChain-compatible tools. It handles the protocol translation so your agent can call MCP servers using the same `@tool` interface it uses for native tools:
+
+```python
+from langchain_mcp_adapters.client import MultiServerMCPClient
+```
+
+## MultiServerMCPClient
+
+`MultiServerMCPClient` manages connections to one or more MCP servers. It supports both `stdio` (local process) and `sse`/`http` (remote) transports:
+
+```python
+from langchain_mcp_adapters.client import MultiServerMCPClient
+
+client = MultiServerMCPClient(
+    {
+        "filesystem": {
+            "transport": "stdio",
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp/data"],
+        },
+        "weather": {
+            "transport": "sse",
+            "url": "http://localhost:8000/sse",
+        },
+    }
+)
+```
+
+## Transport Types
+
+| Transport | Config Key | Use Case |
+|-----------|-----------|----------|
+| `stdio` | `command`, `args` | Local MCP servers run as child processes |
+| `sse` | `url` | Remote MCP servers over Server-Sent Events |
+| `streamable_http` | `url` | Remote MCP servers over HTTP streaming |
+
+## Getting Tools from MCP Servers
+
+Once connected, retrieve tools from the MCP client and pass them to your agent:
+
+```python
+from langchain.chat_models import init_chat_model
+from langgraph.prebuilt import create_react_agent
+
+model = init_chat_model("gpt-4o-mini", model_provider="openai")
+
+async with MultiServerMCPClient(
+    {
+        "math": {
+            "transport": "stdio",
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-math"],
+        }
+    }
+) as client:
+    tools = client.get_tools()
+
+    agent = create_react_agent(
+        model=model,
+        tools=tools,
+    )
+
+    result = await agent.ainvoke({
+        "messages": [{"role": "user", "content": "What is 47 * 89?"}]
+    })
+    print(result["messages"][-1].content)
+```
+
+## Building a Custom MCP Server
+
+Use `FastMCP` from the `mcp` package to create your own MCP server that any agent can connect to:
+
+```python
+from mcp.server.fastmcp import FastMCP
+
+mcp = FastMCP("my-tools")
+
+@mcp.tool()
+def get_weather(city: str) -> str:
+    """Get the current weather for a city."""
+    weather_data = {
+        "new york": "72°F, Sunny",
+        "london": "58°F, Cloudy",
+        "tokyo": "68°F, Clear",
+    }
+    return weather_data.get(city.lower(), f"Weather data not available for {city}")
+
+@mcp.tool()
+def calculate_tip(bill_amount: float, tip_percentage: float) -> str:
+    """Calculate the tip amount for a bill."""
+    tip = bill_amount * (tip_percentage / 100)
+    total = bill_amount + tip
+    return f"Tip: ${tip:.2f}, Total: ${total:.2f}"
+```
+
+Run the server:
+
+```python
+mcp.run(transport="stdio")
+```
+
+## Connecting an Agent to Your MCP Server
+
+Point `MultiServerMCPClient` at your custom server:
+
+```python
+async with MultiServerMCPClient(
+    {
+        "my_tools": {
+            "transport": "stdio",
+            "command": "python",
+            "args": ["my_mcp_server.py"],
+        }
+    }
+) as client:
+    tools = client.get_tools()
+    print(f"Available tools: {[t.name for t in tools]}")
+
+    agent = create_react_agent(
+        model=model,
+        tools=tools,
+        prompt="You have access to weather and tip calculation tools.",
+    )
+
+    result = await agent.ainvoke({
+        "messages": [{"role": "user", "content": "What's the weather in Tokyo?"}]
+    })
+    print(result["messages"][-1].content)
+```
+
+## Multiple MCP Servers
+
+Connect to several MCP servers simultaneously. Tools from all servers are merged into a single tool list:
+
+```python
+async with MultiServerMCPClient(
+    {
+        "weather": {
+            "transport": "stdio",
+            "command": "python",
+            "args": ["weather_server.py"],
+        },
+        "database": {
+            "transport": "sse",
+            "url": "http://localhost:9000/sse",
+        },
+        "filesystem": {
+            "transport": "stdio",
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-filesystem", "/data"],
+        },
+    }
+) as client:
+    tools = client.get_tools()
+    print(f"Total tools from all servers: {len(tools)}")
+
+    agent = create_react_agent(
+        model=model,
+        tools=tools,
+        prompt="You have access to weather, database, and filesystem tools.",
+    )
+```
+
+## Key Takeaways
+
+- `langchain-mcp-adapters` bridges MCP servers with LangChain agents via `MultiServerMCPClient`
+- Three transport types: `stdio` for local processes, `sse` for remote SSE, `streamable_http` for HTTP streaming
+- `client.get_tools()` converts MCP tools into LangChain-compatible tools automatically
+- Build custom MCP servers with `FastMCP` — decorate functions with `@mcp.tool()` to expose them
+- Connect to multiple MCP servers simultaneously; tools from all servers merge into one list
+- MCP provides a standard protocol so any MCP-compatible tool works with any MCP-compatible agent

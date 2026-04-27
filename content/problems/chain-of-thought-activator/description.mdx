@@ -1,0 +1,51 @@
+## The Problem
+
+Your math assistant agent is getting multi-step word problems wrong. When asked "Sarah buys 3 notebooks at $4 each, pays with $20, then buys 2 pens at $1.50 each — how much is left?", it jumps straight to a number and often gets it wrong. The model is capable of solving these problems correctly when it reasons through them, but the current **system prompt** tells it to "just state the final number," so it skips intermediate steps and makes arithmetic mistakes. Your job is to **fix only the system prompt** so the agent thinks step by step, shows its work, and arrives at the correct answer.
+
+## Examples
+
+### Example 1
+
+**User input:** A store sells notebooks for $4 each. Sarah buys 3 notebooks and pays with a $20 bill. She then buys 2 pens at $1.50 each. How much money does she have left?
+
+**Current (bad) output:** $6
+
+**Expected (good) output:**
+- Step 1: Cost of 3 notebooks = 3 × $4 = $12
+- Step 2: Change from $20 = $20 − $12 = $8
+- Step 3: Cost of 2 pens = 2 × $1.50 = $3
+- Step 4: Money left = $8 − $3 = $5
+
+**Final answer: $5**
+
+### Example 2
+
+**User input:** A train travels 60 km/h for 2.5 hours, then 80 km/h for 1.5 hours. What is the total distance?
+
+**Current (bad) output:** 250 km
+
+**Expected (good) output:**
+- Step 1: Distance at 60 km/h for 2.5 h = 60 × 2.5 = 150 km
+- Step 2: Distance at 80 km/h for 1.5 h = 80 × 1.5 = 120 km
+- Step 3: Total distance = 150 + 120 = 270 km
+
+**Final answer: 270 km**
+
+## Your Task
+
+Update the **system prompt** (and only that) so the agent:
+
+- Breaks every problem into explicit numbered steps.
+- Shows each intermediate calculation clearly.
+- Arrives at the correct final answer after reasoning through each step.
+- Clearly labels the final answer separately from the reasoning.
+
+Do not add tools, change model parameters, or add post-processing code.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Correct final answer:** The agent produces the mathematically correct result.
+- **Reasoning steps shown:** The response contains explicit step-by-step reasoning before the final answer.
+- **Intermediate calculations visible:** Each sub-calculation is written out so the reader can follow and verify the logic.

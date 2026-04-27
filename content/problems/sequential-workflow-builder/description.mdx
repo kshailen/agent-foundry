@@ -1,0 +1,46 @@
+## The Problem
+
+Your customer-service agent handles incoming messages by doing everything in a single LLM call: classifying the message, processing it, and generating a response. This works for demos but makes it impossible to log intermediate results, swap individual steps, or test each stage independently. Your job is to **refactor the monolithic function into a clean sequential workflow** with three explicit steps—**classify → process → respond**—so each step is a separate node that passes its output to the next.
+
+## Examples
+
+### Example 1
+
+**User input:** My order #1234 hasn't arrived yet
+
+**Current (bad) output:** A single LLM response that internally classifies, processes, and responds all at once—no visibility into which category was chosen or what processing occurred.
+
+**Expected (good) output:** Step 1 outputs `{"category": "complaint"}`. Step 2 looks up order context for complaints. Step 3 generates a professional response: *"I'm sorry about the delay with order #1234. Let me look into this for you…"* The classification label `complaint` is visible in the final output.
+
+### Example 2
+
+**User input:** What are your business hours?
+
+**Current (bad) output:** A blended answer with no separation of classification and response logic.
+
+**Expected (good) output:** Step 1 outputs `{"category": "question"}`. Step 2 retrieves FAQ context for questions. Step 3 responds: *"Our business hours are Monday–Friday, 9 AM to 6 PM EST."* The label `question` appears in the output metadata.
+
+### Example 3
+
+**User input:** I'd like to return a product
+
+**Current (bad) output:** A single response with no way to inspect or override the classification.
+
+**Expected (good) output:** Step 1 outputs `{"category": "request"}`. Step 2 fetches return-policy context. Step 3 responds with return instructions. The category is traceable in the workflow state.
+
+## Your Task
+
+Refactor the starter code so that:
+
+- There are **three separate steps** (classify, process, respond), each implemented as its own function or node.
+- Each step **receives the previous step's output** as input—data flows through the chain.
+- The **classification label** (complaint, question, or request) is included in the final output.
+- The workflow executes the steps **sequentially** in a fixed order.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Three separate steps:** The workflow contains three distinct steps: classify, process, and respond.
+- **Data flows between steps:** Each step receives and uses the output from the previous step.
+- **Classification visible in output:** The final output includes the classification label used during processing.

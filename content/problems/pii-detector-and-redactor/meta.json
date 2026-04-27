@@ -1,0 +1,50 @@
+{
+  "number": 62,
+  "title": "PII Detector and Redactor",
+  "difficulty": "easy",
+  "categories": [
+    "guardrails"
+  ],
+  "frameworks": [
+    "openai-agents-sdk",
+    "langchain",
+    "crewai"
+  ],
+  "constraints": [
+    "You must redact PII from the agent's output before it reaches the user",
+    "At minimum, detect and redact email addresses and phone numbers",
+    "The rest of the response must remain intact and useful"
+  ],
+  "hints": [
+    "Regular expressions for common email and phone patterns can catch most PII",
+    "Apply redaction as a post-processing step on the agent's output",
+    "Replace detected PII with placeholder tokens like [EMAIL_REDACTED] or [PHONE_REDACTED]"
+  ],
+  "starterCode": {
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom agents.tool import function_tool\n\n@function_tool\ndef lookup_customer(name: str) -> str:\n    \"\"\"Look up customer details by name.\"\"\"\n    return (\n        f\"Customer: {name}\\n\"\n        f\"Email: alice@example.com\\n\"\n        f\"Phone: 555-867-5309\\n\"\n        f\"Status: Active\"\n    )\n\n# BUG: The agent returns raw PII (email, phone) with no redaction\nagent = Agent(\n    name=\"Customer Lookup\",\n    instructions=\"You are a customer lookup assistant. Return the customer details you find.\",\n    tools=[lookup_customer],\n)\n\nresult = Runner.run_sync(agent, \"Find the details for Alice\")\nprint(result.final_output)",
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain.agents import AgentExecutor, create_tool_calling_agent\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom langchain_core.tools import tool\n\n@tool\ndef lookup_customer(name: str) -> str:\n    \"\"\"Look up customer details by name.\"\"\"\n    return (\n        f\"Customer: {name}\\n\"\n        f\"Email: alice@example.com\\n\"\n        f\"Phone: 555-867-5309\\n\"\n        f\"Status: Active\"\n    )\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a customer lookup assistant. Return the customer details you find.\"),\n    (\"human\", \"{input}\"),\n    (\"placeholder\", \"{agent_scratchpad}\"),\n])\n\n# BUG: The agent returns raw PII (email, phone) with no redaction\nagent = create_tool_calling_agent(llm, [lookup_customer], prompt)\nexecutor = AgentExecutor(agent=agent, tools=[lookup_customer])\n\nresult = executor.invoke({\"input\": \"Find the details for Alice\"})\nprint(result[\"output\"])",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai.tools import tool\n\n@tool\ndef lookup_customer(name: str) -> str:\n    \"\"\"Look up customer details by name.\"\"\"\n    return (\n        f\"Customer: {name}\\n\"\n        f\"Email: alice@example.com\\n\"\n        f\"Phone: 555-867-5309\\n\"\n        f\"Status: Active\"\n    )\n\n# BUG: The agent returns raw PII (email, phone) with no redaction\nlookup_agent = Agent(\n    role=\"Customer Lookup\",\n    goal=\"Look up customer details and return them\",\n    backstory=\"You are a customer lookup assistant. Return the customer details you find.\",\n    tools=[lookup_customer],\n)\n\ntask = Task(\n    description=\"Find the details for Alice\",\n    expected_output=\"Customer details for Alice\",\n    agent=lookup_agent,\n)\n\ncrew = Crew(agents=[lookup_agent], tasks=[task])\nresult = crew.kickoff()\nprint(result)"
+  },
+  "colabUrls": {
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/pii-detector-and-redactor-openai.ipynb",
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/pii-detector-and-redactor-langchain.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/pii-detector-and-redactor-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "emails-redacted",
+      "label": "Email addresses are redacted",
+      "description": "All email addresses in the output are replaced with a redaction placeholder"
+    },
+    {
+      "id": "phones-redacted",
+      "label": "Phone numbers are redacted",
+      "description": "All phone numbers in the output are replaced with a redaction placeholder"
+    },
+    {
+      "id": "response-intact",
+      "label": "Non-PII content preserved",
+      "description": "The rest of the agent's response remains useful and coherent after redaction"
+    }
+  ]
+}

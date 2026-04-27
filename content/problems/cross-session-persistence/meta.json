@@ -1,0 +1,51 @@
+{
+  "number": 42,
+  "title": "Cross-Session Persistence",
+  "difficulty": "hard",
+  "categories": [
+    "memory"
+  ],
+  "frameworks": [
+    "langchain",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "Memory must survive process restarts",
+    "The persistence format must be human-readable (e.g., JSON)",
+    "Loading previous session context must happen automatically on startup",
+    "The agent must gracefully handle a missing or empty persistence file"
+  ],
+  "hints": [
+    "Serialize the memory store to a JSON file after each turn and load it on startup",
+    "Use a session ID to separate different users' memory files",
+    "On startup, check if a persistence file exists; if so, load it and inject a summary of the previous session into context"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain_core.messages import HumanMessage, AIMessage, SystemMessage\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# BUG: Memory is purely in-memory \u2014 lost when the process restarts\nhistory = [SystemMessage(content=\"You are a helpful assistant.\")]\n\ndef chat(user_input: str) -> str:\n    history.append(HumanMessage(content=user_input))\n    response = llm.invoke(history)\n    history.append(response)\n    return response.content\n\n# Session 1\nprint(\"=== Session 1 ===\")\nprint(chat(\"My name is Jordan.\"))\nprint(chat(\"I'm working on Project Phoenix.\"))\nprint(chat(\"The deadline is March 15th.\"))\n\n# Simulate process restart \u2014 all memory is lost\nhistory = [SystemMessage(content=\"You are a helpful assistant.\")]\n\n# Session 2\nprint(\"\\n=== Session 2 (after restart) ===\")\nprint(chat(\"What's my name?\"))\nprint(chat(\"What project am I working on?\"))",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai import LLM\n\nllm = LLM(model=\"gpt-4o-mini\")\n\nagent = Agent(\n    role=\"Assistant\",\n    goal=\"Help users with their questions\",\n    backstory=\"You are a helpful assistant.\",\n    llm=llm,\n)\n\n# BUG: Memory is purely in-memory \u2014 lost when the process restarts\nhistory = []\n\ndef chat(user_input: str) -> str:\n    history.append(f\"User: {user_input}\")\n    context = \"\\n\".join(history)\n    task = Task(\n        description=f\"Continue this conversation:\\n{context}\\n\\nRespond to the latest message.\",\n        expected_output=\"A helpful response\",\n        agent=agent,\n    )\n    crew = Crew(agents=[agent], tasks=[task])\n    result = str(crew.kickoff())\n    history.append(f\"Assistant: {result}\")\n    return result\n\n# Session 1\nprint(\"=== Session 1 ===\")\nprint(chat(\"My name is Jordan.\"))\nprint(chat(\"I'm working on Project Phoenix.\"))\nprint(chat(\"The deadline is March 15th.\"))\n\n# Simulate process restart \u2014 all memory is lost\nhistory = []\n\n# Session 2\nprint(\"\\n=== Session 2 (after restart) ===\")\nprint(chat(\"What's my name?\"))\nprint(chat(\"What project am I working on?\"))",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\nagent = Agent(\n    name=\"Assistant\",\n    instructions=\"You are a helpful assistant.\",\n)\n\n# BUG: Memory is purely in-memory \u2014 lost when the process restarts\nhistory = []\n\ndef chat(user_input: str) -> str:\n    history.append({\"role\": \"user\", \"content\": user_input})\n    result = Runner.run_sync(agent, history)\n    response_text = result.final_output\n    history.append({\"role\": \"assistant\", \"content\": response_text})\n    return response_text\n\n# Session 1\nprint(\"=== Session 1 ===\")\nprint(chat(\"My name is Jordan.\"))\nprint(chat(\"I'm working on Project Phoenix.\"))\nprint(chat(\"The deadline is March 15th.\"))\n\n# Simulate process restart \u2014 all memory is lost\nhistory = []\n\n# Session 2\nprint(\"\\n=== Session 2 (after restart) ===\")\nprint(chat(\"What's my name?\"))\nprint(chat(\"What project am I working on?\"))"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/cross-session-persistence-langchain.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/cross-session-persistence-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/cross-session-persistence-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "survives-restart",
+      "label": "Memory survives restart",
+      "description": "The agent can recall information from a previous session after a process restart"
+    },
+    {
+      "id": "auto-load",
+      "label": "Loads automatically on startup",
+      "description": "Previous session context is loaded automatically without manual intervention"
+    },
+    {
+      "id": "graceful-cold-start",
+      "label": "Handles cold start gracefully",
+      "description": "When no previous session exists, the agent starts fresh without errors"
+    }
+  ]
+}

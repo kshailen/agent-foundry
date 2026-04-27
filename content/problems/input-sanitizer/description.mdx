@@ -1,0 +1,46 @@
+## The Problem
+
+Your customer support agent accepts raw user input and forwards it directly to the LLM. Malicious or careless users can include HTML tags, `<script>` blocks, and other markup in their messages. While the LLM itself may not execute scripts, this unsanitized input can end up in logs, downstream UIs, or tool arguments — creating XSS risks and confusing behavior. Your job is to **sanitize user input** by stripping HTML and script tags before the agent processes it, while preserving the legitimate text content.
+
+## Examples
+
+### Example 1
+
+**User input:** `Hello <script>alert("xss")</script> can you help me?`
+
+**Current (bad) output:** The agent receives and processes the full string including the script tag, potentially echoing it in its response or passing it to tools.
+
+**Expected (good) output:** The agent receives `Hello can you help me?` (tags stripped) and responds helpfully to the cleaned message.
+
+### Example 2
+
+**User input:** `My name is <b>Alice</b> and I need <img src=x onerror=alert(1)> help`
+
+**Current (bad) output:** The raw HTML and event handlers are passed through untouched.
+
+**Expected (good) output:** The agent receives `My name is Alice and I need help` and responds normally.
+
+### Example 3
+
+**User input:** `Please reset my password`
+
+**Current (bad) output:** *(Not really bad — clean input works fine.)*
+
+**Expected (good) output:** Clean input passes through the sanitizer unchanged, and the agent responds as usual.
+
+## Your Task
+
+Add an **input sanitization step** so the agent:
+
+- Strips all HTML tags, script blocks, and event-handler attributes from user input.
+- Preserves the plain-text content of the message.
+- Passes the cleaned string to the agent for normal processing.
+- Does not reject or block messages — just cleans them.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **HTML and script tags are stripped:** No HTML elements or script tags survive into the agent's input.
+- **Legitimate message content preserved:** The user's actual text is kept intact after sanitization.
+- **Agent still responds helpfully:** The agent processes the sanitized input and returns a useful answer.

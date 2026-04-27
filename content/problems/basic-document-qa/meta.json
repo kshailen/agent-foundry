@@ -1,0 +1,51 @@
+{
+  "number": 46,
+  "title": "Basic Document QA",
+  "difficulty": "easy",
+  "categories": [
+    "rag"
+  ],
+  "frameworks": [
+    "langchain",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "The agent must answer only from the provided documents",
+    "No external knowledge or web search may be used",
+    "All five documents must be loadable by the pipeline",
+    "The retrieval mechanism must use vector similarity search"
+  ],
+  "hints": [
+    "Load the documents into a vector store and use a retriever to fetch relevant chunks",
+    "Use a retrieval chain that passes retrieved context to the LLM prompt",
+    "Add an instruction in the prompt telling the model to answer only from the provided context"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain_core.prompts import ChatPromptTemplate\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\ndocuments = [\n    \"Acme Corp was founded in 2019 and is headquartered in Austin, Texas.\",\n    \"Acme Corp's flagship product is the AcmeAI platform for enterprise automation.\",\n    \"Acme Corp raised a $50M Series B in January 2024 led by Sequoia Capital.\",\n    \"Acme Corp has 200 employees across offices in Austin, New York, and London.\",\n    \"Acme Corp's CEO is Jane Smith, who previously led engineering at BigTech Inc.\",\n]\n\n# BUG: No retrieval \u2014 the agent answers from parametric knowledge instead of documents\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a helpful assistant. Answer the user's question.\"),\n    (\"human\", \"{question}\"),\n])\n\nchain = prompt | llm\n\nresult = chain.invoke({\"question\": \"Where is Acme Corp headquartered?\"})\nprint(result.content)",
+    "crewai": "from crewai import Agent, Task, Crew, Process\nfrom crewai import LLM\n\nllm = LLM(model=\"gpt-4o-mini\")\n\ndocuments = [\n    \"Acme Corp was founded in 2019 and is headquartered in Austin, Texas.\",\n    \"Acme Corp's flagship product is the AcmeAI platform for enterprise automation.\",\n    \"Acme Corp raised a $50M Series B in January 2024 led by Sequoia Capital.\",\n    \"Acme Corp has 200 employees across offices in Austin, New York, and London.\",\n    \"Acme Corp's CEO is Jane Smith, who previously led engineering at BigTech Inc.\",\n]\n\n# BUG: No retrieval — the agent answers from parametric knowledge instead of documents\nassistant = Agent(\n    role=\"Assistant\",\n    goal=\"Answer questions\",\n    backstory=\"You are a helpful assistant. Answer the user's question.\",\n    llm=llm,\n)\n\ntask = Task(description=\"Where is Acme Corp headquartered?\", expected_output=\"The answer\", agent=assistant)\ncrew = Crew(agents=[assistant], tasks=[task], process=Process.sequential)\nresult = crew.kickoff()\nprint(result)",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\ndocuments = [\n    \"Acme Corp was founded in 2019 and is headquartered in Austin, Texas.\",\n    \"Acme Corp's flagship product is the AcmeAI platform for enterprise automation.\",\n    \"Acme Corp raised a $50M Series B in January 2024 led by Sequoia Capital.\",\n    \"Acme Corp has 200 employees across offices in Austin, New York, and London.\",\n    \"Acme Corp's CEO is Jane Smith, who previously led engineering at BigTech Inc.\",\n]\n\n# BUG: No retrieval — the agent answers from parametric knowledge instead of documents\nagent = Agent(\n    name=\"Assistant\",\n    instructions=\"You are a helpful assistant. Answer the user's question.\",\n    model=\"gpt-4o-mini\",\n)\n\nresult = Runner.run_sync(agent, \"Where is Acme Corp headquartered?\")\nprint(result.final_output)"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/basic-document-qa-langchain.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/basic-document-qa-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/basic-document-qa-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "uses-retrieval",
+      "label": "Uses document retrieval",
+      "description": "The agent retrieves relevant documents from a vector store before answering"
+    },
+    {
+      "id": "answers-from-docs",
+      "label": "Answers from documents only",
+      "description": "The agent's answer is grounded in the provided documents, not parametric knowledge"
+    },
+    {
+      "id": "correct-answers",
+      "label": "Returns correct answers",
+      "description": "The agent returns factually correct answers that match the document content"
+    }
+  ]
+}

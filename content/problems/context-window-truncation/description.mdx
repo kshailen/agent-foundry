@@ -1,0 +1,38 @@
+## The Problem
+
+Your assistant keeps full conversation history and passes it to the model on every turn. This works fine for short conversations, but a power user has a 50-turn session and the agent either **crashes with a context-length error** or silently degrades as the model struggles with a prompt that is too long. You need to implement a **sliding window** that truncates older messages while always keeping the system prompt and the most recent exchanges.
+
+## Examples
+
+### Example 1
+
+**Scenario:** A 50-turn conversation about space facts.
+
+**Current (bad) behavior:** By turn 40 the API returns a `context_length_exceeded` error or the model starts repeating itself and ignoring recent instructions because the prompt is too large.
+
+**Expected (good) behavior:** The agent keeps only the last N turns (e.g., 10) plus the system message. Turn 50 works exactly like turn 5—fast, coherent, and within token limits.
+
+### Example 2
+
+**Scenario:** User shares their name in turn 1, then chats for 30 turns about unrelated topics.
+
+**Current (bad) behavior:** The context window fills up and either crashes or the model cannot attend to the early name mention buried in a giant prompt.
+
+**Expected (good) behavior:** The name from turn 1 is naturally truncated out of the window. The agent responds coherently to recent turns. If asked about the name, it acknowledges it no longer has that context rather than hallucinating.
+
+## Your Task
+
+Implement a **sliding window truncation strategy** so the conversation stays within safe limits:
+
+- Before each model call, trim the history to keep only the **system message** and the **most recent N user/assistant pairs**.
+- Choose a sensible default for N (e.g., 10 turns).
+- Ensure the agent never crashes due to context length on conversations of any length.
+- The agent should still respond coherently using the retained context.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **History stays bounded:** The message list never exceeds the configured maximum regardless of conversation length.
+- **System message preserved:** The system message is never dropped during truncation.
+- **Recent context retained:** The agent can reference information from the most recent turns after truncation occurs.

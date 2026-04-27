@@ -1,0 +1,176 @@
+## Approach
+
+The agent has a stock price tool and a weather tool, but it makes poor decisions about when to use them versus answering from general knowledge. Sometimes it calls the stock tool for a geography question, and other times it answers real-time queries from memory instead of calling the appropriate tool. The tools work fine — the problem is the system prompt gives no guidance on when to use a tool versus answer directly.
+
+The fix is to add few-shot examples to the system prompt that demonstrate the correct decision-making process. We include examples covering three scenarios: (1) a query requiring real-time data where the agent should call a tool, (2) a general knowledge question where the agent should answer directly, and (3) a query that mentions a tool-adjacent topic but doesn't require tool use. These examples teach the model the decision boundary through demonstration rather than abstract rules.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+@tool
+def get_stock_price(ticker: str) -> str:
+    """Get the current stock price for a given ticker symbol."""
+    prices = {"AAPL": "$178.50", "GOOGL": "$141.20", "MSFT": "$378.90"}
+    return prices.get(ticker.upper(), f"No data for {ticker}")
+
+@tool
+def get_weather(city: str) -> str:
+    """Get the current weather for a given city."""
+    weather = {"new york": "72°F, Sunny", "london": "58°F, Cloudy", "tokyo": "68°F, Clear"}
+    return weather.get(city.lower(), f"No weather data for {city}")
+
+tools = [get_stock_price, get_weather]
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", (
+        "You are a helpful assistant with access to tools for real-time data. "
+        "Decide whether to use a tool or answer from your own knowledge based on the query.\n\n"
+        "GUIDELINES:\n"
+        "- Use get_stock_price for current stock/share prices — these change in real time.\n"
+        "- Use get_weather for current weather conditions — these change in real time.\n"
+        "- Answer directly from your knowledge for factual, historical, or general questions "
+        "(capitals, definitions, science, history, math, etc.).\n\n"
+        "EXAMPLES:\n\n"
+        "User: What is Google's stock price right now?\n"
+        "Action: Call get_stock_price(\"GOOGL\") because stock prices are real-time data.\n\n"
+        "User: What is the capital of France?\n"
+        "Action: Answer directly — 'The capital of France is Paris.' No tool needed; this is general knowledge.\n\n"
+        "User: What's the weather in New York?\n"
+        "Action: Call get_weather(\"new york\") because weather is real-time data."
+    )),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}"),
+])
+
+agent = create_tool_calling_agent(llm, tools, prompt)
+executor = AgentExecutor(agent=agent, tools=tools)
+
+result1 = executor.invoke({"input": "What is Apple's stock price right now?"})
+print("Tool query:", result1["output"])
+
+result2 = executor.invoke({"input": "What is the capital of Japan?"})
+print("Knowledge query:", result2["output"])
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from agents.tool import function_tool
+
+@function_tool
+def get_stock_price(ticker: str) -> str:
+    """Get the current stock price for a given ticker symbol."""
+    prices = {"AAPL": "$178.50", "GOOGL": "$141.20", "MSFT": "$378.90"}
+    return prices.get(ticker.upper(), f"No data for {ticker}")
+
+@function_tool
+def get_weather(city: str) -> str:
+    """Get the current weather for a given city."""
+    weather = {"new york": "72°F, Sunny", "london": "58°F, Cloudy", "tokyo": "68°F, Clear"}
+    return weather.get(city.lower(), f"No weather data for {city}")
+
+agent = Agent(
+    name="Assistant",
+    instructions=(
+        "You are a helpful assistant with access to tools for real-time data. "
+        "Decide whether to use a tool or answer from your own knowledge based on the query.\n\n"
+        "GUIDELINES:\n"
+        "- Use get_stock_price for current stock/share prices — these change in real time.\n"
+        "- Use get_weather for current weather conditions — these change in real time.\n"
+        "- Answer directly from your knowledge for factual, historical, or general questions "
+        "(capitals, definitions, science, history, math, etc.).\n\n"
+        "EXAMPLES:\n\n"
+        "User: What is Google's stock price right now?\n"
+        "Action: Call get_stock_price(\"GOOGL\") because stock prices are real-time data.\n\n"
+        "User: What is the capital of France?\n"
+        "Action: Answer directly — 'The capital of France is Paris.' No tool needed; this is general knowledge.\n\n"
+        "User: What's the weather in New York?\n"
+        "Action: Call get_weather(\"new york\") because weather is real-time data."
+    ),
+    tools=[get_stock_price, get_weather],
+)
+
+result1 = Runner.run_sync(agent, "What is Apple's stock price right now?")
+print("Tool query:", result1.final_output)
+
+result2 = Runner.run_sync(agent, "What is the capital of Japan?")
+print("Knowledge query:", result2.final_output)
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from crewai.tools import tool
+
+@tool
+def get_stock_price(ticker: str) -> str:
+    """Get the current stock price for a given ticker symbol."""
+    prices = {"AAPL": "$178.50", "GOOGL": "$141.20", "MSFT": "$378.90"}
+    return prices.get(ticker.upper(), f"No data for {ticker}")
+
+@tool
+def get_weather(city: str) -> str:
+    """Get the current weather for a given city."""
+    weather = {"new york": "72°F, Sunny", "london": "58°F, Cloudy", "tokyo": "68°F, Clear"}
+    return weather.get(city.lower(), f"No weather data for {city}")
+
+assistant = Agent(
+    role="Assistant",
+    goal=(
+        "Answer the user's question. Decide whether to use a tool or answer from your own knowledge.\n\n"
+        "GUIDELINES:\n"
+        "- Use get_stock_price for current stock/share prices — these change in real time.\n"
+        "- Use get_weather for current weather conditions — these change in real time.\n"
+        "- Answer directly from your knowledge for factual, historical, or general questions "
+        "(capitals, definitions, science, history, math, etc.)."
+    ),
+    backstory=(
+        "You are a helpful assistant with access to tools for real-time data.\n\n"
+        "EXAMPLES:\n\n"
+        "User: What is Google's stock price right now?\n"
+        "Action: Call get_stock_price(\"GOOGL\") because stock prices are real-time data.\n\n"
+        "User: What is the capital of France?\n"
+        "Action: Answer directly — 'The capital of France is Paris.' No tool needed; this is general knowledge.\n\n"
+        "User: What's the weather in New York?\n"
+        "Action: Call get_weather(\"new york\") because weather is real-time data."
+    ),
+    tools=[get_stock_price, get_weather],
+)
+
+task1 = Task(
+    description="What is Apple's stock price right now?",
+    expected_output="The current stock price",
+    agent=assistant,
+)
+crew1 = Crew(agents=[assistant], tasks=[task1])
+print("Tool query:", crew1.kickoff())
+
+task2 = Task(
+    description="What is the capital of Japan?",
+    expected_output="The answer to the question",
+    agent=assistant,
+)
+crew2 = Crew(agents=[assistant], tasks=[task2])
+print("Knowledge query:", crew2.kickoff())
+```
+
+## Why This Works
+
+Few-shot examples in the system prompt work because they show the model the decision boundary through concrete demonstrations rather than abstract rules. The model learns the pattern: "real-time, dynamic data = call a tool; static, factual knowledge = answer directly." This is more effective than simply listing when to use each tool because examples encode both the reasoning process and the expected action. The key insight is that few-shot prompting teaches decision-making heuristics that generalize to queries the model hasn't seen in the examples.
+
+## Key Takeaways
+
+- Few-shot examples in the system prompt are the most effective way to teach an agent when to use tools versus answer directly.
+- Include examples covering both positive cases (use a tool) and negative cases (answer from knowledge) to define the decision boundary clearly.
+- The examples should reflect real user queries the agent will encounter, not contrived academic scenarios.

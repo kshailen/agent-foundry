@@ -1,0 +1,52 @@
+## The Problem
+
+Your assistant can hold a conversation, but it cannot remember user preferences. A user says "Call me Alex" and "I prefer metric units" in one turn, yet by the next turn the agent addresses them generically and gives distances in miles. The agent has basic conversation history but **no dedicated mechanism to extract, store, and re-apply user preferences**. Your job is to add a preference memory layer that detects preference-setting statements, stores them, and injects them into future interactions.
+
+## Examples
+
+### Example 1
+
+**User input (turn 1):** Call me Alex. I prefer metric units.
+
+**User input (turn 2):** What's the distance from New York to Los Angeles?
+
+**Current (bad) output:** The distance from New York to Los Angeles is approximately 2,451 miles.
+
+**Expected (good) output:** Hey Alex! The distance from New York to Los Angeles is approximately 3,944 kilometers.
+
+### Example 2
+
+**User input (turn 1):** I'm vegetarian and I prefer brief answers.
+
+**User input (turn 2):** Suggest a dinner recipe.
+
+**Current (bad) output:** Here's a long, detailed recipe for chicken parmesan with step-by-step instructions…
+
+**Expected (good) output:** Try a caprese pasta: toss penne with fresh mozzarella, tomatoes, basil, and olive oil. Ready in 15 minutes.
+
+### Example 3
+
+**User input (turn 1):** My timezone is EST.
+
+**User input (turn 5):** What time zone am I in?
+
+**Current (bad) output:** I don't know your timezone. Could you tell me?
+
+**Expected (good) output:** You told me you're in EST (Eastern Standard Time).
+
+## Your Task
+
+Add a **user preference memory** layer to the agent:
+
+- Detect when the user states a preference (name, units, dietary needs, communication style, etc.).
+- Store preferences in a structured format (e.g., a dictionary).
+- Inject stored preferences into the agent's context on every turn so they influence responses.
+- Preferences must persist across all turns within the session.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Extracts preferences from conversation:** The agent detects and stores preference statements without the user using explicit commands.
+- **Applies preferences in responses:** Subsequent answers reflect stored preferences (correct name, units, style, etc.).
+- **Preferences persist across turns:** Preferences set early in the conversation are still applied many turns later.

@@ -1,0 +1,64 @@
+{
+  "title": "LangChain",
+  "description": "Learn to build AI agents and LLM-powered applications with LangChain from scratch. Covers agents, tools, memory, RAG, and production patterns.",
+  "icon": "link",
+  "sections": [
+    {
+      "title": "Getting Started",
+      "topics": [
+        { "slug": "introduction", "title": "What is LangChain?", "difficulty": "beginner" },
+        { "slug": "installation", "title": "Installation & Setup", "difficulty": "beginner", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langchain/installation.ipynb" }
+      ]
+    },
+    {
+      "title": "Beginner: Core Concepts",
+      "topics": [
+        { "slug": "chat-models", "title": "Chat Models & Providers", "difficulty": "beginner", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langchain/chat-models.ipynb" },
+        { "slug": "messages", "title": "Messages System", "difficulty": "beginner", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langchain/messages.ipynb" },
+        { "slug": "first-agent", "title": "Creating Your First Agent", "difficulty": "beginner", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langchain/first-agent.ipynb" },
+        { "slug": "tools-basics", "title": "Tools Basics", "difficulty": "beginner", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langchain/tools-basics.ipynb" }
+      ]
+    },
+    {
+      "title": "Beginner: Project",
+      "topics": [
+        { "slug": "project-qa-chatbot", "title": "Project: Q&A Chatbot", "difficulty": "beginner", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langchain/project-qa-chatbot.ipynb" }
+      ]
+    },
+    {
+      "title": "Intermediate: Features",
+      "topics": [
+        { "slug": "structured-output", "title": "Structured Output", "difficulty": "intermediate", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langchain/structured-output.ipynb" },
+        { "slug": "memory", "title": "Short-Term & Long-Term Memory", "difficulty": "intermediate", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langchain/memory.ipynb" },
+        { "slug": "streaming", "title": "Streaming Responses", "difficulty": "intermediate", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langchain/streaming.ipynb" },
+        { "slug": "custom-tools", "title": "Custom Tools & Advanced Schemas", "difficulty": "intermediate", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langchain/custom-tools.ipynb" },
+        { "slug": "rag-pipeline", "title": "RAG Pipeline", "difficulty": "intermediate", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langchain/rag-pipeline.ipynb" },
+        { "slug": "human-in-the-loop", "title": "Human-in-the-Loop", "difficulty": "intermediate", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langchain/human-in-the-loop.ipynb" },
+        { "slug": "guardrails", "title": "Guardrails & Safety", "difficulty": "intermediate", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langchain/guardrails.ipynb" }
+      ]
+    },
+    {
+      "title": "Intermediate: Projects",
+      "topics": [
+        { "slug": "project-rag-agent", "title": "Project: RAG Knowledge Base", "difficulty": "intermediate", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langchain/project-rag-agent.ipynb" },
+        { "slug": "project-customer-service", "title": "Project: Customer Service Bot", "difficulty": "intermediate", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langchain/project-customer-service.ipynb" }
+      ]
+    },
+    {
+      "title": "Advanced: Features",
+      "topics": [
+        { "slug": "multi-agent", "title": "Multi-Agent Systems", "difficulty": "advanced", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langchain/multi-agent.ipynb" },
+        { "slug": "mcp-integration", "title": "MCP Integration", "difficulty": "advanced", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langchain/mcp-integration.ipynb" },
+        { "slug": "middleware", "title": "Custom Middleware", "difficulty": "advanced", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langchain/middleware.ipynb" },
+        { "slug": "deployment", "title": "Production Deployment & Observability", "difficulty": "advanced", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langchain/deployment.ipynb" }
+      ]
+    },
+    {
+      "title": "Advanced: Projects",
+      "topics": [
+        { "slug": "project-research-system", "title": "Project: Multi-Agent Research System", "difficulty": "advanced", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langchain/project-research-system.ipynb" },
+        { "slug": "project-production-rag", "title": "Project: Production RAG Pipeline", "difficulty": "advanced", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/langchain/project-production-rag.ipynb" }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,163 @@
+## Approach
+
+The email assistant fires off emails the instant the user requests one, with no confirmation step. In production, this is dangerous — a typo in the recipient address, wrong subject line, or accidental trigger can't be undone once the email is sent. The core issue is that the `send_email` tool executes its side effect immediately, and the agent's instructions tell it to "do it immediately."
+
+The fix introduces a two-phase workflow: first, a `preview_email` tool that formats and displays the email details (to, subject, body) without sending, and second, the actual `send_email` tool that only executes after the user confirms. The agent's instructions are updated to enforce this flow — always preview first, wait for explicit approval, and handle rejection gracefully. This is a standard human-in-the-loop pattern for any irreversible action.
+
+## Solution
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from agents.tool import function_tool
+
+
+@function_tool
+def preview_email(to: str, subject: str, body: str) -> str:
+    """Preview an email before sending. Shows the recipient, subject, and body for user review."""
+    return (
+        f"📧 Email Preview:\n"
+        f"  To: {to}\n"
+        f"  Subject: {subject}\n"
+        f"  Body: {body}\n\n"
+        f"Reply 'yes' to send or 'no' to cancel."
+    )
+
+
+@function_tool
+def send_email(to: str, subject: str, body: str) -> str:
+    """Send an email. Only call this AFTER the user has confirmed the preview."""
+    print(f"EMAIL SENT to {to}: {subject}")
+    return f"Email sent successfully to {to} with subject '{subject}'"
+
+
+agent = Agent(
+    name="Email Assistant",
+    instructions=(
+        "You are an assistant that helps users send emails. "
+        "IMPORTANT: Never send an email without confirmation. Always follow this workflow:\n"
+        "1. When the user asks to send an email, call preview_email to show them the details.\n"
+        "2. Wait for the user to confirm with 'yes' before calling send_email.\n"
+        "3. If the user says 'no' or asks for changes, do NOT send. Acknowledge the cancellation or update the draft.\n"
+        "Never call send_email without prior user approval."
+    ),
+    tools=[preview_email, send_email],
+)
+
+result = Runner.run_sync(agent, "Send an email to bob@example.com with subject 'Meeting Tomorrow' and body 'Hi Bob, can we meet at 3pm?'")
+print(result.final_output)
+```
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+
+@tool
+def preview_email(to: str, subject: str, body: str) -> str:
+    """Preview an email before sending. Shows the recipient, subject, and body for user review."""
+    return (
+        f"Email Preview:\n"
+        f"  To: {to}\n"
+        f"  Subject: {subject}\n"
+        f"  Body: {body}\n\n"
+        f"Reply 'yes' to send or 'no' to cancel."
+    )
+
+
+@tool
+def send_email(to: str, subject: str, body: str) -> str:
+    """Send an email. Only call this AFTER the user has confirmed the preview."""
+    print(f"EMAIL SENT to {to}: {subject}")
+    return f"Email sent successfully to {to} with subject '{subject}'"
+
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", (
+        "You are an assistant that helps users send emails. "
+        "IMPORTANT: Never send an email without confirmation. Always follow this workflow:\n"
+        "1. When the user asks to send an email, call preview_email to show them the details.\n"
+        "2. Wait for the user to confirm with 'yes' before calling send_email.\n"
+        "3. If the user says 'no' or asks for changes, do NOT send. Acknowledge the cancellation or update the draft.\n"
+        "Never call send_email without prior user approval."
+    )),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}"),
+])
+
+agent = create_tool_calling_agent(llm, [preview_email, send_email], prompt)
+executor = AgentExecutor(agent=agent, tools=[preview_email, send_email])
+
+result = executor.invoke({"input": "Send an email to bob@example.com with subject 'Meeting Tomorrow' and body 'Hi Bob, can we meet at 3pm?'"})
+print(result["output"])
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai.tools import tool
+
+
+@tool
+def preview_email(to: str, subject: str, body: str) -> str:
+    """Preview an email before sending. Shows the recipient, subject, and body for user review."""
+    return (
+        f"Email Preview:\n"
+        f"  To: {to}\n"
+        f"  Subject: {subject}\n"
+        f"  Body: {body}\n\n"
+        f"Reply 'yes' to send or 'no' to cancel."
+    )
+
+
+@tool
+def send_email(to: str, subject: str, body: str) -> str:
+    """Send an email. Only call this AFTER the user has confirmed the preview."""
+    print(f"EMAIL SENT to {to}: {subject}")
+    return f"Email sent successfully to {to} with subject '{subject}'"
+
+
+email_agent = Agent(
+    role="Email Assistant",
+    goal="Help users compose and send emails with a confirmation step before sending.",
+    backstory=(
+        "You are an assistant that helps users send emails. "
+        "IMPORTANT: Never send an email without confirmation. Always follow this workflow:\n"
+        "1. When the user asks to send an email, call preview_email to show them the details.\n"
+        "2. Wait for the user to confirm with 'yes' before calling send_email.\n"
+        "3. If the user says 'no' or asks for changes, do NOT send. Acknowledge the cancellation or update the draft.\n"
+        "Never call send_email without prior user approval."
+    ),
+    tools=[preview_email, send_email],
+)
+
+task = Task(
+    description="Send an email to bob@example.com with subject 'Meeting Tomorrow' and body 'Hi Bob, can we meet at 3pm?'",
+    expected_output="A preview of the email shown for user confirmation before sending.",
+    agent=email_agent,
+)
+
+crew = Crew(agents=[email_agent], tasks=[task], process=Process.sequential)
+result = crew.kickoff()
+print(result)
+```
+
+## Why This Works
+
+Splitting the action into `preview_email` (read-only) and `send_email` (side effect) creates a natural checkpoint. The agent's instructions enforce a strict ordering: preview first, then wait for approval. The LLM sees the preview tool's output — which explicitly asks the user to confirm — and knows not to proceed to `send_email` until the user says "yes." If the user says "no" or requests changes, the agent handles that branch without triggering the irreversible action.
+
+This pattern generalizes to any destructive or irreversible operation: database deletes, financial transactions, deployments. The key insight is that confirmation should be enforced at the tool level (separate preview and execute tools) and at the prompt level (instructions that mandate the workflow), providing defense in depth.
+
+## Key Takeaways
+
+- Split irreversible actions into a preview tool (read-only) and an execute tool (side effect) to create a natural confirmation checkpoint.
+- Update the agent's instructions to mandate the preview-confirm-send workflow — the LLM needs explicit guidance to override its default "do what the user asked" behavior.
+- Handle both "yes" and "no" responses gracefully, including requests to modify the draft before sending.

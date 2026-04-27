@@ -1,0 +1,444 @@
+## Approach
+
+The starter code uses a pull-based polling loop that checks for events every 5 seconds, processes all events with the same generic handler, and maintains no context between related events. A follow-up email about the Q4 report is treated as an entirely new, unrelated event — the agent does not remember the original request. This wastes resources when idle (polling with no events), misses event-type-specific behavior, and loses valuable context.
+
+The fix refactors the architecture into an event-driven system with three key changes. First, events are processed reactively through an async event queue rather than periodic polling — handlers fire as events arrive. Second, each event type (email, schedule change, alert) has a dedicated handler with specialized behavior and prompts. Third, a shared context store tracks related events (e.g., emails in the same thread by matching sender and subject patterns) so follow-up events have access to prior context.
+
+In LangGraph, this is implemented with a conditional routing node that dispatches events to type-specific handler nodes based on the event type. In LangChain, the same pattern uses an async event bus with registered handler functions per event type.
+
+## Solution
+
+### LangGraph
+
+```python
+from langgraph.graph import StateGraph, START, END
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage
+from typing import TypedDict, Optional
+import asyncio
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+
+class EventContext:
+    def __init__(self):
+        self.threads: dict[str, list[dict]] = {}
+
+    def add_event(self, event: dict):
+        if event["type"] == "new_email":
+            sender = event["data"]["from"]
+            base_subject = event["data"]["subject"].replace("Re: ", "")
+            thread_key = f"{sender}:{base_subject}"
+            self.threads.setdefault(thread_key, []).append(event)
+
+    def get_thread_context(self, event: dict) -> str:
+        if event["type"] != "new_email":
+            return ""
+        sender = event["data"]["from"]
+        base_subject = event["data"]["subject"].replace("Re: ", "")
+        thread_key = f"{sender}:{base_subject}"
+        thread = self.threads.get(thread_key, [])
+        if len(thread) <= 1:
+            return ""
+        prior = thread[:-1]
+        return "Previous messages in this thread:\n" + "\n".join(
+            f"- {e['data']['subject']}: {e['data']['body']}" for e in prior
+        )
+
+
+context_store = EventContext()
+
+
+class EventState(TypedDict):
+    event: dict
+    response: Optional[str]
+
+
+def route_event(state: EventState) -> str:
+    event_type = state["event"]["type"]
+    handlers = {
+        "new_email": "handle_email",
+        "schedule_change": "handle_schedule",
+        "alert": "handle_alert",
+    }
+    return handlers.get(event_type, "handle_unknown")
+
+
+def handle_email(state: EventState) -> dict:
+    event = state["event"]
+    context_store.add_event(event)
+    thread_context = context_store.get_thread_context(event)
+
+    prompt = f"""You are a professional email assistant. Handle this email:
+From: {event['data']['from']}
+Subject: {event['data']['subject']}
+Body: {event['data']['body']}"""
+
+    if thread_context:
+        prompt += f"\n\n{thread_context}\n\nThis is a follow-up. Update your previous understanding accordingly."
+
+    response = llm.invoke([
+        SystemMessage(content="You are a personal assistant specializing in email management. Create tasks, draft replies, and track action items."),
+        HumanMessage(content=prompt),
+    ])
+    return {"response": f"[EMAIL] {response.content}"}
+
+
+def handle_schedule(state: EventState) -> dict:
+    event = state["event"]
+    response = llm.invoke([
+        SystemMessage(content="You are a calendar management assistant. Handle schedule changes by updating records and notifying affected parties."),
+        HumanMessage(content=f"Schedule change: Meeting '{event['data']['meeting']}' moved from {event['data']['old_time']} to {event['data']['new_time']}. Update calendar and notify attendees."),
+    ])
+    return {"response": f"[SCHEDULE] {response.content}"}
+
+
+def handle_alert(state: EventState) -> dict:
+    event = state["event"]
+    severity = event["data"]["severity"].upper()
+    response = llm.invoke([
+        SystemMessage(content=f"You are an incident response assistant. This is a {severity}-severity alert. Respond with urgency appropriate to the severity. List immediate actions to take."),
+        HumanMessage(content=f"[{severity} ALERT] {event['data']['message']} (Source: {event['data']['source']})"),
+    ])
+    return {"response": f"[{severity} ALERT] {response.content}"}
+
+
+def handle_unknown(state: EventState) -> dict:
+    return {"response": f"[UNKNOWN] Unrecognized event type: {state['event']['type']}"}
+
+
+graph = StateGraph(EventState)
+graph.add_node("handle_email", handle_email)
+graph.add_node("handle_schedule", handle_schedule)
+graph.add_node("handle_alert", handle_alert)
+graph.add_node("handle_unknown", handle_unknown)
+graph.add_conditional_edges(START, route_event, {
+    "handle_email": "handle_email",
+    "handle_schedule": "handle_schedule",
+    "handle_alert": "handle_alert",
+    "handle_unknown": "handle_unknown",
+})
+graph.add_edge("handle_email", END)
+graph.add_edge("handle_schedule", END)
+graph.add_edge("handle_alert", END)
+graph.add_edge("handle_unknown", END)
+
+app = graph.compile()
+
+events = [
+    {"type": "new_email", "data": {"from": "boss@company.com", "subject": "Q4 Report needed", "body": "Please prepare the Q4 report by Friday."}},
+    {"type": "schedule_change", "data": {"meeting": "Team standup", "old_time": "9:00 AM", "new_time": "10:30 AM"}},
+    {"type": "alert", "data": {"severity": "high", "message": "Server CPU at 95%", "source": "monitoring"}},
+    {"type": "new_email", "data": {"from": "boss@company.com", "subject": "Re: Q4 Report needed", "body": "Also include the APAC numbers."}},
+]
+
+
+async def process_events(events: list[dict]):
+    for event in events:
+        print(f"\n--- Event: {event['type']} ---")
+        result = await app.ainvoke({"event": event})
+        print(f"Response: {result['response']}")
+
+
+asyncio.run(process_events(events))
+```
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage
+import asyncio
+from collections import defaultdict
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+
+class EventBus:
+    def __init__(self):
+        self.handlers: dict[str, callable] = {}
+        self.queue: asyncio.Queue = asyncio.Queue()
+
+    def register(self, event_type: str, handler):
+        self.handlers[event_type] = handler
+
+    async def emit(self, event: dict):
+        await self.queue.put(event)
+
+    async def process(self):
+        while not self.queue.empty():
+            event = await self.queue.get()
+            handler = self.handlers.get(event["type"])
+            if handler:
+                await handler(event)
+            else:
+                print(f"[UNKNOWN] No handler for event type: {event['type']}")
+
+
+class ContextStore:
+    def __init__(self):
+        self.email_threads: dict[str, list[dict]] = defaultdict(list)
+
+    def track_email(self, event: dict) -> str:
+        sender = event["data"]["from"]
+        base_subject = event["data"]["subject"].replace("Re: ", "")
+        key = f"{sender}:{base_subject}"
+        self.email_threads[key].append(event)
+        thread = self.email_threads[key]
+        if len(thread) <= 1:
+            return ""
+        prior = thread[:-1]
+        return "Previous messages in this thread:\n" + "\n".join(
+            f"- {e['data']['subject']}: {e['data']['body']}" for e in prior
+        )
+
+
+context = ContextStore()
+bus = EventBus()
+
+
+async def handle_email(event: dict):
+    thread_context = context.track_email(event)
+    prompt = f"From: {event['data']['from']}\nSubject: {event['data']['subject']}\nBody: {event['data']['body']}"
+    if thread_context:
+        prompt += f"\n\n{thread_context}\n\nThis is a follow-up. Update your previous understanding."
+    response = await llm.ainvoke([
+        SystemMessage(content="You are a personal assistant specializing in email management. Create tasks, draft replies, and track action items."),
+        HumanMessage(content=prompt),
+    ])
+    print(f"  [EMAIL] {response.content}")
+
+
+async def handle_schedule(event: dict):
+    response = await llm.ainvoke([
+        SystemMessage(content="You are a calendar management assistant. Handle schedule changes by updating records and notifying affected parties."),
+        HumanMessage(content=f"Meeting '{event['data']['meeting']}' moved from {event['data']['old_time']} to {event['data']['new_time']}."),
+    ])
+    print(f"  [SCHEDULE] {response.content}")
+
+
+async def handle_alert(event: dict):
+    severity = event["data"]["severity"].upper()
+    response = await llm.ainvoke([
+        SystemMessage(content=f"You are an incident response assistant. This is a {severity}-severity alert. Respond with urgency and list immediate actions."),
+        HumanMessage(content=f"[{severity}] {event['data']['message']} (Source: {event['data']['source']})"),
+    ])
+    print(f"  [{severity} ALERT] {response.content}")
+
+
+bus.register("new_email", handle_email)
+bus.register("schedule_change", handle_schedule)
+bus.register("alert", handle_alert)
+
+events = [
+    {"type": "new_email", "data": {"from": "boss@company.com", "subject": "Q4 Report needed", "body": "Please prepare the Q4 report by Friday."}},
+    {"type": "schedule_change", "data": {"meeting": "Team standup", "old_time": "9:00 AM", "new_time": "10:30 AM"}},
+    {"type": "alert", "data": {"severity": "high", "message": "Server CPU at 95%", "source": "monitoring"}},
+    {"type": "new_email", "data": {"from": "boss@company.com", "subject": "Re: Q4 Report needed", "body": "Also include the APAC numbers."}},
+]
+
+
+async def main():
+    for event in events:
+        print(f"\n--- Event: {event['type']} ---")
+        await bus.emit(event)
+        await bus.process()
+
+
+asyncio.run(main())
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from collections import defaultdict
+
+email_handler = Agent(
+    role="Email Manager",
+    goal="Handle email events by creating tasks, drafting replies, and tracking action items",
+    backstory="You are a personal assistant specializing in email management.",
+)
+
+schedule_handler = Agent(
+    role="Calendar Manager",
+    goal="Handle schedule changes by updating records and notifying affected parties",
+    backstory="You are a calendar management assistant.",
+)
+
+alert_handler = Agent(
+    role="Incident Responder",
+    goal="Handle alerts with urgency appropriate to severity, listing immediate actions",
+    backstory="You are an incident response assistant.",
+)
+
+
+class ContextStore:
+    def __init__(self):
+        self.email_threads: dict[str, list[dict]] = defaultdict(list)
+
+    def track_email(self, event: dict) -> str:
+        sender = event["data"]["from"]
+        base_subject = event["data"]["subject"].replace("Re: ", "")
+        key = f"{sender}:{base_subject}"
+        self.email_threads[key].append(event)
+        thread = self.email_threads[key]
+        if len(thread) <= 1:
+            return ""
+        prior = thread[:-1]
+        return "Previous messages in this thread:\n" + "\n".join(
+            f"- {e['data']['subject']}: {e['data']['body']}" for e in prior
+        )
+
+
+context = ContextStore()
+handlers = {
+    "new_email": email_handler,
+    "schedule_change": schedule_handler,
+    "alert": alert_handler,
+}
+
+
+def process_event(event: dict) -> str:
+    event_type = event["type"]
+    agent = handlers.get(event_type)
+    if not agent:
+        return f"[UNKNOWN] No handler for event type: {event_type}"
+
+    if event_type == "new_email":
+        thread_context = context.track_email(event)
+        description = (
+            f"From: {event['data']['from']}\n"
+            f"Subject: {event['data']['subject']}\n"
+            f"Body: {event['data']['body']}"
+        )
+        if thread_context:
+            description += f"\n\n{thread_context}\n\nThis is a follow-up. Update your previous understanding."
+    elif event_type == "schedule_change":
+        description = f"Meeting '{event['data']['meeting']}' moved from {event['data']['old_time']} to {event['data']['new_time']}. Update calendar and notify attendees."
+    elif event_type == "alert":
+        severity = event["data"]["severity"].upper()
+        description = f"[{severity} ALERT] {event['data']['message']} (Source: {event['data']['source']})"
+    else:
+        description = str(event)
+
+    task = Task(
+        description=description,
+        expected_output=f"Response to {event_type} event",
+        agent=agent,
+    )
+    crew = Crew(agents=[agent], tasks=[task])
+    result = str(crew.kickoff())
+    return f"[{event_type.upper()}] {result}"
+
+
+events = [
+    {"type": "new_email", "data": {"from": "boss@company.com", "subject": "Q4 Report needed", "body": "Please prepare the Q4 report by Friday."}},
+    {"type": "schedule_change", "data": {"meeting": "Team standup", "old_time": "9:00 AM", "new_time": "10:30 AM"}},
+    {"type": "alert", "data": {"severity": "high", "message": "Server CPU at 95%", "source": "monitoring"}},
+    {"type": "new_email", "data": {"from": "boss@company.com", "subject": "Re: Q4 Report needed", "body": "Also include the APAC numbers."}},
+]
+
+for event in events:
+    print(f"\n--- Event: {event['type']} ---")
+    result = process_event(event)
+    print(f"Response: {result}")
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from collections import defaultdict
+
+email_agent = Agent(
+    name="Email Manager",
+    instructions="You are a personal assistant specializing in email management. Create tasks, draft replies, and track action items.",
+)
+
+schedule_agent = Agent(
+    name="Calendar Manager",
+    instructions="You are a calendar management assistant. Handle schedule changes by updating records and notifying affected parties.",
+)
+
+alert_agent = Agent(
+    name="Incident Responder",
+    instructions="You are an incident response assistant. Respond with urgency appropriate to the severity. List immediate actions to take.",
+)
+
+
+class ContextStore:
+    def __init__(self):
+        self.email_threads: dict[str, list[dict]] = defaultdict(list)
+
+    def track_email(self, event: dict) -> str:
+        sender = event["data"]["from"]
+        base_subject = event["data"]["subject"].replace("Re: ", "")
+        key = f"{sender}:{base_subject}"
+        self.email_threads[key].append(event)
+        thread = self.email_threads[key]
+        if len(thread) <= 1:
+            return ""
+        prior = thread[:-1]
+        return "Previous messages in this thread:\n" + "\n".join(
+            f"- {e['data']['subject']}: {e['data']['body']}" for e in prior
+        )
+
+
+context = ContextStore()
+handlers = {
+    "new_email": email_agent,
+    "schedule_change": schedule_agent,
+    "alert": alert_agent,
+}
+
+
+def process_event(event: dict) -> str:
+    event_type = event["type"]
+    agent = handlers.get(event_type)
+    if not agent:
+        return f"[UNKNOWN] No handler for event type: {event_type}"
+
+    if event_type == "new_email":
+        thread_context = context.track_email(event)
+        prompt = (
+            f"From: {event['data']['from']}\n"
+            f"Subject: {event['data']['subject']}\n"
+            f"Body: {event['data']['body']}"
+        )
+        if thread_context:
+            prompt += f"\n\n{thread_context}\n\nThis is a follow-up. Update your previous understanding."
+    elif event_type == "schedule_change":
+        prompt = f"Meeting '{event['data']['meeting']}' moved from {event['data']['old_time']} to {event['data']['new_time']}. Update calendar and notify attendees."
+    elif event_type == "alert":
+        severity = event["data"]["severity"].upper()
+        prompt = f"[{severity} ALERT] {event['data']['message']} (Source: {event['data']['source']})"
+    else:
+        prompt = str(event)
+
+    result = Runner.run_sync(agent, prompt)
+    return f"[{event_type.upper()}] {result.final_output}"
+
+
+events = [
+    {"type": "new_email", "data": {"from": "boss@company.com", "subject": "Q4 Report needed", "body": "Please prepare the Q4 report by Friday."}},
+    {"type": "schedule_change", "data": {"meeting": "Team standup", "old_time": "9:00 AM", "new_time": "10:30 AM"}},
+    {"type": "alert", "data": {"severity": "high", "message": "Server CPU at 95%", "source": "monitoring"}},
+    {"type": "new_email", "data": {"from": "boss@company.com", "subject": "Re: Q4 Report needed", "body": "Also include the APAC numbers."}},
+]
+
+for event in events:
+    print(f"\n--- Event: {event['type']} ---")
+    result = process_event(event)
+    print(f"Response: {result}")
+```
+
+## Why This Works
+
+The event-driven architecture replaces wasteful polling with reactive processing — handlers fire only when events arrive, not on a fixed interval. Each event type gets a dedicated handler with specialized prompts and behavior: the email handler manages threads and tracks action items, the schedule handler updates calendars and notifies attendees, and the alert handler responds with urgency proportional to severity. The context store maintains state across related events by tracking email threads using a sender+subject key, so when the follow-up email arrives ("Also include the APAC numbers"), the handler has full context about the original Q4 report request. Async processing via `asyncio` ensures events are handled as they arrive without blocking.
+
+## Key Takeaways
+
+- Replace polling loops with event-driven architectures — handlers should fire reactively when events arrive, not burn resources checking repeatedly on a timer.
+- Each event type deserves a specialized handler with tailored prompts and behavior; a generic "handle this event" prompt loses the specificity that makes responses useful.
+- Maintain cross-event context (e.g., email thread history) in a shared store so the agent can connect related events rather than treating each one in isolation.

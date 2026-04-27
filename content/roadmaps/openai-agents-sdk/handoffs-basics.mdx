@@ -1,0 +1,129 @@
+# Simple Handoffs
+
+Handoffs let one agent transfer control to another mid-conversation. This is the core pattern for multi-agent systems in the OpenAI Agents SDK — a triage agent decides which specialist should handle a request and hands off to them.
+
+## The Triage Pattern
+
+The most common handoff pattern is triage: a router agent examines the user's message and hands off to the right specialist.
+
+```
+User Message → Triage Agent → [Math Tutor | Writing Coach | Science Helper]
+```
+
+The triage agent doesn't answer the question itself — it routes to the agent best equipped to help.
+
+## Defining Handoffs
+
+Pass a list of agents to the `handoffs` parameter. Each agent in the list becomes a callable handoff tool:
+
+```python
+from agents import Agent, Runner
+
+math_agent = Agent(
+    name="Math Tutor",
+    instructions="You are a math tutor. Explain math concepts clearly with step-by-step solutions.",
+)
+
+history_agent = Agent(
+    name="History Expert",
+    instructions="You are a history expert. Provide detailed, accurate historical information.",
+)
+
+triage = Agent(
+    name="Triage Agent",
+    instructions="""You are a routing agent. Based on the user's question:
+- Hand off to Math Tutor for math questions
+- Hand off to History Expert for history questions
+- For other topics, answer directly.""",
+    handoffs=[math_agent, history_agent],
+)
+
+result = Runner.run_sync(triage, "What caused the French Revolution?")
+print(result.final_output)
+```
+
+## How Handoffs Work
+
+When you add `handoffs=[agent_a, agent_b]`, the SDK automatically creates transfer tools:
+
+| Handoff Agent | Generated Tool Name |
+|---------------|-------------------|
+| Math Tutor | `transfer_to_math_tutor` |
+| History Expert | `transfer_to_history_expert` |
+
+The triage agent sees these as callable tools. When it calls `transfer_to_history_expert`, the Runner:
+
+1. Stops the triage agent's loop
+2. Passes the full conversation history to the History Expert
+3. Starts the History Expert's loop
+4. Returns the History Expert's final output
+
+## Checking Which Agent Answered
+
+Use `result.last_agent` to see which agent produced the final output:
+
+```python
+result = Runner.run_sync(triage, "What is the integral of x squared?")
+
+print(f"Answer: {result.final_output}")
+print(f"Answered by: {result.last_agent.name}")
+```
+
+This is useful for logging, debugging, and displaying which specialist handled the request.
+
+## Multiple Handoff Chains
+
+Handoffs can be chained — a specialist agent can itself hand off to another agent:
+
+```python
+algebra_agent = Agent(
+    name="Algebra Specialist",
+    instructions="You solve algebra problems step by step.",
+)
+
+calculus_agent = Agent(
+    name="Calculus Specialist",
+    instructions="You solve calculus problems step by step.",
+)
+
+math_router = Agent(
+    name="Math Router",
+    instructions="""Route math questions to the right specialist:
+- Algebra Specialist for equations, variables, polynomials
+- Calculus Specialist for derivatives, integrals, limits""",
+    handoffs=[algebra_agent, calculus_agent],
+)
+
+triage = Agent(
+    name="Triage",
+    instructions="Route to Math Router for any math questions. Answer other questions directly.",
+    handoffs=[math_router],
+)
+
+result = Runner.run_sync(triage, "Solve 2x + 5 = 13")
+print(f"Answer: {result.final_output}")
+print(f"Answered by: {result.last_agent.name}")
+```
+
+The flow is: Triage → Math Router → Algebra Specialist.
+
+## Inspecting the Handoff Trace
+
+The `result.new_items` list contains every message and tool call, including handoff events:
+
+```python
+result = Runner.run_sync(triage, "When did World War 2 end?")
+
+for item in result.new_items:
+    print(item)
+```
+
+This gives you the full trace: the triage agent's reasoning, the handoff tool call, and the specialist's response.
+
+## Key Takeaways
+
+- Handoffs let agents transfer control to specialists via `Agent(handoffs=[...])`
+- Each handoff agent becomes a `transfer_to_<name>` tool the agent can call
+- `result.last_agent` tells you which agent produced the final output
+- Handoffs can be chained for multi-level routing
+- The full handoff trace is available in `result.new_items`

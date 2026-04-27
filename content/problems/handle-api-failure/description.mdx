@@ -1,0 +1,35 @@
+## The Problem
+
+A financial assistant uses a **simulated stock price API** that fails often—about **60%** of the time it raises a timeout-style error (e.g. `ConnectionError`). Right now, when the tool throws, the **agent run fails** and the user sees a crash instead of a reply. In production, downstream APIs are unreliable; callers expect **retries** and a **clear message** if data never arrives. You must add **retry logic (up to 3 attempts)** and ensure the user is **informed if all retries fail**, without changing how the simulated API randomly fails. The final answer should still be **helpful** when partial or no data is available.
+
+## Examples
+
+### Current behavior (bad)
+
+**User input:** What's the current price of AAPL?
+
+**What happens:** The `fetch_stock_price` tool raises `ConnectionError("API timeout: ...")` on a failed roll. With no handling, the agent or executor surfaces an unhandled exception and the user gets no graceful response.
+
+### Expected behavior (good)
+
+**Same input, API fails repeatedly:** The system retries the call up to **3 times** (each attempt may succeed or fail per the existing simulation). If a retry succeeds, the user gets the price as usual.
+
+**If all 3 attempts fail:** The user sees a clear message such as that the stock service could not be reached after several tries, and optional guidance (try again later, check another source)—**not** a raw stack trace.
+
+**Success on a later retry:** If attempt 1 fails but attempt 2 succeeds, the agent returns the successful quote without treating the first failure as fatal.
+
+## Your Task
+
+- **LangChain path:** Add retry behavior around failed tool/API usage (e.g. wrap the tool, executor error handling, or a small retry loop) so failed calls are retried up to **3 times** before fallback. Do **not** change the random failure logic inside the simulated API.
+- **LangGraph path:** Add a **conditional flow** so that on error the graph routes back to the fetch step until success or **3 retries**, then routes to a response that explains failure to the user.
+
+Ensure no unhandled exceptions reach the user and that success after a retry still produces a normal, data-backed answer.
+
+## Evaluation
+
+Submissions are checked for:
+
+- **Implements retry logic:** Up to **3** retries before giving up on the API call.
+- **Graceful failure message:** After exhausting retries, the user gets a clear explanation instead of a crash.
+- **Succeeds when API recovers:** If a later attempt succeeds, the agent returns the stock data normally.
+- **No unhandled exceptions:** The run completes without throwing unhandled errors to the user.

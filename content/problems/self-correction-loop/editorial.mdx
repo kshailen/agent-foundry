@@ -1,0 +1,333 @@
+## Approach
+
+The root cause is that the agent sends its very first draft directly to the user without any quality check. LLMs frequently produce responses with subtle factual errors — wrong population figures, incorrect chemical formulas, or misattributed historical dates — especially on the first pass. The model is fully capable of catching these mistakes when explicitly asked to review its own output, but the current code never invokes that capability.
+
+The fix is to introduce a self-correction loop: after generating the initial draft, a second LLM call acts as a "reviewer" that checks the draft for factual inconsistencies, logical errors, and completeness. If issues are found, the draft is revised and reviewed again. A hard cap on revision cycles (e.g., 2) prevents infinite loops. This pattern — generate, review, conditionally revise — is a core building block for reliable AI agents.
+
+In the LangGraph version, this maps cleanly onto a graph with explicit nodes: `generate_draft` produces the first answer, `review` evaluates it, and a conditional edge either routes to `revise` (which feeds back into `review`) or to `finalize` when the review approves the draft. The `revision_count` in the state ensures termination.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+MAX_REVISIONS = 2
+
+draft_prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a knowledgeable assistant. Answer the user's question accurately."),
+    ("human", "{input}"),
+])
+
+review_prompt = ChatPromptTemplate.from_messages([
+    ("system", (
+        "You are a meticulous reviewer. Check the following draft answer for:\n"
+        "- Factual inaccuracies (wrong numbers, dates, names)\n"
+        "- Logical inconsistencies (contradictions, mixing units like metro vs city population)\n"
+        "- Completeness (missing key information)\n\n"
+        "If the draft is accurate and complete, respond with exactly: APPROVED\n"
+        "If issues exist, list each issue on its own line, then write REVISE."
+    )),
+    ("human", "Question: {question}\n\nDraft answer:\n{draft}"),
+])
+
+revise_prompt = ChatPromptTemplate.from_messages([
+    ("system", (
+        "You are a knowledgeable assistant. A reviewer found issues with your previous answer. "
+        "Rewrite the answer, fixing every issue listed below. Keep the parts that were correct."
+    )),
+    ("human", "Question: {question}\n\nPrevious draft:\n{draft}\n\nReview feedback:\n{review}"),
+])
+
+
+def answer_question(question: str) -> str:
+    draft_chain = draft_prompt | llm
+    review_chain = review_prompt | llm
+    revise_chain = revise_prompt | llm
+
+    draft = draft_chain.invoke({"input": question}).content
+
+    for _ in range(MAX_REVISIONS):
+        review = review_chain.invoke({"question": question, "draft": draft}).content
+
+        if "APPROVED" in review and "REVISE" not in review:
+            break
+
+        draft = revise_chain.invoke({
+            "question": question,
+            "draft": draft,
+            "review": review,
+        }).content
+
+    return draft
+
+
+print(answer_question("What is the population of Tokyo and how does it compare to New York?"))
+print("---")
+print(answer_question("Explain how photosynthesis works and what its chemical equation is."))
+print("---")
+print(answer_question("What were the causes of World War I and when did key events occur?"))
+```
+
+### LangGraph
+
+```python
+from langchain_openai import ChatOpenAI
+from langgraph.graph import StateGraph, START, END
+from langchain_core.messages import SystemMessage, HumanMessage
+from typing import TypedDict
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+MAX_REVISIONS = 2
+
+
+class AgentState(TypedDict):
+    question: str
+    draft: str
+    review: str
+    final_answer: str
+    revision_count: int
+
+
+def generate_draft(state: AgentState) -> AgentState:
+    messages = [
+        SystemMessage(content="You are a knowledgeable assistant. Answer the question accurately."),
+        HumanMessage(content=state["question"]),
+    ]
+    response = llm.invoke(messages)
+    state["draft"] = response.content
+    return state
+
+
+def review_draft(state: AgentState) -> AgentState:
+    messages = [
+        SystemMessage(content=(
+            "You are a meticulous reviewer. Check the following draft answer for:\n"
+            "- Factual inaccuracies (wrong numbers, dates, names)\n"
+            "- Logical inconsistencies (contradictions, mixing units)\n"
+            "- Completeness (missing key information)\n\n"
+            "If the draft is accurate and complete, respond with exactly: APPROVED\n"
+            "If issues exist, list each issue on its own line, then write REVISE."
+        )),
+        HumanMessage(content=f"Question: {state['question']}\n\nDraft answer:\n{state['draft']}"),
+    ]
+    response = llm.invoke(messages)
+    state["review"] = response.content
+    return state
+
+
+def revise_draft(state: AgentState) -> AgentState:
+    messages = [
+        SystemMessage(content=(
+            "You are a knowledgeable assistant. A reviewer found issues with your previous answer. "
+            "Rewrite the answer, fixing every issue listed below. Keep the parts that were correct."
+        )),
+        HumanMessage(content=(
+            f"Question: {state['question']}\n\n"
+            f"Previous draft:\n{state['draft']}\n\n"
+            f"Review feedback:\n{state['review']}"
+        )),
+    ]
+    response = llm.invoke(messages)
+    state["draft"] = response.content
+    state["revision_count"] = state["revision_count"] + 1
+    return state
+
+
+def finalize(state: AgentState) -> AgentState:
+    state["final_answer"] = state["draft"]
+    return state
+
+
+def should_revise(state: AgentState) -> str:
+    if "APPROVED" in state["review"] and "REVISE" not in state["review"]:
+        return "finalize"
+    if state["revision_count"] >= MAX_REVISIONS:
+        return "finalize"
+    return "revise"
+
+
+graph = StateGraph(AgentState)
+graph.add_node("generate_draft", generate_draft)
+graph.add_node("review", review_draft)
+graph.add_node("revise", revise_draft)
+graph.add_node("finalize", finalize)
+
+graph.add_edge(START, "generate_draft")
+graph.add_edge("generate_draft", "review")
+graph.add_conditional_edges("review", should_revise, {"revise": "revise", "finalize": "finalize"})
+graph.add_edge("revise", "review")
+graph.add_edge("finalize", END)
+
+app = graph.compile()
+
+result = app.invoke({
+    "question": "What is the population of Tokyo and how does it compare to New York?",
+    "draft": "",
+    "review": "",
+    "final_answer": "",
+    "revision_count": 0,
+})
+print(result["final_answer"])
+```
+
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from crewai import LLM
+
+llm = LLM(model="gpt-4o-mini")
+
+MAX_REVISIONS = 2
+
+
+def answer_question(question: str) -> str:
+    drafter = Agent(
+        role="Knowledgeable Assistant",
+        goal="Answer questions accurately",
+        backstory="You are a knowledgeable assistant. Answer the user's question accurately.",
+        llm=llm,
+    )
+
+    draft_task = Task(
+        description=question,
+        expected_output="An accurate and detailed answer",
+        agent=drafter,
+    )
+
+    crew = Crew(agents=[drafter], tasks=[draft_task])
+    draft = str(crew.kickoff())
+
+    for _ in range(MAX_REVISIONS):
+        reviewer = Agent(
+            role="Reviewer",
+            goal="Review answers for factual accuracy",
+            backstory=(
+                "You are a meticulous reviewer. Check draft answers for:\n"
+                "- Factual inaccuracies (wrong numbers, dates, names)\n"
+                "- Logical inconsistencies\n"
+                "- Completeness\n\n"
+                "If the draft is accurate and complete, respond with exactly: APPROVED\n"
+                "If issues exist, list each issue, then write REVISE."
+            ),
+            llm=llm,
+        )
+
+        review_task = Task(
+            description=f"Question: {question}\n\nDraft answer:\n{draft}",
+            expected_output="APPROVED or a list of issues followed by REVISE",
+            agent=reviewer,
+        )
+
+        review_crew = Crew(agents=[reviewer], tasks=[review_task])
+        review = str(review_crew.kickoff())
+
+        if "APPROVED" in review and "REVISE" not in review:
+            break
+
+        reviser = Agent(
+            role="Knowledgeable Assistant",
+            goal="Fix issues in the draft answer",
+            backstory=(
+                "You are a knowledgeable assistant. A reviewer found issues with your previous answer. "
+                "Rewrite the answer, fixing every issue listed. Keep the parts that were correct."
+            ),
+            llm=llm,
+        )
+
+        revise_task = Task(
+            description=f"Question: {question}\n\nPrevious draft:\n{draft}\n\nReview feedback:\n{review}",
+            expected_output="A revised, accurate answer",
+            agent=reviser,
+        )
+
+        revise_crew = Crew(agents=[reviser], tasks=[revise_task])
+        draft = str(revise_crew.kickoff())
+
+    return draft
+
+
+print(answer_question("What is the population of Tokyo and how does it compare to New York?"))
+print("---")
+print(answer_question("Explain how photosynthesis works and what its chemical equation is."))
+print("---")
+print(answer_question("What were the causes of World War I and when did key events occur?"))
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+
+MAX_REVISIONS = 2
+
+
+def answer_question(question: str) -> str:
+    drafter = Agent(
+        name="Assistant",
+        instructions="You are a knowledgeable assistant. Answer the user's question accurately.",
+    )
+    result = Runner.run_sync(drafter, question)
+    draft = result.final_output
+
+    for _ in range(MAX_REVISIONS):
+        reviewer = Agent(
+            name="Reviewer",
+            instructions=(
+                "You are a meticulous reviewer. Check the following draft answer for:\n"
+                "- Factual inaccuracies (wrong numbers, dates, names)\n"
+                "- Logical inconsistencies (contradictions, mixing units)\n"
+                "- Completeness (missing key information)\n\n"
+                "If the draft is accurate and complete, respond with exactly: APPROVED\n"
+                "If issues exist, list each issue on its own line, then write REVISE."
+            ),
+        )
+        review_result = Runner.run_sync(
+            reviewer, f"Question: {question}\n\nDraft answer:\n{draft}"
+        )
+        review = review_result.final_output
+
+        if "APPROVED" in review and "REVISE" not in review:
+            break
+
+        reviser = Agent(
+            name="Reviser",
+            instructions=(
+                "You are a knowledgeable assistant. A reviewer found issues with your previous answer. "
+                "Rewrite the answer, fixing every issue listed below. Keep the parts that were correct."
+            ),
+        )
+        revise_result = Runner.run_sync(
+            reviser,
+            f"Question: {question}\n\nPrevious draft:\n{draft}\n\nReview feedback:\n{review}",
+        )
+        draft = revise_result.final_output
+
+    return draft
+
+
+print(answer_question("What is the population of Tokyo and how does it compare to New York?"))
+print("---")
+print(answer_question("Explain how photosynthesis works and what its chemical equation is."))
+print("---")
+print(answer_question("What were the causes of World War I and when did key events occur?"))
+```
+
+## Why This Works
+
+The self-correction loop works because LLMs are significantly better at evaluating existing text than generating perfect text from scratch. By separating "generation" from "review," we leverage the model's analytical ability to catch its own mistakes — inconsistent population comparisons, unbalanced chemical equations, or wrong historical dates. The reviewer operates with a focused checklist (factual accuracy, logical consistency, completeness), which gives it a concrete framework for evaluation rather than open-ended generation.
+
+The bounded revision count (maximum 2 cycles) is essential. Without it, a perfectionist reviewer could endlessly find minor issues, creating an infinite loop. In practice, most errors are caught in the first review pass, and a second revision handles edge cases. The conditional routing in LangGraph makes this especially clean — the graph explicitly models the decision point between "revise again" and "approve and finalize."
+
+## Key Takeaways
+
+- LLMs are better critics than generators — a dedicated review step catches errors the initial generation misses.
+- Always bound iterative loops with a maximum revision count to guarantee termination.
+- In LangGraph, conditional edges cleanly model the "approve or revise" decision, making the control flow explicit and debuggable.

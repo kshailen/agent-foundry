@@ -1,0 +1,46 @@
+## The Problem
+
+You have a single **generalist agent** handling all user queries — data analysis, code generation, and writing tasks. Because it tries to be good at everything, it produces mediocre results across the board. Your task is to replace it with **three specialist agents** (data analyst, coder, and writer) and a **router** that classifies each incoming query and directs it to the right specialist.
+
+## Examples
+
+### Example 1
+
+**User input:** Analyze the correlation between columns A and B in my dataset.
+
+**Current (bad) output:** The generalist gives a vague, surface-level explanation of correlation without proper analytical depth.
+
+**Expected (good) output:** The router identifies this as a data query and sends it to the data analyst specialist, which provides a detailed statistical analysis approach with specific methods and code snippets.
+
+### Example 2
+
+**User input:** Write a Python function to merge two sorted lists.
+
+**Current (bad) output:** A generic code snippet that may have edge-case bugs because the generalist isn't focused on code quality.
+
+**Expected (good) output:** The router sends this to the code specialist, which produces a clean, well-structured function with proper handling of edge cases.
+
+### Example 3
+
+**User input:** Draft a professional email declining a meeting invitation.
+
+**Current (bad) output:** A robotic, template-like response lacking professional tone.
+
+**Expected (good) output:** The router sends this to the writing specialist, which produces a polished, professional email with appropriate tone and structure.
+
+## Your Task
+
+Refactor the starter code so that:
+
+- Three **specialist agents** exist: data analyst, coder, and writer.
+- A **router** classifies each query and directs it to the correct specialist.
+- Each specialist has a focused system prompt limited to its domain.
+- The generalist agent is removed.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Three specialist agents exist:** There are exactly three specialist agents for data analysis, coding, and writing.
+- **Router classifies queries:** A router correctly identifies the query type and directs it to the right specialist.
+- **Specialists stay in domain:** Each specialist only handles queries within its area of expertise.

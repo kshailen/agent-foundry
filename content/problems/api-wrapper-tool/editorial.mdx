@@ -1,0 +1,188 @@
+## Approach
+
+The agent is supposed to look up GitHub user profiles, but the API call function is not registered as a tool the agent can invoke. Without a tool binding, the agent has no way to make real API calls — it either hallucinates profile data from its training data or tells the user it cannot help. The function also lacks error handling, so a 404 for a nonexistent user or a 403 for rate limiting would crash with a `KeyError` when accessing response fields.
+
+The fix has two parts: (1) decorate the function with the framework's tool decorator so the agent can discover and call it, and (2) add HTTP error handling inside the tool so non-200 responses return a human-readable message instead of crashing. The tool should also parse the raw API response and return only the key fields (name, bio, public repos, followers) in a clean format rather than dumping the entire JSON blob.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+import requests
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a helpful assistant that looks up GitHub user profiles."),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}"),
+])
+
+
+@tool
+def lookup_github_user(username: str) -> str:
+    """Look up a GitHub user profile by username. Returns key profile info including name, bio, public repos, and followers."""
+    try:
+        response = requests.get(f"https://api.github.com/users/{username}", timeout=10)
+    except requests.RequestException as e:
+        return f"Network error looking up '{username}': {e}"
+
+    if response.status_code == 404:
+        return f"User '{username}' was not found on GitHub."
+    if response.status_code == 403:
+        return "GitHub API rate limit exceeded. Please try again later."
+    if response.status_code != 200:
+        return f"GitHub API error (HTTP {response.status_code}) when looking up '{username}'."
+
+    data = response.json()
+    name = data.get("name", "N/A")
+    bio = data.get("bio", "No bio listed")
+    public_repos = data.get("public_repos", 0)
+    followers = data.get("followers", 0)
+    html_url = data.get("html_url", "")
+
+    return (
+        f"Username: {username}\n"
+        f"Name: {name}\n"
+        f"Bio: {bio}\n"
+        f"Public repos: {public_repos}\n"
+        f"Followers: {followers}\n"
+        f"Profile: {html_url}"
+    )
+
+
+agent = create_tool_calling_agent(llm, [lookup_github_user], prompt)
+executor = AgentExecutor(agent=agent, tools=[lookup_github_user])
+
+result = executor.invoke({"input": "Tell me about the GitHub user 'octocat'"})
+print(result["output"])
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from agents.tool import function_tool
+import requests
+
+
+@function_tool
+def lookup_github_user(username: str) -> str:
+    """Look up a GitHub user profile by username. Returns key profile info including name, bio, public repos, and followers."""
+    try:
+        response = requests.get(f"https://api.github.com/users/{username}", timeout=10)
+    except requests.RequestException as e:
+        return f"Network error looking up '{username}': {e}"
+
+    if response.status_code == 404:
+        return f"User '{username}' was not found on GitHub."
+    if response.status_code == 403:
+        return "GitHub API rate limit exceeded. Please try again later."
+    if response.status_code != 200:
+        return f"GitHub API error (HTTP {response.status_code}) when looking up '{username}'."
+
+    data = response.json()
+    name = data.get("name", "N/A")
+    bio = data.get("bio", "No bio listed")
+    public_repos = data.get("public_repos", 0)
+    followers = data.get("followers", 0)
+    html_url = data.get("html_url", "")
+
+    return (
+        f"Username: {username}\n"
+        f"Name: {name}\n"
+        f"Bio: {bio}\n"
+        f"Public repos: {public_repos}\n"
+        f"Followers: {followers}\n"
+        f"Profile: {html_url}"
+    )
+
+
+agent = Agent(
+    name="GitHub Lookup Assistant",
+    instructions="You are a helpful assistant that looks up GitHub user profiles.",
+    tools=[lookup_github_user],
+)
+
+result = Runner.run_sync(agent, "Tell me about the GitHub user 'octocat'")
+print(result.final_output)
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai import LLM
+from crewai.tools import tool
+import requests
+
+llm = LLM(model="gpt-4o-mini")
+
+
+@tool
+def lookup_github_user(username: str) -> str:
+    """Look up a GitHub user profile by username. Returns key profile info including name, bio, public repos, and followers."""
+    try:
+        response = requests.get(f"https://api.github.com/users/{username}", timeout=10)
+    except requests.RequestException as e:
+        return f"Network error looking up '{username}': {e}"
+
+    if response.status_code == 404:
+        return f"User '{username}' was not found on GitHub."
+    if response.status_code == 403:
+        return "GitHub API rate limit exceeded. Please try again later."
+    if response.status_code != 200:
+        return f"GitHub API error (HTTP {response.status_code}) when looking up '{username}'."
+
+    data = response.json()
+    name = data.get("name", "N/A")
+    bio = data.get("bio", "No bio listed")
+    public_repos = data.get("public_repos", 0)
+    followers = data.get("followers", 0)
+    html_url = data.get("html_url", "")
+
+    return (
+        f"Username: {username}\n"
+        f"Name: {name}\n"
+        f"Bio: {bio}\n"
+        f"Public repos: {public_repos}\n"
+        f"Followers: {followers}\n"
+        f"Profile: {html_url}"
+    )
+
+
+agent = Agent(
+    role="GitHub Lookup Assistant",
+    goal="Look up GitHub user profiles using the lookup tool",
+    backstory="You are a helpful assistant that looks up GitHub user profiles.",
+    tools=[lookup_github_user],
+    llm=llm,
+)
+
+task = Task(
+    description="Tell me about the GitHub user 'octocat'",
+    expected_output="GitHub profile information",
+    agent=agent,
+)
+
+crew = Crew(agents=[agent], tasks=[task], process=Process.sequential)
+result = crew.kickoff()
+print(result)
+```
+
+## Why This Works
+
+Registering the function as a tool (via `@tool` in LangChain or `@function_tool` in the Agents SDK) makes it discoverable by the agent's tool-calling mechanism. The LLM sees the tool's name, description, and parameter schema in its context, allowing it to decide when to invoke it and with what arguments. Without this registration, the function is invisible to the agent.
+
+The error handling inside the tool is equally important. By checking `response.status_code` before accessing JSON fields, the tool returns a clear human-readable message for each failure mode (404, 403, network errors) instead of crashing with an unhandled exception. The agent can then relay these messages to the user gracefully. Parsing the response into specific fields (name, bio, repos, followers) also reduces the token load — the raw GitHub API response contains dozens of fields the agent doesn't need.
+
+## Key Takeaways
+
+- A function must be decorated and registered in the agent's tool list to be callable — unregistered functions are invisible to the agent.
+- Always handle HTTP errors inside tools so the agent receives clear messages rather than raw tracebacks.
+- Parse API responses into relevant fields rather than dumping raw JSON — it saves tokens and reduces extraction errors.

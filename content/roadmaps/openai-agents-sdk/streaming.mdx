@@ -1,0 +1,163 @@
+# Streaming Events
+
+Streaming lets your agent deliver results progressively — token by token and event by event — instead of waiting for the entire response to complete. The OpenAI Agents SDK provides `Runner.run_streamed()` with a rich event system for building responsive, real-time agent interfaces.
+
+## Why Streaming Matters
+
+Without streaming, users stare at a blank screen until the entire agent run finishes. With streaming, you can display partial responses as they arrive, show tool call progress, and provide a much more interactive experience.
+
+```
+Without streaming: [waiting...] → Full response appears at once
+With streaming:     H → He → Hel → Hello → Hello, → Hello, how → ...
+```
+
+## Basic Streaming with run_streamed
+
+Use `Runner.run_streamed()` to get a streaming result, then iterate over events:
+
+```python
+from agents import Agent, Runner
+
+agent = Agent(
+    name="Storyteller",
+    instructions="You tell short, engaging stories.",
+)
+
+result = await Runner.run_streamed(agent, "Tell me a story about a robot.")
+
+async for event in result.stream_events():
+    if event.type == "raw_response_event" and hasattr(event.data, "delta"):
+        print(event.data.delta, end="", flush=True)
+```
+
+## Event Types
+
+The SDK emits two main categories of events through `stream_events()`:
+
+| Event Type | Class | Description |
+|------------|-------|-------------|
+| `raw_response_event` | `RawResponsesStreamEvent` | Raw model output — individual tokens/deltas |
+| `run_item_stream_event` | `RunItemStreamEvent` | Higher-level items — messages, tool calls, handoffs |
+
+## RawResponsesStreamEvent
+
+These events carry the raw token stream from the model. Use them to display text as it's generated:
+
+```python
+from agents.stream_events import RawResponsesStreamEvent
+
+result = await Runner.run_streamed(agent, "Explain quantum computing.")
+
+async for event in result.stream_events():
+    if isinstance(event, RawResponsesStreamEvent):
+        if hasattr(event.data, "delta"):
+            print(event.data.delta, end="", flush=True)
+```
+
+## RunItemStreamEvent
+
+These events represent higher-level agent actions. Each has a `name` field describing what happened:
+
+```python
+from agents.stream_events import RunItemStreamEvent
+
+result = await Runner.run_streamed(agent, "What's the weather in Tokyo?")
+
+async for event in result.stream_events():
+    if isinstance(event, RunItemStreamEvent):
+        print(f"Event: {event.name}")
+```
+
+### Event Names
+
+| Event Name | Description |
+|------------|-------------|
+| `message_output_created` | Agent started generating a text response |
+| `message_output_completed` | Agent finished generating a text response |
+| `tool_called` | Agent invoked a tool |
+| `tool_output` | Tool returned its result |
+| `handoff_requested` | Agent requested a handoff to another agent |
+| `handoff_occurred` | Handoff was completed |
+
+## Combining Both Event Types
+
+A typical streaming handler processes both raw tokens and item events:
+
+```python
+from agents import Agent, Runner, function_tool
+from agents.stream_events import RawResponsesStreamEvent, RunItemStreamEvent
+
+@function_tool
+def get_temperature(city: str) -> str:
+    """Get the current temperature for a city."""
+    temps = {"Tokyo": "18°C", "London": "12°C", "New York": "22°C"}
+    return temps.get(city, "Unknown")
+
+agent = Agent(
+    name="Weather Agent",
+    instructions="You help users check the weather. Use the get_temperature tool.",
+    tools=[get_temperature],
+)
+
+result = await Runner.run_streamed(agent, "What's the temperature in Tokyo?")
+
+async for event in result.stream_events():
+    if isinstance(event, RawResponsesStreamEvent):
+        if hasattr(event.data, "delta"):
+            print(event.data.delta, end="", flush=True)
+    elif isinstance(event, RunItemStreamEvent):
+        if event.name == "tool_called":
+            print(f"\n[Tool called: {event.item.raw_item.name}]")
+        elif event.name == "tool_output":
+            print(f"[Tool output received]")
+
+print()
+print(f"\nFinal output: {result.final_output}")
+```
+
+## Streaming with Handoffs
+
+When agents hand off to each other during streaming, you'll see handoff events in the stream:
+
+```python
+billing_agent = Agent(name="Billing Agent", instructions="You handle billing questions.")
+support_agent = Agent(
+    name="Support Agent",
+    instructions="You are front-line support. Hand off billing questions to the billing agent.",
+    handoffs=[billing_agent],
+)
+
+result = await Runner.run_streamed(support_agent, "I have a billing question about my invoice.")
+
+async for event in result.stream_events():
+    if isinstance(event, RunItemStreamEvent):
+        if event.name == "handoff_requested":
+            print("[Handoff requested]")
+        elif event.name == "handoff_occurred":
+            print("[Handoff completed]")
+    elif isinstance(event, RawResponsesStreamEvent):
+        if hasattr(event.data, "delta"):
+            print(event.data.delta, end="", flush=True)
+```
+
+## Accessing the Final Result
+
+After the stream completes, you can still access the full result:
+
+```python
+result = await Runner.run_streamed(agent, "Hello!")
+
+async for event in result.stream_events():
+    pass  # Process events
+
+print(result.final_output)
+print(result.last_agent.name)
+```
+
+## Key Takeaways
+
+- Use `Runner.run_streamed()` and `stream_events()` for real-time, progressive output
+- `RawResponsesStreamEvent` delivers individual tokens as the model generates them
+- `RunItemStreamEvent` provides higher-level events like `tool_called`, `message_output_created`, and `handoff_occurred`
+- Combine both event types for a complete streaming UI — tokens for text, items for status updates
+- After streaming completes, `result.final_output` still holds the complete response

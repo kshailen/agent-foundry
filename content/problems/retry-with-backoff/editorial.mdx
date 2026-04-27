@@ -1,0 +1,199 @@
+## Approach
+
+The bug is that the agent's tool calls a flaky external API that fails about 70% of the time with transient `ConnectionError` exceptions, and there is zero retry logic. The first failure crashes the entire request. In production, transient failures (timeouts, 503s, connection resets) are common and often resolve within seconds — the correct response is to wait and retry, not to crash.
+
+The fix is to wrap the flaky API call in a retry loop with exponential backoff. The pattern is: attempt the call, and if it raises a transient error, wait 1 second, then 2 seconds, then 4 seconds (doubling each time) before retrying. After 3 failed retries, return a user-friendly failure message instead of letting the exception propagate. If any retry succeeds, return the result immediately. The key constraint is to only retry on transient errors like `ConnectionError` and `TimeoutError` — permanent errors (e.g., `ValueError` for bad input) should not be retried.
+
+This pattern is standard in distributed systems and is easy to implement with a simple loop and `time.sleep()`. The exponential backoff gives the failing service time to recover while avoiding a thundering herd of immediate retries.
+
+## Solution
+
+### LangChain
+
+```python
+import random
+import time
+from langchain_openai import ChatOpenAI
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+
+MAX_RETRIES = 3
+BACKOFF_BASE = 1
+
+def call_with_retry(func, *args, **kwargs):
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            return func(*args, **kwargs)
+        except (ConnectionError, TimeoutError):
+            if attempt == MAX_RETRIES:
+                return "Service temporarily unavailable after multiple attempts. Please try again later."
+            delay = BACKOFF_BASE * (2 ** attempt)
+            print(f"Attempt {attempt + 1} failed. Retrying in {delay}s...")
+            time.sleep(delay)
+
+def flaky_api_call_impl(query: str) -> str:
+    if random.random() < 0.7:
+        raise ConnectionError("Service temporarily unavailable")
+    return f"API result for: {query}"
+
+@tool
+def flaky_api_call(query: str) -> str:
+    """Call an external API that frequently fails."""
+    return call_with_retry(flaky_api_call_impl, query)
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a helpful assistant. Use tools to answer questions."),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}"),
+])
+
+agent = create_tool_calling_agent(llm, [flaky_api_call], prompt)
+executor = AgentExecutor(agent=agent, tools=[flaky_api_call])
+
+result = executor.invoke({"input": "Get the latest stock price for AAPL"})
+print(result["output"])
+```
+
+### LangGraph
+
+```python
+import random
+import time
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict
+
+MAX_RETRIES = 3
+BACKOFF_BASE = 1
+
+class State(TypedDict):
+    query: str
+    result: str
+
+def call_flaky_api(state: State) -> State:
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            if random.random() < 0.7:
+                raise ConnectionError("Service temporarily unavailable")
+            return {"result": f"API result for: {state['query']}"}
+        except (ConnectionError, TimeoutError):
+            if attempt == MAX_RETRIES:
+                return {"result": "Service temporarily unavailable after multiple attempts. Please try again later."}
+            delay = BACKOFF_BASE * (2 ** attempt)
+            print(f"Attempt {attempt + 1} failed. Retrying in {delay}s...")
+            time.sleep(delay)
+
+graph = StateGraph(State)
+graph.add_node("api_call", call_flaky_api)
+graph.add_edge(START, "api_call")
+graph.add_edge("api_call", END)
+
+app = graph.compile()
+
+result = app.invoke({"query": "Get the latest stock price for AAPL", "result": ""})
+print(result["result"])
+```
+
+### CrewAI
+
+```python
+import random
+import time
+from crewai import Agent, Task, Crew
+from crewai.tools import tool
+
+MAX_RETRIES = 3
+BACKOFF_BASE = 1
+
+def call_with_retry(func, *args, **kwargs):
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            return func(*args, **kwargs)
+        except (ConnectionError, TimeoutError):
+            if attempt == MAX_RETRIES:
+                return "Service temporarily unavailable after multiple attempts. Please try again later."
+            delay = BACKOFF_BASE * (2 ** attempt)
+            print(f"Attempt {attempt + 1} failed. Retrying in {delay}s...")
+            time.sleep(delay)
+
+def flaky_api_call_impl(query: str) -> str:
+    if random.random() < 0.7:
+        raise ConnectionError("Service temporarily unavailable")
+    return f"API result for: {query}"
+
+@tool
+def flaky_api_call(query: str) -> str:
+    """Call an external API that frequently fails."""
+    return call_with_retry(flaky_api_call_impl, query)
+
+assistant = Agent(
+    role="Assistant",
+    goal="Help users by calling external APIs",
+    backstory="You are a helpful assistant. Use tools to answer questions.",
+    tools=[flaky_api_call],
+)
+
+task = Task(
+    description="Get the latest stock price for AAPL",
+    expected_output="The stock price for AAPL",
+    agent=assistant,
+)
+
+crew = Crew(agents=[assistant], tasks=[task])
+result = crew.kickoff()
+print(result)
+```
+
+### OpenAI Agents SDK
+
+```python
+import random
+import time
+from agents import Agent, Runner
+from agents.tool import function_tool
+
+MAX_RETRIES = 3
+BACKOFF_BASE = 1
+
+def call_with_retry(func, *args, **kwargs):
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            return func(*args, **kwargs)
+        except (ConnectionError, TimeoutError):
+            if attempt == MAX_RETRIES:
+                return "Service temporarily unavailable after multiple attempts. Please try again later."
+            delay = BACKOFF_BASE * (2 ** attempt)
+            print(f"Attempt {attempt + 1} failed. Retrying in {delay}s...")
+            time.sleep(delay)
+
+def flaky_api_call_impl(query: str) -> str:
+    if random.random() < 0.7:
+        raise ConnectionError("Service temporarily unavailable")
+    return f"API result for: {query}"
+
+@function_tool
+def flaky_api_call(query: str) -> str:
+    """Call an external API that frequently fails."""
+    return call_with_retry(flaky_api_call_impl, query)
+
+agent = Agent(
+    name="Assistant",
+    instructions="You are a helpful assistant. Use tools to answer questions.",
+    tools=[flaky_api_call],
+)
+
+result = Runner.run_sync(agent, "Get the latest stock price for AAPL")
+print(result.final_output)
+```
+
+## Why This Works
+
+The retry loop gives the flaky API multiple chances to succeed. With a 70% failure rate, the probability of all 4 attempts (initial + 3 retries) failing is 0.7^4 ≈ 24% — much better than the original 70% failure rate on a single attempt. The exponential backoff (1s, 2s, 4s) spaces out retries so the failing service isn't hammered with rapid-fire requests, giving it time to recover. By catching only `ConnectionError` and `TimeoutError`, we ensure that permanent errors (bad input, authentication failures) still surface immediately. The graceful failure message after exhausting retries ensures users never see a raw stack trace.
+
+## Key Takeaways
+
+- Transient failures are normal in distributed systems — always add retry logic for external service calls.
+- Exponential backoff prevents your retries from overwhelming an already-struggling service.
+- Distinguish between transient errors (retry) and permanent errors (fail fast) to avoid wasting time retrying unrecoverable failures.

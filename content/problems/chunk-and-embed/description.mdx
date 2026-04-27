@@ -1,0 +1,39 @@
+## The Problem
+
+You have a 50-page document that needs to be searchable by an AI agent. The current approach tries to stuff the entire document into the LLM's prompt, which either exceeds the context window, produces degraded answers because the model loses track of details buried in a wall of text, or costs far too much per query. Your job is to **chunk** the document into smaller pieces, **embed** each chunk into a vector store, and **retrieve** only the relevant chunks when a question is asked.
+
+## Examples
+
+### Example 1
+
+**User input:** What does section 1.25 cover?
+
+**Current (bad) output:** The agent either errors out because the prompt is too long, or returns a vague summary that misses the specific section details.
+
+**Expected (good) output:** The agent retrieves the chunk containing section 1.25 and answers with the specific content from that section.
+
+### Example 2
+
+**User input:** Summarize the introduction chapter.
+
+**Current (bad) output:** A truncated or hallucinated summary because the model couldn't process the full document.
+
+**Expected (good) output:** The agent retrieves the chunks from the introduction and produces an accurate summary based on their content.
+
+## Your Task
+
+Replace the stuff-everything-in-the-prompt approach with a proper chunking and embedding pipeline:
+
+- Split the long document into chunks (e.g., 500 characters with overlap).
+- Create embeddings for each chunk and store them in a vector store.
+- When a question arrives, retrieve the top-k most relevant chunks.
+- Pass only the retrieved chunks as context to the LLM for answering.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Splits document into chunks:** The document is split into chunks of manageable size before processing.
+- **Creates and stores embeddings:** Chunks are embedded and stored in a vector store for similarity search.
+- **Retrieves relevant chunks:** Only the most relevant chunks are retrieved and passed to the LLM.
+- **Answers correctly from chunks:** The agent produces correct answers grounded in the retrieved chunks.

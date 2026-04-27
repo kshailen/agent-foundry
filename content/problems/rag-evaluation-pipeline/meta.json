@@ -1,0 +1,57 @@
+{
+  "number": 58,
+  "title": "RAG Evaluation Pipeline",
+  "difficulty": "hard",
+  "categories": [
+    "rag",
+    "evaluation"
+  ],
+  "frameworks": [
+    "langchain",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "The evaluation must measure retrieval relevance, answer faithfulness, and answer completeness",
+    "Each metric must produce a score between 0 and 1",
+    "Evaluation must be automated using LLM-as-judge or programmatic checks",
+    "The evaluation pipeline must work on any question-answer-context triple"
+  ],
+  "hints": [
+    "Use an LLM as a judge to score whether the retrieved documents are relevant to the question",
+    "Check faithfulness by verifying that every claim in the answer is supported by the retrieved context",
+    "Measure completeness by checking if the answer addresses all parts of the question"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI, OpenAIEmbeddings\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom langchain_community.vectorstores import FAISS\nfrom langchain_core.documents import Document\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\nembeddings = OpenAIEmbeddings()\n\ndocuments = [\n    Document(page_content=\"The platform supports Python, JavaScript, and Go SDKs.\"),\n    Document(page_content=\"Rate limits are 1000 req/min for free tier, 10000 req/min for enterprise.\"),\n    Document(page_content=\"Authentication requires an API key passed in the X-API-Key header.\"),\n    Document(page_content=\"Webhooks can be configured in the dashboard under Settings > Integrations.\"),\n]\n\nvectorstore = FAISS.from_documents(documents, embeddings)\nretriever = vectorstore.as_retriever()\n\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"Answer based on context.\\n\\nContext: {context}\"),\n    (\"human\", \"{question}\"),\n])\n\n# TODO: This RAG pipeline has no evaluation \u2014 add metrics for retrieval relevance,\n# answer faithfulness, and answer completeness\ndef ask(question: str) -> str:\n    docs = retriever.invoke(question)\n    context = \"\\n\".join([doc.page_content for doc in docs])\n    chain = prompt | llm\n    result = chain.invoke({\"context\": context, \"question\": question})\n    return result.content\n\n# No evaluation \u2014 just prints the answer with no quality metrics\nprint(ask(\"What SDKs are available and what are the rate limits?\"))",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom langchain_openai import OpenAIEmbeddings\nfrom langchain_community.vectorstores import FAISS\nfrom langchain_core.documents import Document\n\nembeddings = OpenAIEmbeddings()\n\ndocuments = [\n    Document(page_content=\"The platform supports Python, JavaScript, and Go SDKs.\"),\n    Document(page_content=\"Rate limits are 1000 req/min for free tier, 10000 req/min for enterprise.\"),\n    Document(page_content=\"Authentication requires an API key passed in the X-API-Key header.\"),\n    Document(page_content=\"Webhooks can be configured in the dashboard under Settings > Integrations.\"),\n]\n\nvectorstore = FAISS.from_documents(documents, embeddings)\nretriever = vectorstore.as_retriever()\n\n# TODO: This RAG pipeline has no evaluation \u2014 add metrics for retrieval relevance,\n# answer faithfulness, and answer completeness\ndef ask(question: str) -> str:\n    docs = retriever.invoke(question)\n    context = \"\\n\".join([doc.page_content for doc in docs])\n    answerer = Agent(\n        role=\"Q&A Assistant\",\n        goal=\"Answer questions based on provided context\",\n        backstory=f\"Answer based on this context:\\n{context}\",\n    )\n    task = Task(description=question, expected_output=\"A helpful answer\", agent=answerer)\n    crew = Crew(agents=[answerer], tasks=[task])\n    return str(crew.kickoff())\n\n# No evaluation \u2014 just prints the answer with no quality metrics\nprint(ask(\"What SDKs are available and what are the rate limits?\"))",
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom langchain_openai import OpenAIEmbeddings\nfrom langchain_community.vectorstores import FAISS\nfrom langchain_core.documents import Document\n\nembeddings = OpenAIEmbeddings()\n\ndocuments = [\n    Document(page_content=\"The platform supports Python, JavaScript, and Go SDKs.\"),\n    Document(page_content=\"Rate limits are 1000 req/min for free tier, 10000 req/min for enterprise.\"),\n    Document(page_content=\"Authentication requires an API key passed in the X-API-Key header.\"),\n    Document(page_content=\"Webhooks can be configured in the dashboard under Settings > Integrations.\"),\n]\n\nvectorstore = FAISS.from_documents(documents, embeddings)\nretriever = vectorstore.as_retriever()\n\n# TODO: This RAG pipeline has no evaluation \u2014 add metrics for retrieval relevance,\n# answer faithfulness, and answer completeness\ndef ask(question: str) -> str:\n    docs = retriever.invoke(question)\n    context = \"\\n\".join([doc.page_content for doc in docs])\n    agent = Agent(\n        name=\"Q&A Assistant\",\n        instructions=f\"Answer the question based on this context:\\n{context}\",\n    )\n    result = Runner.run_sync(agent, question)\n    return result.final_output\n\n# No evaluation \u2014 just prints the answer with no quality metrics\nprint(ask(\"What SDKs are available and what are the rate limits?\"))"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/rag-evaluation-pipeline-langchain.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/rag-evaluation-pipeline-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/rag-evaluation-pipeline-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "retrieval-relevance",
+      "label": "Measures retrieval relevance",
+      "description": "The pipeline scores how relevant the retrieved documents are to the question"
+    },
+    {
+      "id": "answer-faithfulness",
+      "label": "Measures answer faithfulness",
+      "description": "The pipeline scores whether the answer is faithful to the retrieved context without hallucination"
+    },
+    {
+      "id": "answer-completeness",
+      "label": "Measures answer completeness",
+      "description": "The pipeline scores whether the answer addresses all parts of the user's question"
+    },
+    {
+      "id": "numeric-scores",
+      "label": "Produces numeric scores",
+      "description": "Each metric produces a score between 0 and 1 for quantitative comparison"
+    }
+  ]
+}

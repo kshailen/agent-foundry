@@ -1,0 +1,39 @@
+## The Problem
+
+Your research agent breaks topics into 10 aspects and calls the LLM for each one, then synthesizes a final report—11 LLM calls per run with zero cost awareness. In production, a single run can easily exceed your per-request budget, and runaway loops have no guardrail. Your job is to **add a token budget manager** that tracks cumulative cost across all LLM calls in a run, enforces a $0.05 limit, and stops gracefully when the budget is exhausted.
+
+## Examples
+
+### Example 1
+
+**User input:** The future of renewable energy
+
+**Current (bad) output:** All 10 research calls plus the synthesis call execute regardless of cost. Total: ~$0.12 with no tracking or limit.
+
+**Expected (good) output:** The agent researches aspects 1–6, tracks cost after each call, and at aspect 7 detects the budget is nearly exhausted. It stops, synthesizes what it has, and returns: *"[Budget: $0.048 / $0.050 used — 6 of 10 aspects completed] Summary of findings on solar, wind, hydro, geothermal, nuclear fusion, and grid storage…"*
+
+### Example 2
+
+**User input:** Explain quantum computing
+
+**Current (bad) output:** 11 LLM calls with no cost tracking. The run could cost $0.15 on a complex topic.
+
+**Expected (good) output:** The agent completes as many research calls as the budget allows, logs cumulative cost after each call, and returns a partial report when the limit is reached. Each call's cost is visible: *"Call 1: $0.006 (cumulative: $0.006)… Call 5: $0.008 (cumulative: $0.041)… Budget limit reached."*
+
+## Your Task
+
+Modify the starter code so that:
+
+- Each LLM call's **token usage is tracked** using the actual API response metadata.
+- **Cumulative cost** is calculated across the entire run using per-token pricing.
+- The agent **stops making new calls** once the $0.05 budget is reached.
+- When stopped, the agent **returns a partial result** summarizing what it gathered so far.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Enforces budget limit:** The agent stops making LLM calls once the $0.05 budget is reached.
+- **Tracks token usage:** Token usage is tracked per call and cumulatively across the entire run.
+- **Graceful stop at limit:** When budget is exhausted, the agent returns a partial result rather than crashing.
+- **Uses actual token counts:** Cost calculations use real token counts from API responses, not estimates.

@@ -1,0 +1,140 @@
+# Structured Outputs
+
+By default, agents return free-form text. With structured outputs, you can force the agent to return a typed Python object instead — a Pydantic model, dataclass, or TypedDict that you define. This makes agent responses predictable and easy to integrate into downstream code.
+
+## The output_type Parameter
+
+Set `output_type` on an Agent to specify the shape of its response:
+
+```python
+from pydantic import BaseModel
+from agents import Agent, Runner
+
+class CalendarEvent(BaseModel):
+    title: str
+    date: str
+    time: str
+    duration_minutes: int
+    participants: list[str]
+
+agent = Agent(
+    name="Event Extractor",
+    instructions="Extract calendar event details from the user's message. Always respond with structured data.",
+    output_type=CalendarEvent,
+)
+
+result = Runner.run_sync(
+    agent,
+    "Schedule a team standup tomorrow at 9am for 30 minutes with Alice and Bob.",
+)
+
+print(result.final_output)
+print(type(result.final_output))
+```
+
+The `result.final_output` is a `CalendarEvent` instance — not a string. You can access fields like `result.final_output.title` directly.
+
+## How It Works
+
+When `output_type` is set:
+
+1. The SDK tells the model to respond in a specific JSON schema derived from your type
+2. The model's response is parsed and validated against that schema
+3. `result.final_output` contains the validated Python object
+
+```
+User Message → Model Call → JSON Response → Pydantic Validation → Typed Object
+```
+
+## Defining Output Models
+
+Use Pydantic `BaseModel` to define your output schema with field types, defaults, and descriptions:
+
+```python
+from pydantic import BaseModel, Field
+
+class SentimentResult(BaseModel):
+    text: str = Field(description="The analyzed text")
+    sentiment: str = Field(description="positive, negative, or neutral")
+    confidence: float = Field(description="Confidence score between 0 and 1")
+    key_phrases: list[str] = Field(description="Important phrases that influenced the sentiment")
+
+analyzer = Agent(
+    name="Sentiment Analyzer",
+    instructions="Analyze the sentiment of the provided text.",
+    output_type=SentimentResult,
+)
+
+result = Runner.run_sync(analyzer, "I absolutely loved the new restaurant! The food was incredible.")
+print(f"Sentiment: {result.final_output.sentiment}")
+print(f"Confidence: {result.final_output.confidence}")
+print(f"Key phrases: {result.final_output.key_phrases}")
+```
+
+## Nested Models
+
+Output types can include nested models for complex structures:
+
+```python
+class Address(BaseModel):
+    street: str
+    city: str
+    state: str
+    zip_code: str
+
+class ContactInfo(BaseModel):
+    name: str
+    email: str
+    phone: str
+    address: Address
+
+extractor = Agent(
+    name="Contact Extractor",
+    instructions="Extract contact information from the provided text.",
+    output_type=ContactInfo,
+)
+
+result = Runner.run_sync(
+    extractor,
+    "John Smith, john@example.com, 555-1234, lives at 123 Main St, Springfield, IL 62701",
+)
+print(f"Name: {result.final_output.name}")
+print(f"City: {result.final_output.address.city}")
+```
+
+## Alternative: dataclass and TypedDict
+
+Besides Pydantic models, the SDK also supports `dataclass` and `TypedDict`:
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class MovieReview:
+    title: str
+    rating: int
+    summary: str
+
+agent = Agent(
+    name="Review Parser",
+    instructions="Parse movie reviews into structured data.",
+    output_type=MovieReview,
+)
+
+result = Runner.run_sync(agent, "Inception is a masterpiece. 9/10. A mind-bending thriller about dreams within dreams.")
+print(f"{result.final_output.title}: {result.final_output.rating}/10")
+```
+
+| Type | Validation | Nested Support | Recommended |
+|------|-----------|----------------|-------------|
+| Pydantic BaseModel | Full validation + Field descriptions | Yes | Yes |
+| dataclass | Basic type checking | Yes | For simple cases |
+| TypedDict | Minimal | Yes | For dict-like output |
+
+## Key Takeaways
+
+- Set `output_type` on an Agent to get structured, typed responses instead of free-form text
+- `result.final_output` is a Python object you can access with dot notation
+- Pydantic `BaseModel` is the recommended approach — it supports validation, defaults, and field descriptions
+- Nested models work for complex output structures
+- `dataclass` and `TypedDict` are also supported as alternatives

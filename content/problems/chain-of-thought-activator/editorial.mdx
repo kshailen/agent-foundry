@@ -1,0 +1,115 @@
+## Approach
+
+The math assistant jumps straight to a final number because the system prompt explicitly tells it to "be concise — just state the final number." For multi-step word problems, skipping intermediate reasoning leads to arithmetic errors. The model is perfectly capable of solving these problems correctly when it shows its work — chain-of-thought prompting has been shown to dramatically improve accuracy on multi-step reasoning tasks.
+
+The fix is to replace the "be concise" instruction with one that requires step-by-step reasoning. We instruct the model to break every problem into numbered steps, show each intermediate calculation, and clearly label the final answer. Including a worked example in the prompt further anchors the expected format and helps the model understand the level of detail required.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", (
+        "You are a math assistant. Solve every problem step by step.\n\n"
+        "RULES:\n"
+        "1. Break the problem into numbered steps.\n"
+        "2. Show each intermediate calculation clearly (e.g., 3 × $4 = $12).\n"
+        "3. After all steps, write the final answer on its own line prefixed with '**Final answer:**'.\n\n"
+        "EXAMPLE:\n"
+        "Problem: A book costs $12. Tax is 8%. What is the total?\n"
+        "- Step 1: Tax amount = $12 × 0.08 = $0.96\n"
+        "- Step 2: Total = $12 + $0.96 = $12.96\n\n"
+        "**Final answer: $12.96**"
+    )),
+    ("human", "{input}"),
+])
+
+chain = prompt | llm
+
+result = chain.invoke({
+    "input": "A store sells notebooks for $4 each. Sarah buys 3 notebooks and pays with a $20 bill. She then buys 2 pens at $1.50 each. How much money does she have left?"
+})
+print(result.content)
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+
+agent = Agent(
+    name="Math Assistant",
+    instructions=(
+        "You are a math assistant. Solve every problem step by step.\n\n"
+        "RULES:\n"
+        "1. Break the problem into numbered steps.\n"
+        "2. Show each intermediate calculation clearly (e.g., 3 × $4 = $12).\n"
+        "3. After all steps, write the final answer on its own line prefixed with '**Final answer:**'.\n\n"
+        "EXAMPLE:\n"
+        "Problem: A book costs $12. Tax is 8%. What is the total?\n"
+        "- Step 1: Tax amount = $12 × 0.08 = $0.96\n"
+        "- Step 2: Total = $12 + $0.96 = $12.96\n\n"
+        "**Final answer: $12.96**"
+    ),
+)
+
+result = Runner.run_sync(
+    agent,
+    "A store sells notebooks for $4 each. Sarah buys 3 notebooks and pays with a $20 bill. She then buys 2 pens at $1.50 each. How much money does she have left?"
+)
+print(result.final_output)
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from crewai import LLM
+
+llm = LLM(model="gpt-4o-mini")
+
+agent = Agent(
+    role="Math Assistant",
+    goal="Solve math problems step by step, showing all intermediate calculations",
+    backstory=(
+        "You are a math assistant. Solve every problem step by step.\n\n"
+        "RULES:\n"
+        "1. Break the problem into numbered steps.\n"
+        "2. Show each intermediate calculation clearly (e.g., 3 × $4 = $12).\n"
+        "3. After all steps, write the final answer on its own line prefixed with '**Final answer:**'.\n\n"
+        "EXAMPLE:\n"
+        "Problem: A book costs $12. Tax is 8%. What is the total?\n"
+        "- Step 1: Tax amount = $12 × 0.08 = $0.96\n"
+        "- Step 2: Total = $12 + $0.96 = $12.96\n\n"
+        "**Final answer: $12.96**"
+    ),
+    llm=llm,
+)
+
+task = Task(
+    description="A store sells notebooks for $4 each. Sarah buys 3 notebooks and pays with a $20 bill. She then buys 2 pens at $1.50 each. How much money does she have left?",
+    expected_output="Step-by-step solution with intermediate calculations and a clearly labeled final answer",
+    agent=agent,
+)
+
+crew = Crew(agents=[agent], tasks=[task])
+
+result = crew.kickoff()
+print(result)
+```
+
+## Why This Works
+
+Chain-of-thought prompting works because it forces the model to allocate computation to each intermediate step rather than attempting to jump directly to the answer. When the model writes "3 × $4 = $12" it is effectively performing the calculation in its output tokens, which serves as a working memory. The original "just state the final number" prompt suppressed this reasoning, causing the model to compress multiple steps into a single (often wrong) mental leap. By requiring visible intermediate steps, we both improve accuracy and give users the ability to verify the logic.
+
+## Key Takeaways
+
+- Chain-of-thought prompting significantly improves LLM accuracy on multi-step reasoning tasks.
+- A prompt that says "be concise, just give the answer" actively suppresses the reasoning that leads to correct results.
+- Including a worked example in the prompt is more effective than simply saying "think step by step" — it shows the model the expected depth and format.

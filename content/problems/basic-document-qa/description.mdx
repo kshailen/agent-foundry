@@ -1,0 +1,46 @@
+## The Problem
+
+You have five text documents about a company, and you need an agent that answers questions using **only** the information in those documents. Right now the agent ignores the documents entirely and answers from its own parametric knowledge—which means it confidently produces answers that may be outdated, wrong, or completely fabricated. Your job is to wire up a proper retrieval pipeline so the agent fetches relevant documents first and grounds every answer in their content.
+
+## Examples
+
+### Example 1
+
+**User input:** Where is Acme Corp headquartered?
+
+**Current (bad) output:** The agent guesses a city based on its training data, potentially answering "San Francisco" or "New York" because those are common startup locations—completely ignoring the documents.
+
+**Expected (good) output:** Based on the provided documents, Acme Corp is headquartered in **Austin, Texas**.
+
+### Example 2
+
+**User input:** How much funding has Acme Corp raised?
+
+**Current (bad) output:** The agent fabricates a funding amount or says it doesn't know, since it never looks at the documents.
+
+**Expected (good) output:** According to the documents, Acme Corp raised a **$50M Series B** in January 2024, led by Sequoia Capital.
+
+### Example 3
+
+**User input:** What does Acme Corp sell?
+
+**Current (bad) output:** A generic guess like "software solutions" with no specifics.
+
+**Expected (good) output:** Acme Corp's flagship product is the **AcmeAI platform** for enterprise automation.
+
+## Your Task
+
+Build a retrieval-augmented generation (RAG) pipeline that:
+
+- Loads all five documents into a vector store with embeddings.
+- Retrieves the most relevant document(s) for a given question.
+- Passes the retrieved context to the LLM with instructions to answer only from that context.
+- Returns accurate, document-grounded answers.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Uses document retrieval:** The agent retrieves relevant documents from a vector store before answering.
+- **Answers from documents only:** The agent's answer is grounded in the provided documents, not parametric knowledge.
+- **Returns correct answers:** The agent returns factually correct answers that match the document content.

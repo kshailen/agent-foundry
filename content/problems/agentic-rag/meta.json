@@ -1,0 +1,57 @@
+{
+  "number": 56,
+  "title": "Agentic RAG",
+  "difficulty": "hard",
+  "categories": [
+    "rag",
+    "orchestration"
+  ],
+  "frameworks": [
+    "langgraph",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "The agent must decide whether retrieval is needed for each query",
+    "The agent must formulate its own search queries",
+    "The agent must evaluate retrieved results and decide if more retrieval is needed",
+    "Simple factual questions the agent knows should be answered directly without retrieval"
+  ],
+  "hints": [
+    "Add a routing step where the agent classifies the query as needing retrieval or direct answer",
+    "After retrieval, add an evaluation step where the agent checks if the results are sufficient",
+    "Use a loop \u2014 if the first retrieval is insufficient, the agent reformulates and retrieves again"
+  ],
+  "starterCode": {
+    "langgraph": "from langchain_openai import ChatOpenAI, OpenAIEmbeddings\nfrom langchain_community.vectorstores import FAISS\nfrom langchain_core.documents import Document\nfrom langgraph.graph import StateGraph, START, END\nfrom typing import TypedDict\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\nembeddings = OpenAIEmbeddings()\n\ndocuments = [\n    Document(page_content=\"Our enterprise plan includes SSO, audit logs, and 99.9% SLA.\"),\n    Document(page_content=\"The API rate limit for enterprise customers is 10,000 requests per minute.\"),\n    Document(page_content=\"Data residency options: US-East, EU-West, and AP-Southeast regions.\"),\n    Document(page_content=\"Custom integrations require a minimum 12-month contract.\"),\n    Document(page_content=\"Our SOC 2 Type II certification was renewed in January 2024.\"),\n]\n\nvectorstore = FAISS.from_documents(documents, embeddings)\nretriever = vectorstore.as_retriever()\n\nclass State(TypedDict):\n    question: str\n    context: str\n    answer: str\n\n# BUG: Always retrieves regardless of query type \u2014 no decision logic\ndef retrieve(state: State) -> State:\n    docs = retriever.invoke(state[\"question\"])\n    context = \"\\n\".join([doc.page_content for doc in docs])\n    return {\"context\": context}\n\ndef answer(state: State) -> State:\n    response = llm.invoke(\n        f\"Context: {state['context']}\\nQuestion: {state['question']}\"\n    )\n    return {\"answer\": response.content}\n\ngraph = StateGraph(State)\ngraph.add_node(\"retrieve\", retrieve)\ngraph.add_node(\"answer\", answer)\ngraph.add_edge(START, \"retrieve\")\ngraph.add_edge(\"retrieve\", \"answer\")\ngraph.add_edge(\"answer\", END)\n\napp = graph.compile()\n\n# This needs retrieval\nprint(app.invoke({\"question\": \"What is the enterprise API rate limit?\"})[\"answer\"])\n# This does NOT need retrieval \u2014 agent should answer directly\nprint(app.invoke({\"question\": \"What is 2 + 2?\"})[\"answer\"])",
+    "crewai": "from crewai import Agent, Task, Crew, Process\nfrom crewai import LLM\nfrom crewai.tools import tool\nfrom langchain_openai import OpenAIEmbeddings\nfrom langchain_community.vectorstores import FAISS\nfrom langchain_core.documents import Document\n\nllm = LLM(model=\"gpt-4o-mini\")\nembeddings = OpenAIEmbeddings()\n\ndocuments = [\n    Document(page_content=\"Our enterprise plan includes SSO, audit logs, and 99.9% SLA.\"),\n    Document(page_content=\"The API rate limit for enterprise customers is 10,000 requests per minute.\"),\n    Document(page_content=\"Data residency options: US-East, EU-West, and AP-Southeast regions.\"),\n    Document(page_content=\"Custom integrations require a minimum 12-month contract.\"),\n    Document(page_content=\"Our SOC 2 Type II certification was renewed in January 2024.\"),\n]\n\nvectorstore = FAISS.from_documents(documents, embeddings)\nretriever = vectorstore.as_retriever()\n\n@tool\ndef search_docs(query: str) -> str:\n    \"\"\"Search the knowledge base for relevant documents.\"\"\"\n    docs = retriever.invoke(query)\n    return \"\\n\".join([doc.page_content for doc in docs])\n\n# BUG: Always retrieves regardless of query type — no decision logic\nrag_agent = Agent(\n    role=\"Knowledge Assistant\",\n    goal=\"Answer questions using the knowledge base\",\n    backstory=\"You answer questions by searching the knowledge base.\",\n    tools=[search_docs],\n    llm=llm,\n)\n\nfor q in [\"What is the enterprise API rate limit?\", \"What is 2 + 2?\"]:\n    task = Task(description=q, expected_output=\"An answer\", agent=rag_agent)\n    crew = Crew(agents=[rag_agent], tasks=[task], process=Process.sequential)\n    result = crew.kickoff()\n    print(result)",
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom agents.tool import function_tool\nfrom langchain_openai import OpenAIEmbeddings\nfrom langchain_community.vectorstores import FAISS\nfrom langchain_core.documents import Document\n\nembeddings = OpenAIEmbeddings()\n\ndocuments = [\n    Document(page_content=\"Our enterprise plan includes SSO, audit logs, and 99.9% SLA.\"),\n    Document(page_content=\"The API rate limit for enterprise customers is 10,000 requests per minute.\"),\n    Document(page_content=\"Data residency options: US-East, EU-West, and AP-Southeast regions.\"),\n    Document(page_content=\"Custom integrations require a minimum 12-month contract.\"),\n    Document(page_content=\"Our SOC 2 Type II certification was renewed in January 2024.\"),\n]\n\nvectorstore = FAISS.from_documents(documents, embeddings)\nretriever = vectorstore.as_retriever()\n\n@function_tool\ndef search_docs(query: str) -> str:\n    \"\"\"Search the knowledge base for relevant documents.\"\"\"\n    docs = retriever.invoke(query)\n    return \"\\n\".join([doc.page_content for doc in docs])\n\n# BUG: Always retrieves regardless of query type — no decision logic\nagent = Agent(\n    name=\"Knowledge Assistant\",\n    instructions=\"You answer questions by searching the knowledge base. Always use the search tool.\",\n    tools=[search_docs],\n    model=\"gpt-4o-mini\",\n)\n\nfor q in [\"What is the enterprise API rate limit?\", \"What is 2 + 2?\"]:\n    result = Runner.run_sync(agent, q)\n    print(result.final_output)"
+  },
+  "colabUrls": {
+    "langgraph": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/agentic-rag-langgraph.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/agentic-rag-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/agentic-rag-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "decides-retrieval",
+      "label": "Decides when to retrieve",
+      "description": "The agent intelligently decides whether a query requires document retrieval or can be answered directly"
+    },
+    {
+      "id": "formulates-queries",
+      "label": "Formulates search queries",
+      "description": "The agent generates appropriate search queries rather than passing raw user input"
+    },
+    {
+      "id": "evaluates-results",
+      "label": "Evaluates retrieval sufficiency",
+      "description": "The agent checks whether retrieved results are sufficient and can retrieve again if needed"
+    },
+    {
+      "id": "correct-routing",
+      "label": "Routes queries correctly",
+      "description": "Knowledge questions go to retrieval while simple questions are answered directly"
+    }
+  ]
+}

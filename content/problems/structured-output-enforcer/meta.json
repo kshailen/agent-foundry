@@ -1,0 +1,50 @@
+{
+  "number": 4,
+  "title": "Structured Output Enforcer",
+  "difficulty": "easy",
+  "categories": [
+    "prompt-design"
+  ],
+  "frameworks": [
+    "langchain",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "You may only modify the system prompt",
+    "The output must be valid parseable JSON",
+    "No post-processing or regex extraction allowed"
+  ],
+  "hints": [
+    "Tell the model exactly which keys the JSON must contain and what types each value should be",
+    "Include a concrete example of the expected JSON format in the prompt",
+    "Add an explicit instruction like: 'Respond ONLY with a JSON object. No extra text before or after.'"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain_core.prompts import ChatPromptTemplate\nimport json\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# BUG: This prompt does not enforce structured JSON output\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a helpful question-answering assistant. Answer the user's question.\"),\n    (\"human\", \"{input}\"),\n])\n\nchain = prompt | llm\n\n# Test: The output should be a JSON object with keys: answer, confidence, sources\nresult = chain.invoke({\"input\": \"What is the capital of France?\"})\nprint(result.content)\n\n# Verify: try parsing as JSON\ntry:\n    parsed = json.loads(result.content)\n    assert \"answer\" in parsed\n    assert \"confidence\" in parsed\n    assert \"sources\" in parsed\n    print(\"Valid structured output!\")\nexcept (json.JSONDecodeError, AssertionError) as e:\n    print(f\"FAILED: Output is not valid structured JSON - {e}\")",
+    "openai-agents-sdk": "from agents import Agent, Runner\nimport json\n\n# BUG: This instruction does not enforce structured JSON output\nagent = Agent(\n    name=\"QA Assistant\",\n    instructions=\"You are a helpful question-answering assistant. Answer the user's question.\",\n)\n\n# Test: The output should be a JSON object with keys: answer, confidence, sources\nresult = Runner.run_sync(agent, \"What is the capital of France?\")\nprint(result.final_output)\n\n# Verify: try parsing as JSON\ntry:\n    parsed = json.loads(result.final_output)\n    assert \"answer\" in parsed\n    assert \"confidence\" in parsed\n    assert \"sources\" in parsed\n    print(\"Valid structured output!\")\nexcept (json.JSONDecodeError, AssertionError) as e:\n    print(f\"FAILED: Output is not valid structured JSON - {e}\")",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai import LLM\nimport json\n\nllm = LLM(model=\"gpt-4o-mini\")\n\n# BUG: This backstory does not enforce structured JSON output\nagent = Agent(\n    role=\"QA Assistant\",\n    goal=\"Answer user questions\",\n    backstory=\"You are a helpful question-answering assistant. Answer the user's question.\",\n    llm=llm,\n)\n\ntask = Task(\n    description=\"What is the capital of France?\",\n    expected_output=\"A JSON object with keys: answer, confidence, sources\",\n    agent=agent,\n)\n\ncrew = Crew(agents=[agent], tasks=[task])\nresult = crew.kickoff()\nprint(result)\n\n# Verify: try parsing as JSON\ntry:\n    parsed = json.loads(str(result))\n    assert \"answer\" in parsed\n    assert \"confidence\" in parsed\n    assert \"sources\" in parsed\n    print(\"Valid structured output!\")\nexcept (json.JSONDecodeError, AssertionError) as e:\n    print(f\"FAILED: Output is not valid structured JSON - {e}\")"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/structured-output-enforcer-langchain.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/structured-output-enforcer-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/structured-output-enforcer-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "valid-json",
+      "label": "Valid JSON output",
+      "description": "The agent's response is valid parseable JSON"
+    },
+    {
+      "id": "correct-keys",
+      "label": "Correct keys present",
+      "description": "The JSON contains all required keys: answer, confidence, and sources"
+    },
+    {
+      "id": "meaningful-values",
+      "label": "Values are meaningful",
+      "description": "Each key has a substantive value — not empty strings or placeholder text"
+    }
+  ]
+}

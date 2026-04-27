@@ -1,0 +1,46 @@
+## The Problem
+
+Your customer-service agent handles every message the same way—whether it is an angry complaint, a simple question, or positive feedback. Complaints need empathetic acknowledgement and escalation paths. Questions need concise factual answers. Feedback needs a thank-you and gets logged for the product team. Right now, all three get a generic response from a single handler. Your job is to **add conditional routing** so the workflow classifies each input and dispatches it to the correct specialized branch.
+
+## Examples
+
+### Example 1
+
+**User input:** Your product broke after one day! I want a refund!
+
+**Current (bad) output:** A generic response that neither acknowledges the frustration nor mentions the refund process.
+
+**Expected (good) output:** The router classifies this as `complaint`. The complaint branch responds with empathy: *"I'm really sorry to hear about this experience. I've flagged your case for priority review and a team member will reach out about your refund within 24 hours."*
+
+### Example 2
+
+**User input:** What payment methods do you accept?
+
+**Current (bad) output:** The same generic tone used for complaints—overly apologetic for a straightforward question.
+
+**Expected (good) output:** The router classifies this as `question`. The question branch responds directly: *"We accept Visa, Mastercard, American Express, and PayPal."*
+
+### Example 3
+
+**User input:** I love your new feature, the dark mode is great!
+
+**Current (bad) output:** A response that treats positive feedback like a support ticket.
+
+**Expected (good) output:** The router classifies this as `feedback`. The feedback branch responds warmly: *"Thank you for the kind words! We'll share this with the team that built dark mode—they'll be thrilled to hear it."*
+
+## Your Task
+
+Refactor the starter code so that:
+
+- An **LLM-based classifier** determines whether each input is a complaint, question, or feedback.
+- Each category routes to a **dedicated branch handler** with a specialized prompt and behavior.
+- All branches **merge back** into a single output format.
+- The routing uses the framework's native conditional branching mechanism (not if/else on keywords).
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Three distinct branches:** The workflow contains separate handlers for complaints, questions, and feedback.
+- **LLM-based routing:** The routing decision is made by an LLM classifier, not hardcoded keyword matching.
+- **Branch-specific behavior:** Each branch produces noticeably different responses appropriate to the input type.

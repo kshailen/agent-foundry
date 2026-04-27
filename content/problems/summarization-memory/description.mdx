@@ -1,0 +1,39 @@
+## The Problem
+
+Your assistant keeps every single message in conversation history. For short chats this is fine, but after 15+ turns the token count balloons—costs spike and eventually the context window overflows. Simply truncating old messages (like a sliding window) loses important context from earlier in the conversation. A better approach is **summarization memory**: condense older turns into a compact summary while keeping recent turns verbatim. Your job is to implement this hybrid strategy.
+
+## Examples
+
+### Example 1
+
+**Scenario:** A 15-turn conversation about European history, ending with "Summarize everything we've discussed."
+
+**Current (bad) behavior:** All 15 turns are kept verbatim. The prompt is 4,000+ tokens. On longer conversations the API throws a `context_length_exceeded` error.
+
+**Expected (good) behavior:** Turns 1–10 are condensed into a ~200-token summary. Turns 11–15 are kept verbatim. The agent can still summarize the full conversation because key facts are in the summary.
+
+### Example 2
+
+**Scenario:** User mentions their name in turn 1, discusses 12 unrelated topics, then asks "What's my name?"
+
+**Current (bad) behavior:** Either the context overflows, or truncation drops turn 1 entirely and the name is lost.
+
+**Expected (good) behavior:** The summarization step captures "User's name is Alice" in the running summary. Even though turn 1 was condensed, the agent can still recall the name.
+
+## Your Task
+
+Implement **summarization memory** for the agent:
+
+- Split the history into two zones: a **summary zone** (older turns, condensed) and a **recent zone** (last N turns, kept verbatim).
+- When the summary zone grows past a threshold, use the LLM to generate a concise summary.
+- Prepend the running summary as context before the recent verbatim turns.
+- Ensure total token usage grows sub-linearly compared to full history.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Old turns replaced by summary:** Messages beyond the recent window are condensed into a running summary.
+- **Recent turns kept verbatim:** The most recent N turns are preserved word-for-word alongside the summary.
+- **Token usage reduced:** The total prompt size grows sub-linearly compared to keeping full history.
+- **Summary captures key facts:** The running summary retains important facts and context from the condensed turns.

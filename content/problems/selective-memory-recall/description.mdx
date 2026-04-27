@@ -1,0 +1,46 @@
+## The Problem
+
+Your assistant has access to a knowledge base of 100 stored facts about the user and their environment. The current implementation **dumps every single fact into the system prompt** on every query, regardless of relevance. This wastes tokens, increases cost, and can confuse the model with irrelevant information. The fix is to implement **selective retrieval** — given the user's current query, find and inject only the most relevant facts.
+
+## Examples
+
+### Example 1
+
+**User input:** Who is my manager?
+
+**Current (bad) behavior:** All 100 facts are shoved into the prompt. The model has to sift through trivia about miscellaneous topics to find "Jordan's manager is named Priya."
+
+**Expected (good) behavior:** Only 3-5 relevant facts are retrieved (e.g., facts about Jordan's manager, team, and company). The answer is fast, cheap, and accurate: "Your manager is Priya."
+
+### Example 2
+
+**User input:** What programming language do I like?
+
+**Current (bad) behavior:** The entire 100-fact block is included. Token cost is high and latency increases.
+
+**Expected (good) behavior:** The retrieval step finds "Jordan's favorite programming language is Python" and perhaps a couple of related facts. The response is concise: "You prefer Python!"
+
+### Example 3
+
+**User input:** Tell me about DataFlow.
+
+**Current (bad) behavior:** All facts dumped. The model might mix up relevant and irrelevant information.
+
+**Expected (good) behavior:** Facts about DataFlow are retrieved: its founding year, what it builds, its location. The agent gives a focused summary.
+
+## Your Task
+
+Replace the brute-force fact injection with **semantic retrieval**:
+
+- Convert each fact into an embedding and store them in an in-memory vector store.
+- On each query, embed the user's question and retrieve the top-K most relevant facts by similarity.
+- Inject only those relevant facts into the prompt context.
+- The agent should answer just as accurately but with far fewer tokens in the prompt.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Retrieves relevant facts:** Only facts semantically related to the query are injected into the prompt.
+- **Does not dump all facts:** The prompt contains a small subset, not the entire knowledge base.
+- **Answers correctly:** The agent provides accurate answers based on the retrieved facts.

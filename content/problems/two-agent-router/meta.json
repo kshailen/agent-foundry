@@ -1,0 +1,51 @@
+{
+  "number": 75,
+  "title": "Two-Agent Router",
+  "difficulty": "easy",
+  "categories": [
+    "multi-agent"
+  ],
+  "frameworks": [
+    "openai-agents-sdk",
+    "langchain",
+    "crewai"
+  ],
+  "constraints": [
+    "You must use exactly two specialized agents plus a router",
+    "The router must classify intent before delegating",
+    "Each agent must only handle its own domain",
+    "Do not combine billing and tech support logic in one agent"
+  ],
+  "hints": [
+    "Classify the user's intent as either billing or tech support before routing",
+    "Create separate agents with focused system prompts for each domain",
+    "Use a triage agent or function that inspects the query and hands off to the correct specialist"
+  ],
+  "starterCode": {
+    "openai-agents-sdk": "from agents import Agent, Runner\n\n# BUG: A single agent tries to handle both billing and tech support\n# TODO: Create separate billing and tech-support agents with a router\nagent = Agent(\n    name=\"Customer Support\",\n    instructions=\"You are a customer support agent. Handle all billing questions and technical issues.\",\n)\n\n# Test with billing query\nresult = Runner.run_sync(agent, \"I was charged twice for my subscription last month\")\nprint(result.final_output)\n\n# Test with tech support query\nresult = Runner.run_sync(agent, \"My app keeps crashing when I try to export PDFs\")\nprint(result.final_output)",
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain_core.prompts import ChatPromptTemplate\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# BUG: A single chain handles both billing and tech support\n# TODO: Create separate billing and tech-support chains with a router\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a customer support agent. Handle all billing questions and technical issues.\"),\n    (\"human\", \"{input}\"),\n])\n\nchain = prompt | llm\n\n# Test with billing query\nresult = chain.invoke({\"input\": \"I was charged twice for my subscription last month\"})\nprint(result.content)\n\n# Test with tech support query\nresult = chain.invoke({\"input\": \"My app keeps crashing when I try to export PDFs\"})\nprint(result.content)",
+    "crewai": "from crewai import Agent, Task, Crew, Process\n\n# BUG: A single agent tries to handle both billing and tech support\n# TODO: Create separate billing and tech-support agents with a router\nsupport_agent = Agent(\n    role=\"Customer Support\",\n    goal=\"Handle all customer support inquiries including billing and technical issues.\",\n    backstory=\"You are a customer support agent. Handle all billing questions and technical issues.\",\n)\n\n# Test with billing query\ntask1 = Task(\n    description=\"I was charged twice for my subscription last month\",\n    expected_output=\"A helpful response addressing the billing concern.\",\n    agent=support_agent,\n)\n\ncrew = Crew(agents=[support_agent], tasks=[task1], process=Process.sequential)\nresult = crew.kickoff()\nprint(result)\n\n# Test with tech support query\ntask2 = Task(\n    description=\"My app keeps crashing when I try to export PDFs\",\n    expected_output=\"A helpful response addressing the technical issue.\",\n    agent=support_agent,\n)\n\ncrew = Crew(agents=[support_agent], tasks=[task2], process=Process.sequential)\nresult = crew.kickoff()\nprint(result)"
+  },
+  "colabUrls": {
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/two-agent-router-openai.ipynb",
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/two-agent-router-langchain.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/two-agent-router-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "correct-routing",
+      "label": "Correct intent routing",
+      "description": "Billing queries go to the billing agent and tech queries go to the tech support agent"
+    },
+    {
+      "id": "two-specialists",
+      "label": "Two specialized agents exist",
+      "description": "There are exactly two specialist agents with focused, non-overlapping instructions"
+    },
+    {
+      "id": "domain-isolation",
+      "label": "Domain isolation maintained",
+      "description": "Each agent only responds within its own domain and does not leak into the other"
+    }
+  ]
+}

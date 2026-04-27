@@ -1,0 +1,195 @@
+## Approach
+
+The agent has basic conversation history but no dedicated mechanism for tracking user preferences. When the user says "Call me Alex" and "I prefer metric units," these statements are just conversation messages that may scroll out of context over time. Even within the current context, the model has no explicit instruction to extract, store, and apply preferences.
+
+The fix introduces a preference memory layer with three components. First, after each user message, use the LLM to extract any preference-setting statements into a structured dictionary (e.g., `{"name": "Alex", "units": "metric", "theme": "dark mode"}`). Second, store this dictionary persistently across turns. Third, inject the current preferences into the system prompt on every call so the model always knows and applies them. This separation ensures preferences survive even if the conversation history is truncated.
+
+The key insight is that preferences are a distinct type of memory — they are long-lived settings, not ephemeral conversation content. Treating them as structured data rather than raw chat messages makes them more reliable and durable.
+
+## Solution
+
+### LangChain
+
+```python
+import json
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+preferences = {}
+history = []
+
+EXTRACTION_PROMPT = """Extract any user preferences from the following message.
+Return a JSON object with preference keys and values.
+Examples of preferences: name, units, theme, dietary restrictions, communication style, timezone.
+If no preferences are found, return an empty JSON object {{}}.
+Only return the JSON object, nothing else.
+
+Message: {message}"""
+
+def extract_preferences(user_message: str):
+    response = llm.invoke([HumanMessage(content=EXTRACTION_PROMPT.format(message=user_message))])
+    try:
+        new_prefs = json.loads(response.content.strip().strip("`").strip("json").strip())
+        preferences.update(new_prefs)
+    except json.JSONDecodeError:
+        pass
+
+def build_system_prompt() -> str:
+    base = "You are a helpful assistant."
+    if preferences:
+        prefs_str = "\n".join(f"- {k}: {v}" for k, v in preferences.items())
+        base += f"\n\nUser preferences (always apply these):\n{prefs_str}"
+    return base
+
+def chat(user_input: str) -> str:
+    extract_preferences(user_input)
+    system_msg = SystemMessage(content=build_system_prompt())
+    history.append(HumanMessage(content=user_input))
+    messages = [system_msg] + history
+    response = llm.invoke(messages)
+    history.append(response)
+    return response.content
+
+# Turn 1: User sets preferences
+print(chat("Call me Alex. I prefer metric units and dark mode."))
+
+# Turn 2: Test if preferences are remembered
+print(chat("What's the distance from NYC to LA?"))
+
+# Turn 3: Ask directly
+print(chat("What name should you call me?"))
+```
+
+### OpenAI Agents SDK
+
+```python
+import json
+from agents import Agent, Runner
+from openai import OpenAI
+
+client = OpenAI()
+preferences = {}
+history = []
+
+EXTRACTION_PROMPT = """Extract any user preferences from the following message.
+Return a JSON object with preference keys and values.
+Examples of preferences: name, units, theme, dietary restrictions, communication style, timezone.
+If no preferences are found, return an empty JSON object {}.
+Only return the JSON object, nothing else.
+
+Message: {message}"""
+
+def extract_preferences(user_message: str):
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": EXTRACTION_PROMPT.format(message=user_message)}],
+    )
+    try:
+        new_prefs = json.loads(response.choices[0].message.content.strip().strip("`").strip("json").strip())
+        preferences.update(new_prefs)
+    except json.JSONDecodeError:
+        pass
+
+def build_instructions() -> str:
+    base = "You are a helpful assistant."
+    if preferences:
+        prefs_str = "\n".join(f"- {k}: {v}" for k, v in preferences.items())
+        base += f"\n\nUser preferences (always apply these):\n{prefs_str}"
+    return base
+
+def chat(user_input: str) -> str:
+    extract_preferences(user_input)
+    history.append({"role": "user", "content": user_input})
+    agent = Agent(
+        name="Assistant",
+        instructions=build_instructions(),
+    )
+    result = Runner.run_sync(agent, history)
+    response_text = result.final_output
+    history.append({"role": "assistant", "content": response_text})
+    return response_text
+
+# Turn 1: User sets preferences
+print(chat("Call me Alex. I prefer metric units and dark mode."))
+
+# Turn 2: Test if preferences are remembered
+print(chat("What's the distance from NYC to LA?"))
+
+# Turn 3: Ask directly
+print(chat("What name should you call me?"))
+```
+
+### CrewAI
+
+```python
+import json
+from crewai import Agent, Task, Crew
+from openai import OpenAI
+
+client = OpenAI()
+preferences = {}
+
+EXTRACTION_PROMPT = """Extract any user preferences from the following message.
+Return a JSON object with preference keys and values.
+Examples of preferences: name, units, theme, dietary restrictions, communication style, timezone.
+If no preferences are found, return an empty JSON object {{}}.
+Only return the JSON object, nothing else.
+
+Message: {message}"""
+
+def extract_preferences(user_message: str):
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": EXTRACTION_PROMPT.format(message=user_message)}],
+    )
+    try:
+        new_prefs = json.loads(response.choices[0].message.content.strip().strip("`").strip("json").strip())
+        preferences.update(new_prefs)
+    except json.JSONDecodeError:
+        pass
+
+def build_backstory() -> str:
+    base = "You are a helpful assistant."
+    if preferences:
+        prefs_str = "\n".join(f"- {k}: {v}" for k, v in preferences.items())
+        base += f"\n\nUser preferences (always apply these):\n{prefs_str}"
+    return base
+
+def chat(user_input: str) -> str:
+    extract_preferences(user_input)
+    assistant = Agent(
+        role="Assistant",
+        goal="Help the user with their requests while respecting their preferences",
+        backstory=build_backstory(),
+    )
+    task = Task(
+        description=user_input,
+        expected_output="A helpful response that respects user preferences",
+        agent=assistant,
+    )
+    crew = Crew(agents=[assistant], tasks=[task])
+    return str(crew.kickoff())
+
+# Turn 1: User sets preferences
+print(chat("Call me Alex. I prefer metric units and dark mode."))
+
+# Turn 2: Test if preferences are remembered
+print(chat("What's the distance from NYC to LA?"))
+
+# Turn 3: Ask directly
+print(chat("What name should you call me?"))
+```
+
+## Why This Works
+
+The extraction step uses the LLM itself to identify preference-setting statements — it recognizes natural language patterns like "call me X" or "I prefer Y" and maps them to structured key-value pairs. Storing preferences in a dictionary means they persist independently of conversation history. Even if older messages are truncated from the context window, the preferences dictionary remains intact and is injected into every system prompt.
+
+By dynamically rebuilding the system prompt with current preferences on every turn, the model always has explicit instructions to use the user's preferred name, units, and style. This is more reliable than hoping the model will find and apply a preference mentioned 20 turns ago in raw conversation text.
+
+## Key Takeaways
+
+- User preferences are a distinct memory type — they should be stored structurally, not buried in raw conversation history.
+- Using the LLM to extract preferences from natural language avoids the need for explicit commands or special syntax from the user.
+- Injecting preferences into the system prompt guarantees they are applied on every turn, even after history truncation.

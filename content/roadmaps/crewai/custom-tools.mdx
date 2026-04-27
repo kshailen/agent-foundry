@@ -1,0 +1,109 @@
+# Building Custom Tools
+
+CrewAI agents call **tools** to act on the world: fetch data, run calculations, or trigger side effects. Built-in and third-party tools cover common cases, but many projects need **custom tools** that speak your stack.
+
+## Why Build Custom Tools?
+
+- **Proprietary APIs** — Internal REST or GraphQL services, partner integrations, or auth-wrapped endpoints the LLM cannot reach on its own.
+- **Databases** — Query Postgres, warehouses, or document stores with your schemas, policies, and connection handling.
+- **Custom logic** — Business rules, pricing engines, feature flags, or orchestration that must stay in code you control and test.
+
+Custom tools turn “the model guesses” into “the model decides *when* to call *your* code.”
+
+## Two Ways to Define Tools
+
+### Approach 1: `@tool` decorator (quick)
+
+Use this when you want a small function wrapped as a tool with minimal boilerplate.
+
+```python
+from crewai.tools import tool
+
+@tool("Calculate Price")
+def calculate_price(quantity: int, unit_price: float) -> str:
+    """Calculate total price for a given quantity and unit price."""
+    total = quantity * unit_price
+    return f"Total price: ${total:.2f}"
+```
+
+The decorator registers the function as a tool CrewAI can expose to the LLM.
+
+### Approach 2: `BaseTool` subclass (structured, validated inputs)
+
+Use this when you want explicit **Pydantic** schemas, defaults, field descriptions, and a class-based layout that scales with more complex tools.
+
+```python
+from crewai.tools import BaseTool
+from pydantic import BaseModel, Field
+
+class SearchInput(BaseModel):
+    query: str = Field(..., description="The search query")
+    max_results: int = Field(default=5, description="Maximum results to return")
+
+class DatabaseSearchTool(BaseTool):
+    name: str = "Database Search"
+    description: str = "Search the internal database for records"
+    args_schema: type[BaseModel] = SearchInput
+
+    def _run(self, query: str, max_results: int = 5) -> str:
+        # Custom implementation
+        return f"Found results for: {query}"
+```
+
+`args_schema` drives how arguments are validated and described to the model.
+
+## Decorator vs class approach
+
+| Aspect | `@tool` | `BaseTool` subclass |
+|--------|---------|----------------------|
+| Setup time | Fast — one function | More structure — class + schema |
+| Input validation | Relies on signatures / docstrings | Strong with Pydantic `Field` and models |
+| Reusability & testing | Function-level | Easy to subclass, mock, and configure |
+| Best for | Simple helpers, prototypes | APIs, DB access, multi-parameter tools |
+
+## Using custom tools with an agent
+
+Pass tool instances in the agent’s `tools` list, same as built-in tools:
+
+```python
+from crewai import Agent, Task, Crew
+
+pricing_tool = calculate_price  # decorated function is a tool
+
+db_search = DatabaseSearchTool()
+
+analyst = Agent(
+    role="Operations Analyst",
+    goal="Use available tools to answer pricing and lookup questions accurately",
+    backstory="You rely on tools for numbers and data; you never invent tool outputs.",
+    tools=[pricing_tool, db_search],
+    verbose=True,
+)
+
+task = Task(
+    description="Use the pricing tool for quantity 4 at unit price 12.5, then use the database search for query 'inventory' with max_results 3. Summarize what each tool returned.",
+    expected_output="A short summary of both tool results.",
+    agent=analyst,
+)
+
+crew = Crew(agents=[analyst], tasks=[task], verbose=True)
+result = crew.kickoff()
+```
+
+The LLM chooses **which** tool to call and **with which arguments**, constrained by each tool’s name, description, and schema.
+
+## Tool requirements
+
+For CrewAI to wire tools correctly to the agent and the LLM:
+
+- **Name** — Identifies the tool in prompts and traces (decorator first argument or `name` on the class).
+- **Description** — Tells the model *when* and *why* to use the tool (docstring for `@tool`, or `description` on `BaseTool`).
+- **Type annotations** — Parameters should be annotated so the framework and model understand argument types.
+- **Return a string** — Tool execution should return text the model can read in the next reasoning step (serialize structured data to JSON strings if needed).
+
+## Key takeaways
+
+- Custom tools connect agents to **your** APIs, databases, and business logic.
+- **`@tool`** is ideal for quick, function-sized tools; **`BaseTool` + Pydantic** is ideal for validated, documented inputs.
+- Attach tools via `Agent(..., tools=[...])` and run them inside a **Crew** with **Tasks** so the model can invoke them during `kickoff()`.
+- Clear **names**, **descriptions**, **annotations**, and **string returns** keep tool behavior predictable and debuggable.

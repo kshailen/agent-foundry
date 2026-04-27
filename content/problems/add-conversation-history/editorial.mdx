@@ -1,0 +1,131 @@
+## Approach
+
+The bug is straightforward: each call to the agent is completely independent. The prompt template only has a system message and the current user input — there is no slot for previous conversation turns. When the user says "My name is Alice" in turn one and asks "What is my name?" in turn two, the model literally never sees the first message during the second invocation.
+
+The fix requires two changes. First, maintain an in-memory list that accumulates user and assistant messages across turns. Second, restructure the prompt (or agent call) so that the full message history is passed to the model on every invocation. This way the model sees all prior context and can answer questions about earlier turns. In LangChain this means using `MessagesPlaceholder` for chat history; in the OpenAI Agents SDK it means passing the growing message list to `Runner.run_sync`.
+
+This is the most fundamental memory pattern in conversational AI — without it, every turn is a cold start.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+history = [SystemMessage(content="You are a helpful assistant.")]
+
+def chat(user_input: str) -> str:
+    history.append(HumanMessage(content=user_input))
+    response = llm.invoke(history)
+    history.append(response)
+    return response.content
+
+# Turn 1
+response1 = chat("My name is Alice and I work at Acme Corp.")
+print("Turn 1:", response1)
+
+# Turn 2
+response2 = chat("What company do I work at?")
+print("Turn 2:", response2)
+
+# Turn 3
+response3 = chat("What is my name?")
+print("Turn 3:", response3)
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+
+agent = Agent(
+    name="Assistant",
+    instructions="You are a helpful assistant.",
+)
+
+history = []
+
+def chat(user_input: str) -> str:
+    history.append({"role": "user", "content": user_input})
+    result = Runner.run_sync(agent, history)
+    response_text = result.final_output
+    history.append({"role": "assistant", "content": response_text})
+    return response_text
+
+# Turn 1
+response1 = chat("My name is Alice and I work at Acme Corp.")
+print("Turn 1:", response1)
+
+# Turn 2
+response2 = chat("What company do I work at?")
+print("Turn 2:", response2)
+
+# Turn 3
+response3 = chat("What is my name?")
+print("Turn 3:", response3)
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai import LLM
+
+llm = LLM(model="gpt-4o-mini")
+
+history = []
+
+assistant = Agent(
+    role="Assistant",
+    goal="Help the user with their questions",
+    backstory="You are a helpful assistant.",
+    llm=llm,
+)
+
+
+def chat(user_input: str) -> str:
+    history.append(f"User: {user_input}")
+    context_str = "\n".join(history)
+    task = Task(
+        description=(
+            f"Conversation so far:\n{context_str}\n\n"
+            f"Respond to the latest user message. Use the conversation history above for context."
+        ),
+        expected_output="A helpful response that uses conversation context",
+        agent=assistant,
+    )
+    crew = Crew(agents=[assistant], tasks=[task], process=Process.sequential)
+    result = crew.kickoff()
+    response_text = str(result)
+    history.append(f"Assistant: {response_text}")
+    return response_text
+
+
+# Turn 1
+response1 = chat("My name is Alice and I work at Acme Corp.")
+print("Turn 1:", response1)
+
+# Turn 2
+response2 = chat("What company do I work at?")
+print("Turn 2:", response2)
+
+# Turn 3
+response3 = chat("What is my name?")
+print("Turn 3:", response3)
+```
+
+## Why This Works
+
+Language models are stateless — they have no built-in memory between API calls. The only way to give a model "memory" is to include previous messages in the prompt. By maintaining a list of all user and assistant messages and passing it on every call, the model sees the full conversation context. When the user asks "What is my name?" in turn 3, the model can look back at turn 1 where the user said "My name is Alice" and respond correctly.
+
+The LangChain solution switches from a stateless `ChatPromptTemplate | LLM | OutputParser` chain to direct `llm.invoke(history)` calls with a growing message list. The OpenAI Agents SDK solution passes the accumulated `history` list to `Runner.run_sync` instead of a single string. Both approaches achieve the same thing: the model receives the full conversation on every turn.
+
+## Key Takeaways
+
+- LLMs are stateless — conversation memory must be explicitly managed by the application, not the model.
+- The simplest memory pattern is an in-memory list of messages passed to every model call.
+- Both user and assistant messages must be stored; omitting assistant messages breaks the conversational flow the model expects.

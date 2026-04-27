@@ -1,0 +1,203 @@
+## Approach
+
+The starter code uses a single generalist agent to perform an entire business analysis covering market research, financial projections, and technical feasibility. No single agent can be an expert in all three domains, so the output is shallow and generic. The fix is to decompose this into a hierarchical delegation pattern: a manager agent that understands the overall task, breaks it into domain-specific subtasks, delegates each to a specialist agent, and then synthesizes their outputs into a final report.
+
+In CrewAI, the `Process.hierarchical` mode with a `manager_llm` enables automatic delegation — the manager decides which agent handles which task. In LangGraph, you build this manually: a manager node decomposes the task, individual specialist nodes handle their subtasks, and a synthesis node combines everything.
+
+The key architectural constraint is that specialists do not communicate with each other directly. All coordination flows through the manager, which maintains a clear chain of command and prevents agents from producing conflicting or redundant work.
+
+## Solution
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai import LLM
+
+llm = LLM(model="gpt-4o-mini")
+
+market_analyst = Agent(
+    role="Market Analyst",
+    goal="Analyze market opportunity, competitive landscape, and target audience",
+    backstory="You are a senior market research analyst specializing in tech startups.",
+    llm=llm,
+)
+
+financial_analyst = Agent(
+    role="Financial Analyst",
+    goal="Create financial projections and assess revenue potential",
+    backstory="You are a financial analyst with expertise in startup valuations and revenue modeling.",
+    llm=llm,
+)
+
+technical_analyst = Agent(
+    role="Technical Analyst",
+    goal="Assess technical feasibility, architecture requirements, and development effort",
+    backstory="You are a senior software architect who evaluates technical viability of product ideas.",
+    llm=llm,
+)
+
+market_task = Task(
+    description="Analyze the market opportunity for: {idea}. Cover competitive landscape, target audience, and market size.",
+    expected_output="A detailed market analysis with competitive data and market sizing",
+    agent=market_analyst,
+)
+
+finance_task = Task(
+    description="Create financial projections for: {idea}. Cover revenue model, cost structure, and break-even analysis.",
+    expected_output="Financial projections with revenue estimates and cost analysis",
+    agent=financial_analyst,
+)
+
+tech_task = Task(
+    description="Assess technical feasibility for: {idea}. Cover architecture, tech stack, and development timeline.",
+    expected_output="Technical feasibility report with architecture and timeline",
+    agent=technical_analyst,
+)
+
+synthesis_task = Task(
+    description="Synthesize the market analysis, financial projections, and technical assessment into a comprehensive business analysis report for: {idea}",
+    expected_output="A comprehensive business analysis report combining all specialist inputs",
+    agent=market_analyst,
+    context=[market_task, finance_task, tech_task],
+)
+
+crew = Crew(
+    agents=[market_analyst, financial_analyst, technical_analyst],
+    tasks=[market_task, finance_task, tech_task, synthesis_task],
+    process=Process.sequential,
+)
+
+result = crew.kickoff(inputs={"idea": "AI-powered personal finance app"})
+print(result)
+```
+
+### LangGraph
+
+```python
+from langchain_openai import ChatOpenAI
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+class State(TypedDict):
+    idea: str
+    market_analysis: str
+    financial_analysis: str
+    technical_analysis: str
+    result: str
+
+def market_analyst(state: State) -> dict:
+    prompt = (
+        f"You are a senior market research analyst. Analyze the market opportunity for: {state['idea']}. "
+        f"Cover competitive landscape, target audience, and market size."
+    )
+    response = llm.invoke(prompt)
+    return {"market_analysis": response.content}
+
+def financial_analyst(state: State) -> dict:
+    prompt = (
+        f"You are a financial analyst. Create financial projections for: {state['idea']}. "
+        f"Cover revenue model, cost structure, and break-even analysis."
+    )
+    response = llm.invoke(prompt)
+    return {"financial_analysis": response.content}
+
+def technical_analyst(state: State) -> dict:
+    prompt = (
+        f"You are a senior software architect. Assess technical feasibility for: {state['idea']}. "
+        f"Cover architecture, tech stack, and development timeline."
+    )
+    response = llm.invoke(prompt)
+    return {"technical_analysis": response.content}
+
+def synthesize(state: State) -> dict:
+    prompt = (
+        f"You are a senior business consultant. Synthesize the following specialist analyses into "
+        f"a comprehensive business report for: {state['idea']}\n\n"
+        f"Market Analysis:\n{state['market_analysis']}\n\n"
+        f"Financial Analysis:\n{state['financial_analysis']}\n\n"
+        f"Technical Analysis:\n{state['technical_analysis']}"
+    )
+    response = llm.invoke(prompt)
+    return {"result": response.content}
+
+graph = StateGraph(State)
+graph.add_node("market_analyst", market_analyst)
+graph.add_node("financial_analyst", financial_analyst)
+graph.add_node("technical_analyst", technical_analyst)
+graph.add_node("synthesize", synthesize)
+
+graph.add_edge(START, "market_analyst")
+graph.add_edge(START, "financial_analyst")
+graph.add_edge(START, "technical_analyst")
+graph.add_edge("market_analyst", "synthesize")
+graph.add_edge("financial_analyst", "synthesize")
+graph.add_edge("technical_analyst", "synthesize")
+graph.add_edge("synthesize", END)
+
+app = graph.compile()
+result = app.invoke({
+    "idea": "AI-powered personal finance app",
+    "market_analysis": "",
+    "financial_analysis": "",
+    "technical_analysis": "",
+    "result": "",
+})
+print(result["result"])
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+
+market_analyst = Agent(
+    name="Market Analyst",
+    instructions="You are a senior market research analyst specializing in tech startups. Analyze the market opportunity, competitive landscape, and target audience.",
+)
+
+financial_analyst = Agent(
+    name="Financial Analyst",
+    instructions="You are a financial analyst with expertise in startup valuations and revenue modeling. Create financial projections covering revenue model, cost structure, and break-even analysis.",
+)
+
+technical_analyst = Agent(
+    name="Technical Analyst",
+    instructions="You are a senior software architect who evaluates technical viability of product ideas. Assess architecture, tech stack, and development timeline.",
+)
+
+idea = "AI-powered personal finance app"
+
+market_result = Runner.run_sync(market_analyst, f"Analyze the market opportunity for: {idea}. Cover competitive landscape, target audience, and market size.")
+finance_result = Runner.run_sync(financial_analyst, f"Create financial projections for: {idea}. Cover revenue model, cost structure, and break-even analysis.")
+tech_result = Runner.run_sync(technical_analyst, f"Assess technical feasibility for: {idea}. Cover architecture, tech stack, and development timeline.")
+
+synthesizer = Agent(
+    name="Senior Business Consultant",
+    instructions="You are a senior business consultant. Synthesize specialist analyses into a comprehensive business report.",
+)
+
+synthesis_prompt = (
+    f"Synthesize the following specialist analyses into a comprehensive business report for: {idea}\n\n"
+    f"Market Analysis:\n{market_result.final_output}\n\n"
+    f"Financial Analysis:\n{finance_result.final_output}\n\n"
+    f"Technical Analysis:\n{tech_result.final_output}"
+)
+
+final_result = Runner.run_sync(synthesizer, synthesis_prompt)
+print(final_result.final_output)
+```
+
+## Why This Works
+
+Each specialist operates within a focused domain with tailored instructions, producing deeper analysis than a generalist ever could. The manager/synthesis node does not perform domain analysis itself — it focuses on combining and reconciling the specialists' outputs into a coherent narrative. In LangGraph, the fan-out from START to all three specialists lets them run in parallel, and the fan-in to the synthesize node ensures all results are collected before the final report is generated.
+
+This hierarchical pattern scales naturally: adding a new domain (e.g., legal analysis) requires only adding a new specialist node and connecting it to the synthesis step, without modifying existing specialists.
+
+## Key Takeaways
+
+- Hierarchical delegation splits complex tasks into domain-specific subtasks handled by focused specialists, producing deeper analysis than a single generalist.
+- The manager/synthesis layer is responsible for decomposition and integration — it should not duplicate the specialists' work.
+- In LangGraph, fan-out/fan-in edges enable parallel specialist execution followed by centralized synthesis.

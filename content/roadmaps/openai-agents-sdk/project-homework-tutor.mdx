@@ -1,0 +1,158 @@
+# Project: Homework Tutor
+
+In this project you'll build a homework tutor system that routes student questions to the right specialist. A triage agent examines each question and hands off to either a Math Tutor or a History Tutor, each with tailored instructions.
+
+## What You'll Build
+
+```
+Student Question → Triage Agent → [Math Tutor | History Tutor]
+```
+
+The system uses three agents:
+
+| Agent | Role |
+|-------|------|
+| Triage Agent | Examines the question and routes to the right tutor |
+| Math Tutor | Explains math concepts step by step with examples |
+| History Tutor | Provides historical context and analysis |
+
+## Step 1: Install and Configure
+
+```bash
+pip install openai-agents
+```
+
+```python
+import os
+os.environ["OPENAI_API_KEY"] = "your-key-here"
+```
+
+## Step 2: Define the Specialist Agents
+
+Each tutor has focused instructions that shape how it responds:
+
+```python
+from agents import Agent, Runner
+
+math_tutor = Agent(
+    name="Math Tutor",
+    instructions="""You are a patient, encouraging math tutor. When a student asks a math question:
+1. Identify what concept is involved
+2. Explain the concept briefly
+3. Walk through the solution step by step
+4. Give a similar practice problem at the end
+
+Use simple language and avoid jargon. Always show your work.""",
+)
+
+history_tutor = Agent(
+    name="History Tutor",
+    instructions="""You are an engaging history tutor. When a student asks a history question:
+1. Provide the key facts and dates
+2. Explain the historical context — what was happening before and after
+3. Discuss why this event or person matters
+4. Connect it to broader themes or modern relevance
+
+Make history come alive with vivid details and storytelling.""",
+)
+```
+
+## Step 3: Create the Triage Agent
+
+The triage agent inspects the question and hands off to the appropriate tutor:
+
+```python
+triage_agent = Agent(
+    name="Triage Agent",
+    instructions="""You are a homework help router. Your job is to read the student's question and hand off to the right tutor:
+
+- Math Tutor: for math problems, equations, geometry, algebra, calculus, statistics
+- History Tutor: for questions about historical events, people, dates, civilizations
+
+If the question doesn't fit either category, answer it yourself to the best of your ability.""",
+    handoffs=[math_tutor, history_tutor],
+)
+```
+
+## Step 4: Run the Tutor System
+
+Test with different types of questions:
+
+```python
+questions = [
+    "What is the derivative of x^3 + 2x?",
+    "Why did the Roman Empire fall?",
+    "Solve for x: 3x - 7 = 14",
+    "Who was Cleopatra and why is she famous?",
+]
+
+for question in questions:
+    result = Runner.run_sync(triage_agent, question)
+    print(f"\nQuestion: {question}")
+    print(f"Routed to: {result.last_agent.name}")
+    print(f"Answer: {result.final_output[:200]}...")
+    print("-" * 60)
+```
+
+## Step 5: Inspect the Routing
+
+Check the full trace to see how the triage agent made its decision:
+
+```python
+result = Runner.run_sync(triage_agent, "What was the significance of the Battle of Thermopylae?")
+
+print(f"Final agent: {result.last_agent.name}")
+print(f"\nFull trace:")
+for item in result.new_items:
+    print(item)
+```
+
+## Full Code
+
+```python
+from agents import Agent, Runner
+
+math_tutor = Agent(
+    name="Math Tutor",
+    instructions="""You are a patient, encouraging math tutor. When a student asks a math question:
+1. Identify what concept is involved
+2. Explain the concept briefly
+3. Walk through the solution step by step
+4. Give a similar practice problem at the end
+
+Use simple language and avoid jargon. Always show your work.""",
+)
+
+history_tutor = Agent(
+    name="History Tutor",
+    instructions="""You are an engaging history tutor. When a student asks a history question:
+1. Provide the key facts and dates
+2. Explain the historical context — what was happening before and after
+3. Discuss why this event or person matters
+4. Connect it to broader themes or modern relevance
+
+Make history come alive with vivid details and storytelling.""",
+)
+
+triage_agent = Agent(
+    name="Triage Agent",
+    instructions="""You are a homework help router. Your job is to read the student's question and hand off to the right tutor:
+
+- Math Tutor: for math problems, equations, geometry, algebra, calculus, statistics
+- History Tutor: for questions about historical events, people, dates, civilizations
+
+If the question doesn't fit either category, answer it yourself to the best of your ability.""",
+    handoffs=[math_tutor, history_tutor],
+)
+
+result = Runner.run_sync(triage_agent, "What is the derivative of x^3 + 2x?")
+print(f"Routed to: {result.last_agent.name}")
+print(f"Answer: {result.final_output}")
+```
+
+## Key Takeaways
+
+- A triage agent with `handoffs` creates a simple, powerful routing system
+- Specialist agents with focused instructions produce better answers than a single generalist
+- `result.last_agent.name` confirms which specialist handled the question
+- This pattern scales — add more tutors (Science, English, etc.) by expanding the handoffs list

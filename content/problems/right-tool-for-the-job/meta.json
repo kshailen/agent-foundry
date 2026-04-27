@@ -1,0 +1,55 @@
+{
+  "number": 2,
+  "title": "Right Tool for the Job",
+  "difficulty": "easy",
+  "categories": [
+    "tool-calling"
+  ],
+  "frameworks": [
+    "langchain",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "You may not remove any existing tools",
+    "You may not modify the tool implementations",
+    "You may only change the tool descriptions and the system prompt"
+  ],
+  "hints": [
+    "The agent might be confused because tool descriptions are vague or overlapping",
+    "Make each tool description specific about what input it expects and what output it returns",
+    "Add explicit routing instructions in the system prompt: 'For weather queries, always use the weather_lookup tool. For general questions, use web_search.'"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain.agents import AgentExecutor, create_tool_calling_agent\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom langchain_core.tools import tool\n\n@tool\ndef weather_lookup(location: str) -> str:\n    \"\"\"Look up information.\"\"\"  # BUG: Vague description\n    return f\"Weather in {location}: 72°F, sunny\"\n\n@tool\ndef web_search(query: str) -> str:\n    \"\"\"Search for things.\"\"\"  # BUG: Vague description\n    return f\"Results for {query}: ...\"\n\n@tool\ndef calculator(expression: str) -> str:\n    \"\"\"Compute stuff.\"\"\"  # BUG: Vague description\n    return str(eval(expression))\n\n@tool\ndef calendar_check(date: str) -> str:\n    \"\"\"Check things.\"\"\"  # BUG: Vague description\n    return f\"Events on {date}: Team standup at 10am\"\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\ntools = [weather_lookup, web_search, calculator, calendar_check]\n\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a helpful assistant.\"),\n    (\"human\", \"{input}\"),\n    (\"placeholder\", \"{agent_scratchpad}\"),\n])\n\nagent = create_tool_calling_agent(llm, tools, prompt)\nexecutor = AgentExecutor(agent=agent, tools=tools)\n\n# Tests\nprint(executor.invoke({\"input\": \"What's the weather in San Francisco?\"}))\nprint(executor.invoke({\"input\": \"What is 15% of 230?\"}))\nprint(executor.invoke({\"input\": \"Do I have any meetings on Friday?\"}))",
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom agents.tool import function_tool\n\n@function_tool\ndef weather_lookup(location: str) -> str:\n    \"\"\"Look up information.\"\"\"  # BUG: Vague description\n    return f\"Weather in {location}: 72°F, sunny\"\n\n@function_tool\ndef web_search(query: str) -> str:\n    \"\"\"Search for things.\"\"\"  # BUG: Vague description\n    return f\"Results for {query}: ...\"\n\n@function_tool\ndef calculator(expression: str) -> str:\n    \"\"\"Compute stuff.\"\"\"  # BUG: Vague description\n    return str(eval(expression))\n\n@function_tool\ndef calendar_check(date: str) -> str:\n    \"\"\"Check things.\"\"\"  # BUG: Vague description\n    return f\"Events on {date}: Team standup at 10am\"\n\nagent = Agent(\n    name=\"Assistant\",\n    instructions=\"You are a helpful assistant.\",\n    tools=[weather_lookup, web_search, calculator, calendar_check],\n)\n\n# Tests\nprint(Runner.run_sync(agent, \"What's the weather in San Francisco?\"))\nprint(Runner.run_sync(agent, \"What is 15% of 230?\"))\nprint(Runner.run_sync(agent, \"Do I have any meetings on Friday?\"))",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai import LLM\nfrom crewai.tools import tool\n\n@tool\ndef weather_lookup(location: str) -> str:\n    \"\"\"Look up information.\"\"\"  # BUG: Vague description\n    return f\"Weather in {location}: 72°F, sunny\"\n\n@tool\ndef web_search(query: str) -> str:\n    \"\"\"Search for things.\"\"\"  # BUG: Vague description\n    return f\"Results for {query}: ...\"\n\n@tool\ndef calculator(expression: str) -> str:\n    \"\"\"Compute stuff.\"\"\"  # BUG: Vague description\n    return str(eval(expression))\n\n@tool\ndef calendar_check(date: str) -> str:\n    \"\"\"Check things.\"\"\"  # BUG: Vague description\n    return f\"Events on {date}: Team standup at 10am\"\n\nllm = LLM(model=\"gpt-4o-mini\")\n\nagent = Agent(\n    role=\"Helpful Assistant\",\n    goal=\"Help users with various queries\",\n    backstory=\"You are a helpful assistant.\",\n    tools=[weather_lookup, web_search, calculator, calendar_check],\n    llm=llm,\n)\n\ntask = Task(\n    description=\"Answer the following queries: 1) What's the weather in San Francisco? 2) What is 15% of 230? 3) Do I have any meetings on Friday?\",\n    expected_output=\"Accurate answers using the correct tools for each query\",\n    agent=agent,\n)\n\ncrew = Crew(agents=[agent], tasks=[task])\nresult = crew.kickoff()\nprint(result)"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/right-tool-for-the-job-langchain.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/right-tool-for-the-job-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/right-tool-for-the-job-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "correct-tool",
+      "label": "Correct tool selection",
+      "description": "The agent consistently picks the right tool for each query type"
+    },
+    {
+      "id": "no-unnecessary-calls",
+      "label": "No unnecessary tool calls",
+      "description": "The agent doesn't call multiple tools when one would suffice"
+    },
+    {
+      "id": "clear-descriptions",
+      "label": "Clear tool descriptions",
+      "description": "Each tool description clearly explains its purpose, expected input, and output"
+    },
+    {
+      "id": "all-tests-pass",
+      "label": "All test queries pass",
+      "description": "Weather, calculator, and calendar queries all route to the correct tool"
+    }
+  ]
+}

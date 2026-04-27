@@ -1,0 +1,48 @@
+# What is LangGraph?
+
+LangGraph is a framework for building stateful, multi-step agent workflows as graphs. Built by the LangChain team, it models agent logic as a directed graph where **nodes** are computation steps and **edges** define the flow between them.
+
+## Why Graphs?
+
+Most real-world agent workflows aren't simple linear chains. They involve:
+
+- **Branching** — take different paths based on the model's output
+- **Looping** — retry or iterate until a condition is met
+- **State** — accumulate information across steps
+- **Human approval** — pause and wait for human input before proceeding
+
+Graphs naturally express all of these patterns, making complex workflows explicit and debuggable.
+
+## Core Concepts
+
+| Concept | Description |
+|---------|-------------|
+| **State** | A typed dictionary that flows through the graph and accumulates data |
+| **Node** | A function that receives state, does work, and returns updated state |
+| **Edge** | A connection between nodes (can be conditional) |
+| **Graph** | The full workflow defined as connected nodes and edges |
+| **Checkpointer** | Persists state so workflows can be paused, resumed, or replayed |
+
+## LangGraph vs. LangChain Chains
+
+| Feature | LangChain Chains | LangGraph |
+|---------|-----------------|-----------|
+| Flow control | Linear (pipe operator) | Arbitrary graphs with cycles |
+| State management | Implicit | Explicit typed state |
+| Branching | Limited | First-class conditional edges |
+| Persistence | Manual | Built-in checkpointing |
+| Human-in-the-loop | Not native | First-class support |
+| Debugging | Trace-based | Visual graph + state snapshots |
+
+## When to Use LangGraph
+
+LangGraph is ideal for:
+
+- **Complex agents** that need loops, branching, and error recovery
+- **Multi-step workflows** where you need visibility into each step's state
+- **Human-in-the-loop** applications requiring approval gates
+- **Long-running agents** that need to persist state across sessions
+
+## What You'll Learn
+
+This roadmap takes you from understanding graph basics to building production-ready agent workflows with persistence, human-in-the-loop, and multi-agent coordination.

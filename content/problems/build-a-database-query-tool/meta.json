@@ -1,0 +1,50 @@
+{
+  "number": 9,
+  "title": "Build a Database Query Tool",
+  "difficulty": "easy",
+  "categories": [
+    "tool-calling"
+  ],
+  "frameworks": [
+    "langchain",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "The tool must prevent SQL injection attacks",
+    "Only SELECT queries are allowed",
+    "Results must be formatted as a readable string, not raw tuples"
+  ],
+  "hints": [
+    "Use parameterized queries or whitelist allowed table names to prevent injection",
+    "Check that the query starts with SELECT before executing it",
+    "Format results with column headers and handle the case where no rows are returned"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain.agents import AgentExecutor, create_tool_calling_agent\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom langchain_core.tools import tool\nimport sqlite3\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# Set up in-memory database with sample data\nconn = sqlite3.connect(\":memory:\")\ncursor = conn.cursor()\ncursor.execute(\"CREATE TABLE employees (id INTEGER, name TEXT, department TEXT, salary INTEGER)\")\ncursor.executemany(\"INSERT INTO employees VALUES (?, ?, ?, ?)\", [\n    (1, \"Alice\", \"Engineering\", 95000),\n    (2, \"Bob\", \"Marketing\", 72000),\n    (3, \"Charlie\", \"Engineering\", 88000),\n    (4, \"Diana\", \"Sales\", 67000),\n    (5, \"Eve\", \"Marketing\", 78000),\n])\nconn.commit()\n\n# BUG: This tool has no SQL injection protection, no query validation,\n# and returns raw tuples instead of formatted results\n@tool\ndef query_database(sql: str) -> str:\n    \"\"\"Run a SQL query against the employees database.\"\"\"\n    result = cursor.execute(sql).fetchall()\n    return str(result)\n\ntools = [query_database]\n\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a database assistant. Use the query tool to answer questions about employees.\"),\n    (\"human\", \"{input}\"),\n    (\"placeholder\", \"{agent_scratchpad}\"),\n])\n\nagent = create_tool_calling_agent(llm, tools, prompt)\nexecutor = AgentExecutor(agent=agent, tools=tools)\n\nresult = executor.invoke({\"input\": \"Show me all engineers and their salaries\"})\nprint(result[\"output\"])",
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom agents.tool import function_tool\nimport sqlite3\n\n# Set up in-memory database with sample data\nconn = sqlite3.connect(\":memory:\")\ncursor = conn.cursor()\ncursor.execute(\"CREATE TABLE employees (id INTEGER, name TEXT, department TEXT, salary INTEGER)\")\ncursor.executemany(\"INSERT INTO employees VALUES (?, ?, ?, ?)\", [\n    (1, \"Alice\", \"Engineering\", 95000),\n    (2, \"Bob\", \"Marketing\", 72000),\n    (3, \"Charlie\", \"Engineering\", 88000),\n    (4, \"Diana\", \"Sales\", 67000),\n    (5, \"Eve\", \"Marketing\", 78000),\n])\nconn.commit()\n\n# BUG: This tool has no SQL injection protection, no query validation,\n# and returns raw tuples instead of formatted results\n@function_tool\ndef query_database(sql: str) -> str:\n    \"\"\"Run a SQL query against the employees database.\"\"\"\n    result = cursor.execute(sql).fetchall()\n    return str(result)\n\nagent = Agent(\n    name=\"Database Assistant\",\n    instructions=\"You are a database assistant. Use the query tool to answer questions about employees.\",\n    tools=[query_database],\n)\n\nresult = Runner.run_sync(agent, \"Show me all engineers and their salaries\")\nprint(result.final_output)",
+    "crewai": "from crewai import Agent, Task, Crew, Process\nfrom crewai import LLM\nfrom crewai.tools import tool\nimport sqlite3\n\nllm = LLM(model=\"gpt-4o-mini\")\n\nconn = sqlite3.connect(\":memory:\")\ncursor = conn.cursor()\ncursor.execute(\"CREATE TABLE employees (id INTEGER, name TEXT, department TEXT, salary INTEGER)\")\ncursor.executemany(\"INSERT INTO employees VALUES (?, ?, ?, ?)\", [\n    (1, \"Alice\", \"Engineering\", 95000),\n    (2, \"Bob\", \"Marketing\", 72000),\n    (3, \"Charlie\", \"Engineering\", 88000),\n    (4, \"Diana\", \"Sales\", 67000),\n    (5, \"Eve\", \"Marketing\", 78000),\n])\nconn.commit()\n\n# BUG: This tool has no SQL injection protection, no query validation,\n# and returns raw tuples instead of formatted results\n@tool\ndef query_database(sql: str) -> str:\n    \"\"\"Run a SQL query against the employees database.\"\"\"\n    result = cursor.execute(sql).fetchall()\n    return str(result)\n\nagent = Agent(\n    role=\"Database Assistant\",\n    goal=\"Answer questions about employees using SQL queries\",\n    backstory=\"You are a database assistant. Use the query tool to answer questions about employees.\",\n    tools=[query_database],\n    llm=llm,\n)\n\ntask = Task(description=\"Show me all engineers and their salaries\", expected_output=\"Query results\", agent=agent)\ncrew = Crew(agents=[agent], tasks=[task], process=Process.sequential)\nresult = crew.kickoff()\nprint(result)"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/build-a-database-query-tool-langchain.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/build-a-database-query-tool-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/build-a-database-query-tool-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "sql-injection-prevented",
+      "label": "SQL injection prevented",
+      "description": "The tool rejects or sanitizes dangerous SQL statements like DROP, DELETE, or INSERT"
+    },
+    {
+      "id": "results-formatted",
+      "label": "Results formatted",
+      "description": "Query results are returned as readable text with column headers, not raw tuples"
+    },
+    {
+      "id": "handles-empty-results",
+      "label": "Handles empty results",
+      "description": "When a query returns no rows, the tool provides a clear 'no results found' message"
+    }
+  ]
+}

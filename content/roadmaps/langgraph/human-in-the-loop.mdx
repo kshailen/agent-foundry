@@ -1,0 +1,126 @@
+# Human-in-the-Loop
+
+Fully autonomous agents are powerful but sometimes you need a human to approve, review, or edit the agent's work before continuing. LangGraph's **human-in-the-loop** pattern lets you pause execution at any point, present data to a human, and resume with their feedback — all powered by checkpointing.
+
+## interrupt(value)
+
+The `interrupt` function pauses graph execution and surfaces a value to the caller:
+
+```python
+from langgraph.types import interrupt
+
+def review_node(state):
+    draft = state["draft"]
+    decision = interrupt({"draft": draft, "prompt": "Approve or edit this draft?"})
+    return {"human_feedback": decision}
+```
+
+When the graph reaches `review_node`, it saves a checkpoint and returns control to the calling code. The `value` argument can be any serializable object — a string, dict, or list — that tells the human what to review.
+
+## Command(resume=value)
+
+To continue execution after an interrupt, invoke the graph with a `Command` that carries the human's response:
+
+```python
+from langgraph.types import Command
+
+result = app.invoke(
+    Command(resume={"action": "approve"}),
+    config=config,
+)
+```
+
+The `resume` value is returned by the `interrupt()` call inside the paused node, so execution continues from exactly where it stopped.
+
+## Checkpointer Requirement
+
+Human-in-the-loop requires a checkpointer. Without one, the graph cannot save its state at the interrupt point and there is nothing to resume from:
+
+```python
+from langgraph.checkpoint.memory import InMemorySaver
+
+checkpointer = InMemorySaver()
+app = graph.compile(checkpointer=checkpointer)
+```
+
+Always compile with a checkpointer when using `interrupt`.
+
+## Approval Pattern
+
+The simplest HITL pattern is binary approval — the agent proposes an action and the human approves or rejects:
+
+```python
+from typing import Annotated
+from typing_extensions import TypedDict
+from langgraph.graph import StateGraph, START, END, add_messages
+from langgraph.types import interrupt, Command
+from langgraph.checkpoint.memory import InMemorySaver
+from langchain_openai import ChatOpenAI
+
+class State(TypedDict):
+    messages: Annotated[list, add_messages]
+    approved: bool
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+def generate(state: State) -> dict:
+    response = llm.invoke([
+        ("system", "Draft a short email based on the user request."),
+        *state["messages"],
+    ])
+    return {"messages": [response]}
+
+def human_review(state: State) -> dict:
+    last_msg = state["messages"][-1].content
+    decision = interrupt({"draft": last_msg, "instruction": "Type 'approve' or 'reject'"})
+    return {"approved": decision == "approve"}
+
+def finalize(state: State) -> dict:
+    if state["approved"]:
+        return {"messages": [("ai", "Email sent!")]}
+    return {"messages": [("ai", "Email discarded.")]}
+
+graph = StateGraph(State)
+graph.add_node("generate", generate)
+graph.add_node("human_review", human_review)
+graph.add_node("finalize", finalize)
+graph.add_edge(START, "generate")
+graph.add_edge("generate", "human_review")
+graph.add_edge("human_review", "finalize")
+graph.add_edge("finalize", END)
+
+checkpointer = InMemorySaver()
+app = graph.compile(checkpointer=checkpointer)
+```
+
+Run and resume:
+
+```python
+config = {"configurable": {"thread_id": "email-1"}}
+
+result = app.invoke({"messages": [("human", "Write an email to cancel my subscription")]}, config=config)
+
+result = app.invoke(Command(resume="approve"), config=config)
+print(result["messages"][-1].content)
+```
+
+## Review / Edit Pattern
+
+Instead of a simple yes/no, the human can return edited content:
+
+```python
+def human_edit(state: State) -> dict:
+    draft = state["messages"][-1].content
+    edited = interrupt({"draft": draft, "instruction": "Edit the text or return as-is"})
+    return {"messages": [("human", edited)]}
+```
+
+The `interrupt` returns whatever value the human passes via `Command(resume=...)`, so the node receives the edited text and updates the state.
+
+## Key Takeaways
+
+- `interrupt(value)` pauses graph execution at any node and surfaces data for human review
+- `Command(resume=value)` continues the graph from the exact interrupt point with the human's response
+- A checkpointer is **required** — without it the graph cannot save state at the interrupt
+- The approval pattern uses `interrupt` for yes/no decisions before proceeding
+- The review/edit pattern lets humans modify the agent's output by returning edited content through `resume`

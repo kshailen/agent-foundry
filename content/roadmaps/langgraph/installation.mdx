@@ -1,0 +1,84 @@
+# Installation & First Graph
+
+Get LangGraph installed and build your first stateful graph workflow.
+
+## Prerequisites
+
+- Python 3.9 or later
+- An OpenAI API key (or another LLM provider)
+
+## Install LangGraph
+
+```bash
+pip install langgraph langchain-openai
+```
+
+## Set Up Your API Key
+
+```bash
+export OPENAI_API_KEY="sk-your-key-here"
+```
+
+## Your First Graph
+
+Let's build a simple graph that takes a topic, generates a joke about it, then evaluates whether the joke is funny.
+
+```python
+from typing import TypedDict
+from langgraph.graph import StateGraph, START, END
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+class State(TypedDict):
+    topic: str
+    joke: str
+    rating: str
+
+def generate_joke(state: State) -> dict:
+    response = llm.invoke(f"Tell a short joke about: {state['topic']}")
+    return {"joke": response.content}
+
+def rate_joke(state: State) -> dict:
+    response = llm.invoke(
+        f"Rate this joke from 1-10 and explain why in one sentence:\n{state['joke']}"
+    )
+    return {"rating": response.content}
+
+graph = StateGraph(State)
+
+graph.add_node("generate", generate_joke)
+graph.add_node("rate", rate_joke)
+
+graph.add_edge(START, "generate")
+graph.add_edge("generate", "rate")
+graph.add_edge("rate", END)
+
+app = graph.compile()
+
+result = app.invoke({"topic": "AI agents"})
+print(f"Joke: {result['joke']}")
+print(f"Rating: {result['rating']}")
+```
+
+## What Just Happened?
+
+1. **State** — we defined a `TypedDict` with `topic`, `joke`, and `rating` fields
+2. **Nodes** — two functions that take state, call the LLM, and return partial state updates
+3. **Edges** — connected `START → generate → rate → END`
+4. **Compile & Run** — `graph.compile()` produces a runnable app
+
+The state accumulates data as it flows through each node. Each node only returns the fields it wants to update.
+
+## Visualizing the Graph
+
+```python
+from IPython.display import Image
+Image(app.get_graph().draw_mermaid_png())
+```
+
+This renders a visual diagram of your workflow — extremely useful for debugging complex graphs.
+
+## Next Steps
+
+Now let's dive deeper into how state, nodes, and edges work together.

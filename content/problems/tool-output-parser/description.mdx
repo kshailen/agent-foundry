@@ -1,0 +1,36 @@
+## The Problem
+
+Your shopping assistant agent has a `scrape_product` tool that fetches product pages. The problem is that it returns **raw HTML** to the agent. The LLM wastes tokens processing HTML tags, sometimes picks up ad copy or sidebar content as product info, and occasionally misreads prices or ratings. Your job is to **parse the HTML inside the tool** and return clean, structured data so the agent gets exactly the fields it needs.
+
+## Examples
+
+### Example 1
+
+**User input:** Get me the details for the headphones at https://example.com/headphones
+
+**Current (bad) output:** The tool returns a full HTML blob including `<div class="sidebar">`, ad copy, and related product links. The LLM tries to parse it inline and sometimes reports the original price ($349.99) instead of the current price ($249.99).
+
+**Expected (good) output:** The tool returns structured data like: `Name: Wireless Noise-Cancelling Headphones | Price: $249.99 (was $349.99) | Rating: 4.5/5 (2,847 reviews) | In Stock | Description: Premium wireless headphones with active noise cancellation...` The agent presents this accurately.
+
+### Example 2
+
+**User input:** Is this product well-reviewed?
+
+**Current (bad) output:** The LLM finds a star rating buried in the HTML but misinterprets the review count because it picked up a number from the ad sidebar.
+
+**Expected (good) output:** The tool's structured output clearly separates rating (4.5) and review count (2,847), so the agent correctly says: *Yes, it has 4.5 out of 5 stars from 2,847 reviews.*
+
+## Your Task
+
+- Modify the `scrape_product` tool to parse the raw HTML and extract structured fields.
+- Return at minimum: product name, current price, rating, review count, availability, and description.
+- Strip out irrelevant content (ads, sidebars, related products).
+- The parsing logic must live inside the tool function, not in the prompt.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **No raw HTML in tool output:** The tool returns clean structured data, not HTML tags.
+- **Key fields are extracted:** The parsed output includes at least product name, price, and rating.
+- **Agent response is accurate:** The agent presents correct product details without HTML artifacts.

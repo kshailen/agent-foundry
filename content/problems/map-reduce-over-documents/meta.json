@@ -1,0 +1,57 @@
+{
+  "number": 93,
+  "title": "Map-Reduce over Documents",
+  "difficulty": "medium",
+  "categories": [
+    "orchestration",
+    "rag"
+  ],
+  "frameworks": [
+    "langgraph",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "The map phase must process documents in parallel, not one at a time",
+    "Each document must be summarized individually before the reduce step",
+    "The reduce step must aggregate all summaries into a single coherent report",
+    "The solution must handle at least 20 documents"
+  ],
+  "hints": [
+    "In LangGraph, use the Send API to dynamically fan out to one node per document, then collect results in a reduce node",
+    "Keep individual summaries short (2-3 sentences) so the reduce step has manageable input",
+    "The reduce step should synthesize themes and patterns across summaries, not just concatenate them"
+  ],
+  "starterCode": {
+    "langgraph": "from langchain_openai import ChatOpenAI\nfrom langchain_core.messages import HumanMessage, SystemMessage\nimport time\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# Simulated document corpus\ndocuments = [f\"Document {i}: This is a report about topic {chr(65 + i % 26)} covering various aspects of the subject including analysis, findings, and recommendations for Q{(i % 4) + 1} 2024.\" for i in range(20)]\n\n# BUG: Documents are processed sequentially — extremely slow for 20+ docs\n# TODO: Implement map-reduce pattern with parallel document processing\ndef process_documents(docs: list[str]) -> str:\n    start = time.time()\n    summaries = []\n\n    for doc in docs:\n        summary = llm.invoke([\n            SystemMessage(content=\"Summarize this document in 2-3 sentences.\"),\n            HumanMessage(content=doc),\n        ])\n        summaries.append(summary.content)\n\n    # Combine all summaries into final report\n    combined = \"\\n\".join(summaries)\n    report = llm.invoke([\n        SystemMessage(content=\"Synthesize these document summaries into a cohesive executive report. Identify key themes and patterns.\"),\n        HumanMessage(content=combined),\n    ])\n\n    elapsed = time.time() - start\n    return f\"[Processed {len(docs)} docs in {elapsed:.2f}s]\\n{report.content}\"\n\nresult = process_documents(documents)\nprint(result)",
+    "crewai": "from crewai import Agent, Task, Crew\nimport time\n\n# Simulated document corpus\ndocuments = [f\"Document {i}: This is a report about topic {chr(65 + i % 26)} covering various aspects of the subject including analysis, findings, and recommendations for Q{(i % 4) + 1} 2024.\" for i in range(20)]\n\nanalyst = Agent(\n    role=\"Document Analyst\",\n    goal=\"Summarize and synthesize documents\",\n    backstory=\"You are a senior research analyst who distills large document sets into actionable reports.\",\n)\n\n# BUG: Documents are processed sequentially — extremely slow for 20+ docs\n# TODO: Implement map-reduce pattern with parallel document processing\ndef process_documents(docs: list[str]) -> str:\n    start = time.time()\n    tasks = []\n\n    for doc in docs:\n        task = Task(\n            description=f\"Summarize this document in 2-3 sentences: '{doc}'\",\n            expected_output=\"A 2-3 sentence summary\",\n            agent=analyst,\n        )\n        tasks.append(task)\n\n    tasks.append(Task(\n        description=\"Synthesize all the document summaries above into a cohesive executive report. Identify key themes and patterns.\",\n        expected_output=\"An executive summary report\",\n        agent=analyst,\n    ))\n\n    crew = Crew(agents=[analyst], tasks=tasks)\n    result = crew.kickoff()\n\n    elapsed = time.time() - start\n    return f\"[Processed {len(docs)} docs in {elapsed:.2f}s]\\n{result}\"\n\nresult = process_documents(documents)\nprint(result)",
+    "openai-agents-sdk": "from agents import Agent, Runner\nimport time\n\ndocuments = [f\"Document {i}: This is a report about topic {chr(65 + i % 26)} covering various aspects of the subject including analysis, findings, and recommendations for Q{(i % 4) + 1} 2024.\" for i in range(20)]\n\nsummarizer = Agent(\n    name=\"Document Summarizer\",\n    instructions=\"Summarize this document in 2-3 sentences.\",\n)\n\n# BUG: Documents are processed sequentially — extremely slow for 20+ docs\n# TODO: Implement map-reduce pattern with parallel document processing\ndef process_documents(docs: list[str]) -> str:\n    start = time.time()\n    summaries = []\n\n    for doc in docs:\n        result = Runner.run_sync(summarizer, doc)\n        summaries.append(result.final_output)\n\n    combined = \"\\n\".join(summaries)\n    synthesizer = Agent(\n        name=\"Report Synthesizer\",\n        instructions=\"Synthesize these document summaries into a cohesive executive report. Identify key themes and patterns.\",\n    )\n    report = Runner.run_sync(synthesizer, combined)\n\n    elapsed = time.time() - start\n    return f\"[Processed {len(docs)} docs in {elapsed:.2f}s]\\n{report.final_output}\"\n\nresult = process_documents(documents)\nprint(result)"
+  },
+  "colabUrls": {
+    "langgraph": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/map-reduce-over-documents-langgraph.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/map-reduce-over-documents-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/map-reduce-over-documents-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "parallel-map-phase",
+      "label": "Parallel map phase",
+      "description": "Documents are summarized in parallel, not sequentially"
+    },
+    {
+      "id": "individual-summaries",
+      "label": "Individual summaries",
+      "description": "Each document receives its own summary before aggregation"
+    },
+    {
+      "id": "coherent-reduce-output",
+      "label": "Coherent reduce output",
+      "description": "The final report synthesizes themes across summaries rather than concatenating them"
+    },
+    {
+      "id": "handles-twenty-docs",
+      "label": "Handles 20 documents",
+      "description": "The pipeline successfully processes at least 20 documents"
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+## The Problem
+
+Your trip-planning assistant has a linear conversation model — messages only go forward. A user asks the agent to plan two trip options (Japan vs. Italy), then dives deep into Option A (Japan) with a detailed itinerary. Three turns later, they say "Go back to option B." The agent can't do it — the Japan itinerary is baked into the history, and there's no mechanism to **restore an earlier conversation state**. Your job is to add checkpoint/fork support so the user can save points in the conversation and return to them later.
+
+## Examples
+
+### Example 1
+
+**Turn 1:** Plan me a 7-day trip. Option A: Japan. Option B: Italy.
+
+**Turn 2:** Let's explore Option A — Japan. Give me a day-by-day itinerary.
+
+**Turn 3:** Add a visit to Mount Fuji on day 3.
+
+**Turn 4:** Actually, go back to where we had both options and let's explore Option B — Italy.
+
+**Current (bad) output:** The agent tries to pivot, but the Japan itinerary is in the history. It awkwardly says "Sure, let's switch to Italy" while the full Japan context bleeds through.
+
+**Expected (good) output:** The conversation state is restored to the end of Turn 1. The agent continues cleanly: "Great, let's explore Option B — Italy! Here's a 7-day itinerary…" with no Japan context leaking.
+
+### Example 2
+
+**User:** What checkpoints do I have?
+
+**Current (bad) output:** I don't understand what you mean by checkpoints.
+
+**Expected (good) output:** You have the following saved checkpoints: "both_options" (after Turn 1), "japan_itinerary" (after Turn 3).
+
+### Example 3
+
+**After restoring a checkpoint:** User continues with new messages.
+
+**Current (bad) behavior:** If restoration is naive (just appending), the history contains both the Japan branch and the new Italy branch.
+
+**Expected (good) behavior:** The history is cleanly restored to the checkpoint. New messages continue from that point only.
+
+## Your Task
+
+Implement **conversation fork handling** with checkpoints:
+
+- Allow saving named checkpoints at any point in the conversation.
+- Allow restoring a checkpoint, which reverts the conversation state to that snapshot.
+- After restoration, new messages continue from the restored state — the branch that was abandoned is removed from active history.
+- The agent should be able to list available checkpoints when asked.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Checkpoints can be saved:** The agent can save named snapshots of the conversation state.
+- **Checkpoints can be restored:** Restoring a checkpoint reverts the conversation to that exact state.
+- **Continues from restored state:** After restoration, new messages build on the restored state without leaking abandoned context.
+- **Can list available checkpoints:** The agent can tell the user which saved checkpoints are available.

@@ -1,0 +1,51 @@
+{
+  "number": 37,
+  "title": "Memory Conflict Resolution",
+  "difficulty": "medium",
+  "categories": [
+    "memory"
+  ],
+  "frameworks": [
+    "langchain",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "When a fact is updated, the old version must be replaced, not duplicated",
+    "The agent must use the most recent value when a conflict exists",
+    "The update logic must handle arbitrary fact types, not just hardcoded keys",
+    "The agent should never contradict itself within a single response"
+  ],
+  "hints": [
+    "Store facts as key-value pairs where the key identifies the fact category (e.g., 'location', 'job')",
+    "Before inserting a new fact, check if a fact with the same key already exists and overwrite it",
+    "Use the LLM to extract structured key-value pairs from user statements so you can detect conflicts automatically"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain_core.messages import HumanMessage, SystemMessage\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# BUG: Facts are appended without checking for conflicts or updates\nmemory_store = []\n\ndef add_fact(fact: str):\n    memory_store.append(fact)\n\ndef chat(user_input: str) -> str:\n    add_fact(f\"User said: {user_input}\")\n    facts_block = \"\\n\".join(memory_store)\n    messages = [\n        SystemMessage(content=f\"You are a helpful assistant. Known facts:\\n{facts_block}\"),\n        HumanMessage(content=user_input),\n    ]\n    response = llm.invoke(messages)\n    return response.content\n\n# Turn 1: User states location\nprint(chat(\"I live in New York City.\"))\n\n# Turn 2: User updates location\nprint(chat(\"Actually, I just moved to Los Angeles.\"))\n\n# Turn 3: Where does the user live? Agent sees BOTH facts and may contradict itself\nprint(chat(\"Where do I live?\"))\n\nprint(f\"\\nStored facts: {memory_store}\")",
+    "crewai": "from crewai import Agent, Task, Crew\n\n# BUG: Facts are appended without checking for conflicts or updates\nmemory_store = []\n\ndef add_fact(fact: str):\n    memory_store.append(fact)\n\nassistant = Agent(\n    role=\"Assistant\",\n    goal=\"Remember and recall facts about the user\",\n    backstory=\"You are a helpful assistant who remembers what users tell you.\",\n)\n\ndef chat(user_input: str) -> str:\n    add_fact(f\"User said: {user_input}\")\n    facts_block = \"\\n\".join(memory_store)\n    task = Task(\n        description=f\"Known facts:\\n{facts_block}\\n\\nRespond to: {user_input}\",\n        expected_output=\"A helpful response using known facts\",\n        agent=assistant,\n    )\n    crew = Crew(agents=[assistant], tasks=[task])\n    return str(crew.kickoff())\n\nprint(chat(\"I live in New York City.\"))\nprint(chat(\"Actually, I just moved to Los Angeles.\"))\nprint(chat(\"Where do I live?\"))\n\nprint(f\"\\nStored facts: {memory_store}\")",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\n# BUG: Facts are appended without checking for conflicts or updates\nmemory_store = []\n\ndef add_fact(fact: str):\n    memory_store.append(fact)\n\nagent = Agent(\n    name=\"Assistant\",\n    instructions=\"You are a helpful assistant who remembers what users tell you.\",\n)\n\ndef chat(user_input: str) -> str:\n    add_fact(f\"User said: {user_input}\")\n    facts_block = \"\\n\".join(memory_store)\n    prompt = f\"Known facts:\\n{facts_block}\\n\\nRespond to: {user_input}\"\n    result = Runner.run_sync(agent, prompt)\n    return result.final_output\n\nprint(chat(\"I live in New York City.\"))\nprint(chat(\"Actually, I just moved to Los Angeles.\"))\nprint(chat(\"Where do I live?\"))\n\nprint(f\"\\nStored facts: {memory_store}\")"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/memory-conflict-resolution-langchain.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/memory-conflict-resolution-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/memory-conflict-resolution-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "updates-replace-old",
+      "label": "Updates replace old facts",
+      "description": "When a user corrects a fact, the old value is replaced rather than both coexisting"
+    },
+    {
+      "id": "latest-value-used",
+      "label": "Uses the latest value",
+      "description": "The agent always uses the most recently stated value when answering"
+    },
+    {
+      "id": "no-contradictions",
+      "label": "No self-contradictions",
+      "description": "The agent never states conflicting information within a single response"
+    }
+  ]
+}

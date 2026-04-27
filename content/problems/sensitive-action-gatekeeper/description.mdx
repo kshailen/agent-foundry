@@ -1,0 +1,47 @@
+## The Problem
+
+Your file management agent has tools to read, delete, and send files. Currently, all tools execute immediately when the agent decides to call them — including destructive ones like `delete_file` and `send_email`. There's **no confirmation step** for sensitive actions, so a misunderstood request or a hallucinated tool call can permanently delete files or send unintended emails. Your job is to add a **gatekeeper layer** that requires user confirmation before any sensitive action executes, while letting safe actions (like reading files) proceed immediately.
+
+## Examples
+
+### Example 1
+
+**User input:** Delete the file report.pdf
+
+**Current (bad) output:** `Deleted report.pdf successfully` — the file is gone, no confirmation asked.
+
+**Expected (good) output:** *"I'm about to delete report.pdf. Are you sure? (yes/no)"* → User confirms → `Deleted report.pdf successfully`. If user declines → *"Action cancelled. report.pdf was not deleted."*
+
+### Example 2
+
+**User input:** Send an email to bob@example.com with the Q4 report
+
+**Current (bad) output:** `Email sent to bob@example.com: Q4 Report` — sent immediately without confirmation.
+
+**Expected (good) output:** *"I'm about to send an email to bob@example.com with subject 'Q4 Report'. Proceed? (yes/no)"* → Confirmation required before sending.
+
+### Example 3
+
+**User input:** Read the file notes.txt
+
+**Current (bad) output:** *(This is fine — reading is a safe action.)*
+
+**Expected (good) output:** `Contents of notes.txt: [file data]` — no confirmation needed for read operations.
+
+## Your Task
+
+Add a **sensitive action gatekeeper** so the agent:
+
+- Requires user confirmation before executing destructive tools (delete, send).
+- Lets non-destructive tools (read, search) execute immediately.
+- Shows a clear description of the pending action in the confirmation prompt.
+- Cancels the action if the user declines.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Sensitive actions require confirmation:** Delete and send tools prompt before executing.
+- **Safe tools execute immediately:** Read and search tools run without confirmation.
+- **Confirmation describes the action:** The prompt clearly states what will happen.
+- **Declined actions are not executed:** Saying "no" prevents the action from running.

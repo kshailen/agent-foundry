@@ -1,0 +1,272 @@
+# Project: Enterprise Agent with Tool Search
+
+In this project, you'll build an enterprise agent that manages 20+ tools organized into namespaces (CRM, billing, support). Instead of loading all tools upfront, the agent uses `ToolSearchTool` for on-demand discovery, `tool_namespace()` for organization, and deferred loading for efficiency. Tool guardrails enforce security policies, and model configuration optimizes costs.
+
+## Architecture Overview
+
+```
+User Query → Enterprise Agent
+                ├── ToolSearchTool (discovers relevant tools)
+                ├── CRM Namespace (customers, contacts, deals)
+                ├── Billing Namespace (invoices, payments, subscriptions)
+                └── Support Namespace (tickets, knowledge base, escalation)
+```
+
+## Step 1: Define Tool Namespaces
+
+Use `tool_namespace()` to organize tools into logical groups:
+
+```python
+from agents import function_tool, tool_namespace
+
+crm_ns = tool_namespace("crm")
+billing_ns = tool_namespace("billing")
+support_ns = tool_namespace("support")
+
+@function_tool(namespace=crm_ns)
+def get_customer(customer_id: str) -> str:
+    """Look up a customer by ID."""
+    customers = {
+        "C001": "Acme Corp (Enterprise, $50K ARR)",
+        "C002": "Globex Inc (Startup, $5K ARR)",
+        "C003": "Initech LLC (Mid-Market, $20K ARR)",
+    }
+    return customers.get(customer_id, "Customer not found")
+
+@function_tool(namespace=crm_ns)
+def list_contacts(customer_id: str) -> str:
+    """List contacts for a customer."""
+    contacts = {
+        "C001": "Alice (CEO), Bob (CTO), Carol (VP Eng)",
+        "C002": "Dave (Founder), Eve (COO)",
+    }
+    return contacts.get(customer_id, "No contacts found")
+
+@function_tool(namespace=crm_ns)
+def update_deal_stage(deal_id: str, stage: str) -> str:
+    """Update a deal's pipeline stage."""
+    return f"Deal {deal_id} moved to '{stage}'"
+
+@function_tool(namespace=crm_ns)
+def create_contact(customer_id: str, name: str, role: str, email: str) -> str:
+    """Add a new contact for a customer."""
+    return f"Contact {name} ({role}) added to customer {customer_id}"
+```
+
+## Step 2: Billing Tools
+
+```python
+@function_tool(namespace=billing_ns)
+def get_invoice(invoice_id: str) -> str:
+    """Retrieve an invoice by ID."""
+    invoices = {
+        "INV-001": "Acme Corp - $4,166.67 - Due 2025-02-01 - PAID",
+        "INV-002": "Globex Inc - $416.67 - Due 2025-02-15 - PENDING",
+        "INV-003": "Initech LLC - $1,666.67 - Due 2025-03-01 - OVERDUE",
+    }
+    return invoices.get(invoice_id, "Invoice not found")
+
+@function_tool(namespace=billing_ns)
+def list_invoices(customer_id: str) -> str:
+    """List all invoices for a customer."""
+    records = {
+        "C001": "INV-001 ($4,166.67, PAID), INV-004 ($4,166.67, PENDING)",
+        "C002": "INV-002 ($416.67, PENDING)",
+        "C003": "INV-003 ($1,666.67, OVERDUE)",
+    }
+    return records.get(customer_id, "No invoices found")
+
+@function_tool(namespace=billing_ns)
+def process_refund(invoice_id: str, amount: float, reason: str) -> str:
+    """Process a refund for an invoice."""
+    return f"Refund of ${amount} processed for {invoice_id}. Reason: {reason}"
+
+@function_tool(namespace=billing_ns)
+def update_subscription(customer_id: str, plan: str) -> str:
+    """Update a customer's subscription plan."""
+    return f"Customer {customer_id} subscription updated to '{plan}'"
+
+@function_tool(namespace=billing_ns)
+def generate_statement(customer_id: str, period: str) -> str:
+    """Generate a billing statement for a period."""
+    return f"Billing statement for {customer_id} ({period}): Total $12,500, Paid $8,333, Outstanding $4,167"
+```
+
+## Step 3: Support Tools
+
+```python
+@function_tool(namespace=support_ns)
+def create_ticket(customer_id: str, subject: str, priority: str) -> str:
+    """Create a new support ticket."""
+    return f"Ticket TKT-{hash(subject) % 1000:03d} created for {customer_id}: '{subject}' (Priority: {priority})"
+
+@function_tool(namespace=support_ns)
+def get_ticket(ticket_id: str) -> str:
+    """Get details of a support ticket."""
+    tickets = {
+        "TKT-001": "Acme Corp - API Integration Issue - HIGH - OPEN",
+        "TKT-002": "Globex Inc - Billing Question - LOW - RESOLVED",
+        "TKT-003": "Initech LLC - Downtime Report - CRITICAL - IN PROGRESS",
+    }
+    return tickets.get(ticket_id, "Ticket not found")
+
+@function_tool(namespace=support_ns)
+def search_knowledge_base(query: str) -> str:
+    """Search the support knowledge base."""
+    articles = {
+        "api": "KB-101: API Rate Limits & Best Practices",
+        "billing": "KB-201: Understanding Your Invoice",
+        "downtime": "KB-301: Service Status & Incident Response",
+        "integration": "KB-102: Integration Setup Guide",
+    }
+    results = [v for k, v in articles.items() if k in query.lower()]
+    return "; ".join(results) if results else "No matching articles found"
+
+@function_tool(namespace=support_ns)
+def escalate_ticket(ticket_id: str, reason: str) -> str:
+    """Escalate a ticket to a senior support engineer."""
+    return f"Ticket {ticket_id} escalated. Reason: {reason}"
+
+@function_tool(namespace=support_ns)
+def update_ticket_status(ticket_id: str, status: str) -> str:
+    """Update a ticket's status."""
+    return f"Ticket {ticket_id} status updated to '{status}'"
+```
+
+## Step 4: Deferred Loading and ToolSearchTool
+
+Use `defer_loading=True` and `ToolSearchTool` so the agent only loads tools when they're relevant:
+
+```python
+from agents import Agent, ToolSearchTool
+
+all_tools = [
+    get_customer, list_contacts, update_deal_stage, create_contact,
+    get_invoice, list_invoices, process_refund, update_subscription, generate_statement,
+    create_ticket, get_ticket, search_knowledge_base, escalate_ticket, update_ticket_status,
+]
+
+enterprise_agent = Agent(
+    name="Enterprise Agent",
+    instructions=(
+        "You are an enterprise operations agent with access to CRM, billing, and support tools. "
+        "Use the tool search to find the right tool for each request. "
+        "Always look up customer information before performing operations. "
+        "For refunds over $1,000, explain the policy before proceeding."
+    ),
+    tools=[
+        ToolSearchTool(
+            tools=all_tools,
+            defer_loading=True,
+        ),
+    ],
+)
+```
+
+## Step 5: Tool Guardrails for Security
+
+Add tool guardrails to enforce security policies:
+
+```python
+from agents import tool_input_guardrail, ToolGuardrailFunctionOutput
+
+@tool_input_guardrail
+async def enforce_refund_limit(ctx, agent, tool_name, tool_input):
+    """Block refunds over $5,000 without manager approval."""
+    if tool_name == "process_refund":
+        amount = tool_input.get("amount", 0)
+        if amount > 5000:
+            return ToolGuardrailFunctionOutput.reject_content(
+                f"Refund of ${amount} exceeds the $5,000 auto-approval limit. "
+                f"Please contact a manager for approval."
+            )
+    return ToolGuardrailFunctionOutput.allow()
+
+@tool_input_guardrail
+async def audit_sensitive_operations(ctx, agent, tool_name, tool_input):
+    """Log all sensitive operations for audit trail."""
+    sensitive_tools = ["process_refund", "update_subscription", "escalate_ticket"]
+    if tool_name in sensitive_tools:
+        print(f"[AUDIT] {tool_name} called with args: {tool_input}")
+    return ToolGuardrailFunctionOutput.allow()
+
+enterprise_agent = Agent(
+    name="Enterprise Agent",
+    instructions=(
+        "You are an enterprise operations agent with access to CRM, billing, and support tools. "
+        "Use the tool search to find the right tool for each request."
+    ),
+    tools=[
+        ToolSearchTool(tools=all_tools, defer_loading=True),
+    ],
+    tool_input_guardrails=[enforce_refund_limit, audit_sensitive_operations],
+)
+```
+
+## Step 6: Model Configuration for Cost Optimization
+
+Use different models for different complexity levels:
+
+```python
+from agents import Runner, RunConfig, ModelSettings
+
+enterprise_agent = Agent(
+    name="Enterprise Agent",
+    instructions=(
+        "You are an enterprise operations agent with access to CRM, billing, and support tools. "
+        "Use the tool search to find the right tool for each request."
+    ),
+    tools=[
+        ToolSearchTool(tools=all_tools, defer_loading=True),
+    ],
+    tool_input_guardrails=[enforce_refund_limit, audit_sensitive_operations],
+    model_settings=ModelSettings(
+        temperature=0.1,
+        parallel_tool_calls=True,
+    ),
+)
+
+simple_config = RunConfig(model="gpt-4o-mini")
+complex_config = RunConfig(model="gpt-4o")
+
+simple_result = await Runner.run(
+    enterprise_agent,
+    "Look up customer C001",
+    run_config=simple_config,
+)
+print(f"Simple: {simple_result.final_output}")
+
+complex_result = await Runner.run(
+    enterprise_agent,
+    "Customer C003 has an overdue invoice. Create a support ticket, search the knowledge base for billing info, and escalate if needed.",
+    run_config=complex_config,
+)
+print(f"Complex: {complex_result.final_output}")
+```
+
+## Step 7: Running the Enterprise Agent
+
+```python
+queries = [
+    "Who are the contacts at Acme Corp?",
+    "Show me all invoices for Globex Inc.",
+    "Process a $500 refund for INV-002 because of a service outage.",
+    "Create a high priority ticket for Initech about their overdue invoice.",
+    "Search the knowledge base for API rate limit information.",
+]
+
+for query in queries:
+    print(f"\n{'='*60}")
+    print(f"Query: {query}")
+    result = await Runner.run(enterprise_agent, query, run_config=simple_config)
+    print(f"Response: {result.final_output}")
+```
+
+## Key Takeaways
+
+- Use `tool_namespace()` to organize large tool sets into logical groups (CRM, billing, support)
+- Use `ToolSearchTool` with `defer_loading=True` so the agent discovers and loads tools on demand
+- Apply `@tool_input_guardrail` for security policies like refund limits and audit logging
+- Use `ModelSettings` with low temperature for deterministic enterprise operations
+- Use `RunConfig(model=)` to route simple queries to cheaper models and complex queries to stronger models
+- Combine tool search, guardrails, and model configuration for a production-ready enterprise agent

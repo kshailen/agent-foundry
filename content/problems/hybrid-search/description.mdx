@@ -1,0 +1,47 @@
+## The Problem
+
+Your product catalog RAG agent uses vector similarity search to find relevant documents. This works well for natural language queries like "What tools do you offer for calibration?" but **fails for exact term lookups** like product codes (`SKU-1148`) and IDs. Vector embeddings capture semantic meaning, not exact strings—so searching for `SKU-1148` might return a completely different product whose description is more semantically similar. Your job is to implement **hybrid search** that combines keyword-based matching (for exact terms) with vector search (for semantic understanding).
+
+## Examples
+
+### Example 1
+
+**User input:** What is the price of SKU-1148?
+
+**Current (bad) output:** Returns information about a different product because vector similarity matched the wrong document—the embedding for "SKU-1148" doesn't reliably map to the right product.
+
+**Expected (good) output:** Product SKU-1148 (Precision calibration tool) is priced at $129.00.
+
+### Example 2
+
+**User input:** Tell me about your calibration products.
+
+**Current (bad) output:** *(This works okay with vector search since it's a semantic query.)*
+
+**Expected (good) output:** We offer a Precision calibration tool (SKU-1148) priced at $129.00 with an accuracy of ±0.01mm.
+
+### Example 3
+
+**User input:** Compare SKU-7291 and SKU-3364.
+
+**Current (bad) output:** Retrieves wrong products because vector search doesn't reliably match exact SKU codes.
+
+**Expected (good) output:** SKU-7291 is an Industrial-grade widget ($45.99, 2.3kg) and SKU-3364 is a Heavy-duty mounting bracket ($18.50, stainless steel).
+
+## Your Task
+
+Implement a hybrid search pipeline that:
+
+- Adds a keyword-based search method (e.g., BM25) alongside the existing vector search.
+- Reliably finds documents containing exact terms like product codes and IDs.
+- Preserves semantic search capabilities for natural language queries.
+- Merges and deduplicates results from both search methods.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Implements keyword search:** A keyword-based search method (e.g., BM25) is implemented alongside vector search.
+- **Finds exact term matches:** Product codes, SKUs, and IDs are reliably found via keyword matching.
+- **Semantic search still works:** Natural language queries still return relevant results via vector similarity.
+- **Merges results from both methods:** Results from keyword and vector search are combined and deduplicated.

@@ -1,0 +1,51 @@
+{
+  "number": 36,
+  "title": "Selective Memory Recall",
+  "difficulty": "medium",
+  "categories": [
+    "memory"
+  ],
+  "frameworks": [
+    "langchain",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "The agent must not dump all stored facts into the prompt",
+    "Retrieval must be based on semantic relevance to the current query",
+    "The memory store must support at least 100 facts",
+    "Only the top-K most relevant facts should be injected into context"
+  ],
+  "hints": [
+    "Use embeddings to convert each stored fact into a vector, then retrieve by cosine similarity",
+    "A simple in-memory vector store is sufficient — no external database needed",
+    "Retrieve the top 3-5 most relevant facts for each query and inject them as context before the user's question"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain_core.messages import HumanMessage, SystemMessage\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# A knowledge base of 100 facts\nfacts = [\n    \"The user's name is Jordan.\",\n    \"Jordan works at a startup called DataFlow.\",\n    \"Jordan's favorite programming language is Python.\",\n    \"The company DataFlow builds ETL pipelines.\",\n    \"Jordan has a meeting with the VP of Engineering every Monday.\",\n    \"The office is located in San Francisco.\",\n    \"Jordan prefers dark mode in all applications.\",\n    \"The team uses Slack for communication.\",\n    \"Jordan's manager is named Priya.\",\n    \"The company was founded in 2021.\",\n] + [f\"Fact {i}: Random trivia item number {i} about miscellaneous topics.\" for i in range(11, 101)]\n\n# BUG: Dumps ALL 100 facts into the prompt regardless of the query\nfacts_block = \"\\n\".join(facts)\n\ndef chat(user_input: str) -> str:\n    messages = [\n        SystemMessage(content=f\"You are a helpful assistant. Here is everything you know:\\n{facts_block}\"),\n        HumanMessage(content=user_input),\n    ]\n    response = llm.invoke(messages)\n    return response.content\n\nprint(chat(\"Who is my manager?\"))\nprint(chat(\"What programming language do I like?\"))\nprint(chat(\"Tell me about DataFlow.\"))",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai import LLM\n\nllm = LLM(model=\"gpt-4o-mini\")\n\nfacts = [\n    \"The user's name is Jordan.\",\n    \"Jordan works at a startup called DataFlow.\",\n    \"Jordan's favorite programming language is Python.\",\n    \"The company DataFlow builds ETL pipelines.\",\n    \"Jordan has a meeting with the VP of Engineering every Monday.\",\n    \"The office is located in San Francisco.\",\n    \"Jordan prefers dark mode in all applications.\",\n    \"The team uses Slack for communication.\",\n    \"Jordan's manager is named Priya.\",\n    \"The company was founded in 2021.\",\n] + [f\"Fact {i}: Random trivia item number {i} about miscellaneous topics.\" for i in range(11, 101)]\n\n# BUG: Dumps ALL 100 facts into the prompt regardless of the query\nfacts_block = \"\\n\".join(facts)\n\ndef chat(user_input: str) -> str:\n    agent = Agent(\n        role=\"Helpful Assistant\",\n        goal=\"Answer the user's question accurately\",\n        backstory=f\"You are a helpful assistant. Here is everything you know:\\n{facts_block}\",\n        llm=llm,\n    )\n    task = Task(\n        description=user_input,\n        expected_output=\"A direct answer to the question\",\n        agent=agent,\n    )\n    crew = Crew(agents=[agent], tasks=[task])\n    result = crew.kickoff()\n    return str(result)\n\nprint(chat(\"Who is my manager?\"))\nprint(chat(\"What programming language do I like?\"))\nprint(chat(\"Tell me about DataFlow.\"))",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\nfacts = [\n    \"The user's name is Jordan.\",\n    \"Jordan works at a startup called DataFlow.\",\n    \"Jordan's favorite programming language is Python.\",\n    \"The company DataFlow builds ETL pipelines.\",\n    \"Jordan has a meeting with the VP of Engineering every Monday.\",\n    \"The office is located in San Francisco.\",\n    \"Jordan prefers dark mode in all applications.\",\n    \"The team uses Slack for communication.\",\n    \"Jordan's manager is named Priya.\",\n    \"The company was founded in 2021.\",\n] + [f\"Fact {i}: Random trivia item number {i} about miscellaneous topics.\" for i in range(11, 101)]\n\n# BUG: Dumps ALL 100 facts into the prompt regardless of the query\nfacts_block = \"\\n\".join(facts)\n\nagent = Agent(\n    name=\"Assistant\",\n    instructions=f\"You are a helpful assistant. Here is everything you know:\\n{facts_block}\",\n)\n\ndef chat(user_input: str) -> str:\n    result = Runner.run_sync(agent, user_input)\n    return result.final_output\n\nprint(chat(\"Who is my manager?\"))\nprint(chat(\"What programming language do I like?\"))\nprint(chat(\"Tell me about DataFlow.\"))"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/selective-memory-recall-langchain.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/selective-memory-recall-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/selective-memory-recall-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "relevant-retrieval",
+      "label": "Retrieves relevant facts",
+      "description": "Only facts semantically related to the current query are injected into the prompt"
+    },
+    {
+      "id": "no-full-dump",
+      "label": "Does not dump all facts",
+      "description": "The prompt contains only a small subset of facts, not the entire knowledge base"
+    },
+    {
+      "id": "correct-answers",
+      "label": "Answers correctly",
+      "description": "The agent provides accurate answers based on the retrieved relevant facts"
+    }
+  ]
+}

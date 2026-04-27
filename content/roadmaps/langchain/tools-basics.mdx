@@ -1,0 +1,150 @@
+# Tools Basics
+
+Tools give agents the ability to interact with the outside world — call APIs, query databases, perform calculations, or access any Python function. In LangChain, a tool is a function with a schema that tells the LLM what it does and what arguments it expects.
+
+## The @tool Decorator
+
+The simplest way to create a tool is with the `@tool` decorator:
+
+```python
+from langchain_core.tools import tool
+
+@tool
+def multiply(a: int, b: int) -> int:
+    """Multiply two numbers together."""
+    return a * b
+```
+
+This creates a tool that the LLM can call. Let's inspect its schema:
+
+```python
+print(multiply.name)         # "multiply"
+print(multiply.description)  # "Multiply two numbers together."
+print(multiply.args_schema.model_json_schema())
+```
+
+## Type Hints Generate Schemas
+
+LangChain uses your function's type hints to automatically generate the tool's input schema. The LLM reads this schema to understand what arguments to pass:
+
+```python
+@tool
+def search_products(query: str, max_results: int = 5) -> str:
+    """Search for products matching the query."""
+    return f"Found {max_results} products for '{query}'"
+```
+
+The generated schema tells the LLM that `query` is a required string and `max_results` is an optional integer defaulting to 5.
+
+## Docstrings as Descriptions
+
+The function's docstring becomes the tool description — the most important piece of information the LLM uses to decide when to call the tool:
+
+```python
+@tool
+def get_stock_price(ticker: str) -> str:
+    """Get the current stock price for a given ticker symbol.
+
+    Use this when the user asks about stock prices, market values,
+    or share prices for a specific company.
+    """
+    return f"${ticker}: $142.50"
+```
+
+Write clear, specific docstrings. Vague descriptions lead to the LLM using the tool incorrectly or not at all.
+
+## Custom Tool Names
+
+By default, the tool name matches the function name. Override it by passing a name to the decorator:
+
+```python
+@tool("stock_lookup")
+def get_stock_price(ticker: str) -> str:
+    """Look up the current price of a stock."""
+    return f"${ticker}: $142.50"
+
+print(get_stock_price.name)  # "stock_lookup"
+```
+
+## Tool Return Types
+
+Tools can return different types depending on your use case:
+
+### Returning a String
+
+The simplest return type. The string is passed directly to the LLM:
+
+```python
+@tool
+def greet(name: str) -> str:
+    """Greet a user by name."""
+    return f"Hello, {name}!"
+```
+
+### Returning a Dictionary
+
+Return structured data that the LLM can interpret:
+
+```python
+@tool
+def get_user_info(user_id: str) -> dict:
+    """Get information about a user."""
+    return {
+        "name": "Alice",
+        "email": "alice@example.com",
+        "plan": "premium",
+    }
+```
+
+The dictionary is serialized and included in the `ToolMessage` content.
+
+## Attaching Tools to an Agent
+
+Once defined, pass tools to `create_react_agent`:
+
+```python
+from langchain.chat_models import init_chat_model
+from langgraph.prebuilt import create_react_agent
+
+model = init_chat_model("gpt-4o-mini", model_provider="openai")
+
+agent = create_react_agent(
+    model=model,
+    tools=[multiply, search_products, get_stock_price],
+    prompt="You are a helpful assistant with access to several tools.",
+)
+```
+
+The agent can now call any of the attached tools during a conversation:
+
+```python
+from langchain_core.messages import HumanMessage
+
+result = agent.invoke({"messages": [HumanMessage(content="What is 15 times 23?")]})
+print(result["messages"][-1].content)
+```
+
+## Multiple Tools in Action
+
+When an agent has multiple tools, it picks the right one based on the user's question:
+
+```python
+result = agent.invoke({
+    "messages": [HumanMessage(content="Search for laptop stands and also tell me what 12 times 8 is.")]
+})
+
+for msg in result["messages"]:
+    if msg.type == "tool":
+        print(f"Tool called: {msg.name} -> {msg.content}")
+```
+
+The LLM may call multiple tools in sequence or even in a single turn to answer a complex question.
+
+## Key Takeaways
+
+- The `@tool` decorator converts any Python function into a LangChain tool
+- Type hints are used to generate input schemas that the LLM reads
+- Docstrings serve as tool descriptions — write them clearly and specifically
+- Tools can return strings or dictionaries
+- Pass tools to `create_react_agent` to give agents the ability to use them
+- Agents automatically choose the right tool based on the user's query

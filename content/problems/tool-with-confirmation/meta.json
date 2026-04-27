@@ -1,0 +1,52 @@
+{
+  "number": 19,
+  "title": "Tool with Confirmation",
+  "difficulty": "easy",
+  "categories": [
+    "tool-calling",
+    "guardrails"
+  ],
+  "frameworks": [
+    "openai-agents-sdk",
+    "langchain",
+    "crewai"
+  ],
+  "constraints": [
+    "The send_email tool must not execute without explicit user confirmation",
+    "The confirmation step must show the recipient and subject before proceeding",
+    "The agent must handle both 'yes' and 'no' confirmation responses",
+    "No emails should be sent if the user declines"
+  ],
+  "hints": [
+    "Split the flow into two steps: a preview step that shows what will be sent, and a send step that executes only after approval",
+    "Consider using a human-in-the-loop pattern where the agent pauses and asks the user to confirm before calling the side-effect tool",
+    "You can implement confirmation as a separate tool that checks user intent, or by adding a confirmation parameter to the existing tool"
+  ],
+  "starterCode": {
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom agents.tool import function_tool\n\n# BUG: This tool sends the email immediately with no confirmation\n# TODO: Add a confirmation step so the user can review before sending\n\n@function_tool\ndef send_email(to: str, subject: str, body: str) -> str:\n    \"\"\"Send an email to the specified recipient.\"\"\"\n    # Simulated send\n    print(f\"EMAIL SENT to {to}: {subject}\")\n    return f\"Email sent successfully to {to} with subject '{subject}'\"\n\nagent = Agent(\n    name=\"Email Assistant\",\n    instructions=\"You are an assistant that helps users send emails. When asked to send an email, do it immediately.\",\n    tools=[send_email],\n)\n\nresult = Runner.run_sync(agent, \"Send an email to bob@example.com with subject 'Meeting Tomorrow' and body 'Hi Bob, can we meet at 3pm?'\")\nprint(result.final_output)",
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain.agents import AgentExecutor, create_tool_calling_agent\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom langchain_core.tools import tool\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# BUG: This tool sends the email immediately with no confirmation\n# TODO: Add a confirmation step so the user can review before sending\n\n@tool\ndef send_email(to: str, subject: str, body: str) -> str:\n    \"\"\"Send an email to the specified recipient.\"\"\"\n    print(f\"EMAIL SENT to {to}: {subject}\")\n    return f\"Email sent successfully to {to} with subject '{subject}'\"\n\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are an assistant that helps users send emails. When asked to send an email, do it immediately.\"),\n    (\"human\", \"{input}\"),\n    (\"placeholder\", \"{agent_scratchpad}\"),\n])\n\nagent = create_tool_calling_agent(llm, [send_email], prompt)\nexecutor = AgentExecutor(agent=agent, tools=[send_email])\n\nresult = executor.invoke({\"input\": \"Send an email to bob@example.com with subject 'Meeting Tomorrow' and body 'Hi Bob, can we meet at 3pm?'\"})\nprint(result[\"output\"])",
+    "crewai": "from crewai import Agent, Task, Crew, Process\nfrom crewai.tools import tool\n\n# BUG: This tool sends the email immediately with no confirmation\n# TODO: Add a confirmation step so the user can review before sending\n\n@tool\ndef send_email(to: str, subject: str, body: str) -> str:\n    \"\"\"Send an email to the specified recipient.\"\"\"\n    print(f\"EMAIL SENT to {to}: {subject}\")\n    return f\"Email sent successfully to {to} with subject '{subject}'\"\n\nemail_agent = Agent(\n    role=\"Email Assistant\",\n    goal=\"Help users compose and send emails.\",\n    backstory=\"You are an assistant that helps users send emails. When asked to send an email, do it immediately.\",\n    tools=[send_email],\n)\n\ntask = Task(\n    description=\"Send an email to bob@example.com with subject 'Meeting Tomorrow' and body 'Hi Bob, can we meet at 3pm?'\",\n    expected_output=\"Confirmation that the email was sent successfully.\",\n    agent=email_agent,\n)\n\ncrew = Crew(agents=[email_agent], tasks=[task], process=Process.sequential)\nresult = crew.kickoff()\nprint(result)"
+  },
+  "colabUrls": {
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/tool-with-confirmation-openai.ipynb",
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/tool-with-confirmation-langchain.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/tool-with-confirmation-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "no-auto-send",
+      "label": "No automatic sending",
+      "description": "The email is never sent without the user explicitly confirming"
+    },
+    {
+      "id": "preview-shown",
+      "label": "Preview shown before sending",
+      "description": "The agent displays the recipient, subject, and body for review before executing"
+    },
+    {
+      "id": "decline-handled",
+      "label": "Decline is respected",
+      "description": "If the user says no, the email is not sent and the agent acknowledges the cancellation"
+    }
+  ]
+}

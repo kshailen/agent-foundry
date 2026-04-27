@@ -1,0 +1,52 @@
+{
+  "number": 39,
+  "title": "Scoped Memory",
+  "difficulty": "medium",
+  "categories": [
+    "memory",
+    "orchestration"
+  ],
+  "frameworks": [
+    "langgraph",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "Each agent must have its own private memory scope",
+    "A shared scope must exist for cross-agent communication",
+    "Private memory of agent A must never be visible to agent B",
+    "The shared scope should only contain explicitly published information"
+  ],
+  "hints": [
+    "Use a dictionary with namespace keys (e.g., 'agent_a_private', 'agent_b_private', 'shared') to separate memory scopes",
+    "Each agent should only read from its own private scope and the shared scope",
+    "Create helper functions like write_private(), write_shared(), and read_context() that enforce scope boundaries"
+  ],
+  "starterCode": {
+    "langgraph": "from langchain_openai import ChatOpenAI\nfrom langgraph.graph import StateGraph, START, END\nfrom typing import TypedDict\nfrom langchain_core.messages import HumanMessage, SystemMessage\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# BUG: All agents share a single global memory — no scoping\nglobal_memory = []\n\nclass State(TypedDict):\n    task: str\n    result: str\n\ndef researcher(state: State) -> State:\n    global_memory.append(\"[Researcher internal] Raw data contains PII: user SSN 123-45-6789\")\n    global_memory.append(\"[Researcher] Found 3 relevant articles about AI safety.\")\n    context = \"\\n\".join(global_memory)\n    messages = [\n        SystemMessage(content=f\"You are a researcher. Memory:\\n{context}\"),\n        HumanMessage(content=state[\"task\"]),\n    ]\n    response = llm.invoke(messages)\n    return {\"result\": response.content}\n\ndef writer(state: State) -> State:\n    global_memory.append(\"[Writer internal] Draft has grammatical issues, fixing...\")\n    global_memory.append(\"[Writer] Completed first draft of the report.\")\n    # BUG: Writer can see researcher's private notes including PII\n    context = \"\\n\".join(global_memory)\n    messages = [\n        SystemMessage(content=f\"You are a writer. Memory:\\n{context}\"),\n        HumanMessage(content=f\"Write a report based on: {state['result']}\"),\n    ]\n    response = llm.invoke(messages)\n    return {\"result\": response.content}\n\ngraph = StateGraph(State)\ngraph.add_node(\"researcher\", researcher)\ngraph.add_node(\"writer\", writer)\ngraph.add_edge(START, \"researcher\")\ngraph.add_edge(\"researcher\", \"writer\")\ngraph.add_edge(\"writer\", END)\napp = graph.compile()\n\nresult = app.invoke({\"task\": \"Research AI safety trends and write a summary.\"})\nprint(result[\"result\"])\nprint(f\"\\nGlobal memory (visible to all): {global_memory}\")",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\n# BUG: All agents share a single global memory — no scoping\nglobal_memory = []\n\ndef make_researcher():\n    def run_researcher(task: str) -> str:\n        global_memory.append(\"[Researcher internal] Raw data contains PII: user SSN 123-45-6789\")\n        global_memory.append(\"[Researcher] Found 3 relevant articles about AI safety.\")\n        context = \"\\n\".join(global_memory)\n        agent = Agent(\n            name=\"Researcher\",\n            instructions=f\"You are a researcher. Memory:\\n{context}\",\n        )\n        result = Runner.run_sync(agent, task)\n        return result.final_output\n    return run_researcher\n\ndef make_writer():\n    def run_writer(research: str) -> str:\n        global_memory.append(\"[Writer internal] Draft has grammatical issues, fixing...\")\n        global_memory.append(\"[Writer] Completed first draft of the report.\")\n        # BUG: Writer can see researcher's private notes including PII\n        context = \"\\n\".join(global_memory)\n        agent = Agent(\n            name=\"Writer\",\n            instructions=f\"You are a writer. Memory:\\n{context}\",\n        )\n        result = Runner.run_sync(agent, f\"Write a report based on: {research}\")\n        return result.final_output\n    return run_writer\n\nresearcher = make_researcher()\nwriter = make_writer()\n\nresearch_output = researcher(\"Research AI safety trends.\")\nfinal_report = writer(research_output)\nprint(final_report)\nprint(f\"\\nGlobal memory (visible to all): {global_memory}\")",
+    "crewai": "from crewai import Agent, Task, Crew, Process\nfrom crewai import LLM\n\nllm = LLM(model=\"gpt-4o-mini\")\n\n# BUG: All agents share a single global memory — no scoping\nglobal_memory = []\n\nglobal_memory.append(\"[Researcher internal] Raw data contains PII: user SSN 123-45-6789\")\nglobal_memory.append(\"[Researcher] Found 3 relevant articles about AI safety.\")\n\nresearcher = Agent(\n    role=\"Researcher\",\n    goal=\"Research AI safety trends\",\n    backstory=\"You are a thorough researcher.\",\n    llm=llm,\n)\n\nresearch_task = Task(\n    description=\"Research AI safety trends. Memory:\\n\" + \"\\n\".join(global_memory),\n    expected_output=\"Research findings on AI safety\",\n    agent=researcher,\n)\n\nglobal_memory.append(\"[Writer internal] Draft has grammatical issues, fixing...\")\nglobal_memory.append(\"[Writer] Completed first draft of the report.\")\n\nwriter = Agent(\n    role=\"Writer\",\n    goal=\"Write a report from research findings\",\n    backstory=\"You are a skilled writer.\",\n    llm=llm,\n)\n\n# BUG: Writer can see researcher's private notes including PII\nwrite_task = Task(\n    description=\"Write a report based on research. Memory:\\n\" + \"\\n\".join(global_memory),\n    expected_output=\"A polished report\",\n    agent=writer,\n)\n\ncrew = Crew(\n    agents=[researcher, writer],\n    tasks=[research_task, write_task],\n    process=Process.sequential,\n)\n\nresult = crew.kickoff()\nprint(result)\nprint(f\"\\nGlobal memory (visible to all): {global_memory}\")"
+  },
+  "colabUrls": {
+    "langgraph": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/scoped-memory-langgraph.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/scoped-memory-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/scoped-memory-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "private-isolation",
+      "label": "Private memory is isolated",
+      "description": "Agent A's private memory is never visible to agent B"
+    },
+    {
+      "id": "shared-scope-works",
+      "label": "Shared scope enables collaboration",
+      "description": "Agents can publish information to a shared scope that other agents can read"
+    },
+    {
+      "id": "no-pii-leak",
+      "label": "Sensitive data stays private",
+      "description": "Internal notes and sensitive data (like PII) in private scope never leak to other agents"
+    }
+  ]
+}

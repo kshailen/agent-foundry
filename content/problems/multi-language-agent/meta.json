@@ -1,0 +1,50 @@
+{
+  "number": 11,
+  "title": "Multi-Language Agent",
+  "difficulty": "medium",
+  "categories": [
+    "prompt-design"
+  ],
+  "frameworks": [
+    "langchain",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "You may only modify the system prompt or agent instructions",
+    "Tool call arguments must always be in English",
+    "The agent must detect the user's language from their message"
+  ],
+  "hints": [
+    "Instruct the agent to detect the language of the user's message and respond in the same language",
+    "Add an explicit rule: 'When calling tools, always translate parameters to English'",
+    "Include an example showing a Spanish user query, an English tool call, and a Spanish response"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain.agents import AgentExecutor, create_tool_calling_agent\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom langchain_core.tools import tool\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n@tool\ndef search_products(query: str) -> str:\n    \"\"\"Search for products in the catalog. Query must be in English.\"\"\"\n    products = {\n        \"laptop\": \"MacBook Pro 14\\\" - $1,999\",\n        \"headphones\": \"Sony WH-1000XM5 - $349\",\n        \"keyboard\": \"Keychron K2 - $89\",\n    }\n    for key, val in products.items():\n        if key in query.lower():\n            return val\n    return f\"No products found for: {query}\"\n\ntools = [search_products]\n\n# BUG: No language handling — agent mixes languages in tool calls and responses\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a shopping assistant. Help users find products.\"),\n    (\"human\", \"{input}\"),\n    (\"placeholder\", \"{agent_scratchpad}\"),\n])\n\nagent = create_tool_calling_agent(llm, tools, prompt)\nexecutor = AgentExecutor(agent=agent, tools=tools)\n\n# Test 1: Spanish user — should respond in Spanish, tool call in English\nresult1 = executor.invoke({\"input\": \"Busco unos auriculares buenos\"})\nprint(\"Spanish query:\", result1[\"output\"])\n\n# Test 2: French user — should respond in French, tool call in English\nresult2 = executor.invoke({\"input\": \"Je cherche un clavier mécanique\"})\nprint(\"French query:\", result2[\"output\"])\n\n# Test 3: English user — everything in English\nresult3 = executor.invoke({\"input\": \"I need a good laptop\"})\nprint(\"English query:\", result3[\"output\"])",
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom agents.tool import function_tool\n\n@function_tool\ndef search_products(query: str) -> str:\n    \"\"\"Search for products in the catalog. Query must be in English.\"\"\"\n    products = {\n        \"laptop\": \"MacBook Pro 14\\\" - $1,999\",\n        \"headphones\": \"Sony WH-1000XM5 - $349\",\n        \"keyboard\": \"Keychron K2 - $89\",\n    }\n    for key, val in products.items():\n        if key in query.lower():\n            return val\n    return f\"No products found for: {query}\"\n\n# BUG: No language handling — agent mixes languages in tool calls and responses\nagent = Agent(\n    name=\"Shopping Assistant\",\n    instructions=\"You are a shopping assistant. Help users find products.\",\n    tools=[search_products],\n)\n\n# Test 1: Spanish user — should respond in Spanish, tool call in English\nresult1 = Runner.run_sync(agent, \"Busco unos auriculares buenos\")\nprint(\"Spanish query:\", result1.final_output)\n\n# Test 2: French user — should respond in French, tool call in English\nresult2 = Runner.run_sync(agent, \"Je cherche un clavier mécanique\")\nprint(\"French query:\", result2.final_output)\n\n# Test 3: English user — everything in English\nresult3 = Runner.run_sync(agent, \"I need a good laptop\")\nprint(\"English query:\", result3.final_output)",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai.tools import tool\n\n@tool\ndef search_products(query: str) -> str:\n    \"\"\"Search for products in the catalog. Query must be in English.\"\"\"\n    products = {\n        \"laptop\": \"MacBook Pro 14\\\" - $1,999\",\n        \"headphones\": \"Sony WH-1000XM5 - $349\",\n        \"keyboard\": \"Keychron K2 - $89\",\n    }\n    for key, val in products.items():\n        if key in query.lower():\n            return val\n    return f\"No products found for: {query}\"\n\n# BUG: No language handling — agent mixes languages in tool calls and responses\nshopping_agent = Agent(\n    role=\"Shopping Assistant\",\n    goal=\"Help users find products\",\n    backstory=\"You are a shopping assistant.\",\n    tools=[search_products],\n    verbose=True,\n)\n\ntask = Task(\n    description=\"Respond to: Busco unos auriculares buenos\",\n    expected_output=\"Product recommendation in the user's language\",\n    agent=shopping_agent,\n)\n\ncrew = Crew(agents=[shopping_agent], tasks=[task], verbose=True)\nresult = crew.kickoff()\nprint(result)"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/multi-language-agent-langchain.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/multi-language-agent-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/multi-language-agent-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "responds-in-user-language",
+      "label": "Responds in user's language",
+      "description": "The agent detects the user's language and responds in the same language"
+    },
+    {
+      "id": "tool-calls-in-english",
+      "label": "Tool calls always in English",
+      "description": "All tool call arguments are in English regardless of the user's language"
+    },
+    {
+      "id": "handles-language-switching",
+      "label": "Handles language switching",
+      "description": "The agent correctly switches response language when the user changes languages"
+    }
+  ]
+}

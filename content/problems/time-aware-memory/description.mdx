@@ -1,0 +1,53 @@
+## The Problem
+
+Your assistant stores facts from conversation but **ignores when they happened**. The user says "I had a meeting today" on Monday and "I submitted a report today" on Tuesday. On Wednesday they ask "What did I do yesterday?" — but the agent has no timestamps, so it cannot distinguish Monday's events from Tuesday's. Relative references like "yesterday," "last week," and "this morning" are meaningless without temporal anchoring. Your job is to make the memory **time-aware**.
+
+## Examples
+
+### Example 1
+
+**User input (Monday):** I had a meeting with the design team today.
+
+**User input (Tuesday):** I submitted the Q3 report today.
+
+**User input (Wednesday):** What did I do yesterday?
+
+**Current (bad) output:** You had a meeting with the design team and submitted the Q3 report. (Conflates Monday and Tuesday events.)
+
+**Expected (good) output:** Yesterday (Tuesday) you submitted the Q3 report.
+
+### Example 2
+
+**User input (Jan 10):** I started the new project today.
+
+**User input (Jan 17):** What happened last week?
+
+**Current (bad) output:** I don't have information about specific dates. Could you be more specific?
+
+**Expected (good) output:** Last week (around January 10th) you started the new project.
+
+### Example 3
+
+**User input:** What have I done in the last 3 days?
+
+**Current (bad) output:** Here is everything you've ever mentioned… (dumps all facts regardless of time.)
+
+**Expected (good) output:** A filtered list of only the events from the past 3 days, with dates.
+
+## Your Task
+
+Make the agent's memory **time-aware**:
+
+- Attach a timestamp to every fact when it is stored.
+- Include the current date/time in the system prompt so the agent can interpret relative references.
+- Resolve relative time expressions ("yesterday," "last week") to actual date ranges.
+- Support retrieval of facts filtered by time range.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Facts are timestamped:** Every stored fact includes the date/time when it was recorded.
+- **Relative time references resolved:** Queries like "yesterday" or "last week" resolve to correct actual dates.
+- **Time-range retrieval works:** The agent can filter and return facts from a specific time window.
+- **Agent knows current date:** The agent uses the real current date/time to interpret temporal references.

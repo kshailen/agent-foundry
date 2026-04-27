@@ -1,0 +1,295 @@
+## Approach
+
+The current code uses a single static system prompt for every user, ignoring their tier (free/pro) and status (new/returning). A free user gets the same experience as a pro user, and a first-time visitor sees no welcome or onboarding. The fix is to build a dynamic prompt assembly system that constructs different system prompts from modular blocks based on the user's context.
+
+The solution defines prompt segments for each dimension — a base prompt, tier-specific capabilities (free vs. pro), and user-status-specific greetings (new vs. returning). These segments are composed at runtime into a complete system prompt. This modular approach is maintainable (each segment can be updated independently), correct (pro features never leak into free-tier prompts), and extensible (new tiers or conditions can be added without rewriting existing logic).
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+BASE_PROMPT = "You are a helpful AI data analysis assistant."
+
+TIER_PROMPTS = {
+    "free": (
+        "\n\nUSER TIER: Free\n"
+        "Available features:\n"
+        "- Basic data charts (bar, line, pie)\n"
+        "- Up to 100 rows per query\n"
+        "- Standard response time\n\n"
+        "When the user asks about advanced features (custom queries, data export, advanced visualizations, "
+        "priority support), let them know these are available on the Pro plan and suggest upgrading."
+    ),
+    "pro": (
+        "\n\nUSER TIER: Pro\n"
+        "Available features:\n"
+        "- All basic charts plus advanced visualizations (heatmaps, scatter matrices, custom dashboards)\n"
+        "- Unlimited rows per query\n"
+        "- Custom SQL queries and data export (CSV, JSON, Excel)\n"
+        "- Priority support with faster response times\n"
+        "- Advanced analysis tools (regression, clustering, trend forecasting)\n\n"
+        "The user has full access to all features. Help them leverage the complete set of Pro capabilities."
+    ),
+}
+
+USER_STATUS_PROMPTS = {
+    True: "\n\nWelcome back! Skip any onboarding — this user is familiar with the platform.",
+    False: (
+        "\n\nThis is a new user. Welcome them warmly and provide a brief quick-start guide:\n"
+        "1. Explain what the assistant can do.\n"
+        "2. Suggest a first action they can try.\n"
+        "3. Keep the introduction concise — 2-3 sentences."
+    ),
+}
+
+def build_system_prompt(user_tier: str, is_returning_user: bool) -> str:
+    return BASE_PROMPT + TIER_PROMPTS[user_tier] + USER_STATUS_PROMPTS[is_returning_user]
+
+def get_response(user_input: str, user_tier: str, is_returning_user: bool):
+    system_prompt = build_system_prompt(user_tier, is_returning_user)
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", system_prompt),
+        ("human", "{input}"),
+    ])
+    chain = prompt | llm
+    return chain.invoke({"input": user_input})
+
+result1 = get_response("How do I analyze my data?", user_tier="free", is_returning_user=False)
+print("Free + New:", result1.content)
+
+result2 = get_response("How do I analyze my data?", user_tier="pro", is_returning_user=True)
+print("Pro + Returning:", result2.content)
+
+result3 = get_response("What features do I have access to?", user_tier="free", is_returning_user=True)
+print("Free + Returning:", result3.content)
+
+result4 = get_response("What features do I have access to?", user_tier="pro", is_returning_user=False)
+print("Pro + New:", result4.content)
+```
+
+### LangGraph
+
+```python
+from langchain_openai import ChatOpenAI
+from langgraph.graph import StateGraph, START, END
+from langchain_core.messages import SystemMessage, HumanMessage
+from typing import TypedDict
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+class AgentState(TypedDict):
+    messages: list
+    user_tier: str
+    is_returning_user: bool
+
+BASE_PROMPT = "You are a helpful AI data analysis assistant."
+
+TIER_PROMPTS = {
+    "free": (
+        "\n\nUSER TIER: Free\n"
+        "Available features:\n"
+        "- Basic data charts (bar, line, pie)\n"
+        "- Up to 100 rows per query\n"
+        "- Standard response time\n\n"
+        "When the user asks about advanced features (custom queries, data export, advanced visualizations, "
+        "priority support), let them know these are available on the Pro plan and suggest upgrading."
+    ),
+    "pro": (
+        "\n\nUSER TIER: Pro\n"
+        "Available features:\n"
+        "- All basic charts plus advanced visualizations (heatmaps, scatter matrices, custom dashboards)\n"
+        "- Unlimited rows per query\n"
+        "- Custom SQL queries and data export (CSV, JSON, Excel)\n"
+        "- Priority support with faster response times\n"
+        "- Advanced analysis tools (regression, clustering, trend forecasting)\n\n"
+        "The user has full access to all features. Help them leverage the complete set of Pro capabilities."
+    ),
+}
+
+USER_STATUS_PROMPTS = {
+    True: "\n\nWelcome back! Skip any onboarding — this user is familiar with the platform.",
+    False: (
+        "\n\nThis is a new user. Welcome them warmly and provide a brief quick-start guide:\n"
+        "1. Explain what the assistant can do.\n"
+        "2. Suggest a first action they can try.\n"
+        "3. Keep the introduction concise — 2-3 sentences."
+    ),
+}
+
+def assemble_prompt(state: AgentState) -> AgentState:
+    tier = state["user_tier"]
+    returning = state["is_returning_user"]
+    system_content = BASE_PROMPT + TIER_PROMPTS[tier] + USER_STATUS_PROMPTS[returning]
+    system_msg = SystemMessage(content=system_content)
+    state["messages"] = [system_msg] + state["messages"]
+    return state
+
+def respond(state: AgentState) -> AgentState:
+    response = llm.invoke(state["messages"])
+    state["messages"].append(response)
+    return state
+
+graph = StateGraph(AgentState)
+graph.add_node("assemble_prompt", assemble_prompt)
+graph.add_node("respond", respond)
+graph.add_edge(START, "assemble_prompt")
+graph.add_edge("assemble_prompt", "respond")
+graph.add_edge("respond", END)
+
+app = graph.compile()
+
+result = app.invoke({
+    "messages": [HumanMessage(content="How do I analyze my data?")],
+    "user_tier": "pro",
+    "is_returning_user": True,
+})
+print(result["messages"][-1].content)
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from crewai import LLM
+
+llm = LLM(model="gpt-4o-mini")
+
+BASE_PROMPT = "You are a helpful AI data analysis assistant."
+
+TIER_PROMPTS = {
+    "free": (
+        "\n\nUSER TIER: Free\n"
+        "Available features:\n"
+        "- Basic data charts (bar, line, pie)\n"
+        "- Up to 100 rows per query\n"
+        "- Standard response time\n\n"
+        "When the user asks about advanced features (custom queries, data export, advanced visualizations, "
+        "priority support), let them know these are available on the Pro plan and suggest upgrading."
+    ),
+    "pro": (
+        "\n\nUSER TIER: Pro\n"
+        "Available features:\n"
+        "- All basic charts plus advanced visualizations (heatmaps, scatter matrices, custom dashboards)\n"
+        "- Unlimited rows per query\n"
+        "- Custom SQL queries and data export (CSV, JSON, Excel)\n"
+        "- Priority support with faster response times\n"
+        "- Advanced analysis tools (regression, clustering, trend forecasting)\n\n"
+        "The user has full access to all features. Help them leverage the complete set of Pro capabilities."
+    ),
+}
+
+USER_STATUS_PROMPTS = {
+    True: "\n\nWelcome back! Skip any onboarding — this user is familiar with the platform.",
+    False: (
+        "\n\nThis is a new user. Welcome them warmly and provide a brief quick-start guide:\n"
+        "1. Explain what the assistant can do.\n"
+        "2. Suggest a first action they can try.\n"
+        "3. Keep the introduction concise — 2-3 sentences."
+    ),
+}
+
+def get_response(user_input: str, user_tier: str, is_returning_user: bool):
+    backstory = BASE_PROMPT + TIER_PROMPTS[user_tier] + USER_STATUS_PROMPTS[is_returning_user]
+    agent = Agent(
+        role="AI Data Analysis Assistant",
+        goal="Help users analyze data based on their tier and status",
+        backstory=backstory,
+        llm=llm,
+    )
+    task = Task(
+        description=user_input,
+        expected_output="A helpful response tailored to the user's tier and status",
+        agent=agent,
+    )
+    crew = Crew(agents=[agent], tasks=[task])
+    return crew.kickoff()
+
+result1 = get_response("How do I analyze my data?", user_tier="free", is_returning_user=False)
+print("Free + New:", result1)
+
+result2 = get_response("How do I analyze my data?", user_tier="pro", is_returning_user=True)
+print("Pro + Returning:", result2)
+
+result3 = get_response("What features do I have access to?", user_tier="free", is_returning_user=True)
+print("Free + Returning:", result3)
+
+result4 = get_response("What features do I have access to?", user_tier="pro", is_returning_user=False)
+print("Pro + New:", result4)
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+
+BASE_PROMPT = "You are a helpful AI data analysis assistant."
+
+TIER_PROMPTS = {
+    "free": (
+        "\n\nUSER TIER: Free\n"
+        "Available features:\n"
+        "- Basic data charts (bar, line, pie)\n"
+        "- Up to 100 rows per query\n"
+        "- Standard response time\n\n"
+        "When the user asks about advanced features (custom queries, data export, advanced visualizations, "
+        "priority support), let them know these are available on the Pro plan and suggest upgrading."
+    ),
+    "pro": (
+        "\n\nUSER TIER: Pro\n"
+        "Available features:\n"
+        "- All basic charts plus advanced visualizations (heatmaps, scatter matrices, custom dashboards)\n"
+        "- Unlimited rows per query\n"
+        "- Custom SQL queries and data export (CSV, JSON, Excel)\n"
+        "- Priority support with faster response times\n"
+        "- Advanced analysis tools (regression, clustering, trend forecasting)\n\n"
+        "The user has full access to all features. Help them leverage the complete set of Pro capabilities."
+    ),
+}
+
+USER_STATUS_PROMPTS = {
+    True: "\n\nWelcome back! Skip any onboarding — this user is familiar with the platform.",
+    False: (
+        "\n\nThis is a new user. Welcome them warmly and provide a brief quick-start guide:\n"
+        "1. Explain what the assistant can do.\n"
+        "2. Suggest a first action they can try.\n"
+        "3. Keep the introduction concise — 2-3 sentences."
+    ),
+}
+
+def get_response(user_input: str, user_tier: str, is_returning_user: bool):
+    instructions = BASE_PROMPT + TIER_PROMPTS[user_tier] + USER_STATUS_PROMPTS[is_returning_user]
+    agent = Agent(
+        name="AI Data Analysis Assistant",
+        instructions=instructions,
+    )
+    result = Runner.run_sync(agent, user_input)
+    return result.final_output
+
+result1 = get_response("How do I analyze my data?", user_tier="free", is_returning_user=False)
+print("Free + New:", result1)
+
+result2 = get_response("How do I analyze my data?", user_tier="pro", is_returning_user=True)
+print("Pro + Returning:", result2)
+
+result3 = get_response("What features do I have access to?", user_tier="free", is_returning_user=True)
+print("Free + Returning:", result3)
+
+result4 = get_response("What features do I have access to?", user_tier="pro", is_returning_user=False)
+print("Pro + New:", result4)
+```
+
+## Why This Works
+
+Dynamic prompt assembly treats the system prompt as a composable template rather than a static string. By splitting the prompt into independent modules (base, tier, user status), we ensure that each dimension is handled correctly regardless of the others. The dictionary-based lookup ensures that free users never see pro features in their prompt — the segments are mutually exclusive by construction. This pattern scales well: adding a new tier or user dimension only requires adding a new entry to the appropriate dictionary, not rewriting the entire prompt.
+
+## Key Takeaways
+
+- System prompts should be dynamically assembled from modular blocks when the agent needs to behave differently based on user context.
+- Using dictionaries to map context values to prompt segments ensures correctness by construction — features can't leak between tiers.
+- The modular approach is more maintainable than a single prompt with conditional logic embedded as text — each block can be updated independently.

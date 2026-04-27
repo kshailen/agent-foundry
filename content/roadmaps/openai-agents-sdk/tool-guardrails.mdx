@@ -1,0 +1,176 @@
+# Tool Guardrails & Advanced Patterns
+
+While input/output guardrails validate what goes into and comes out of an agent, tool guardrails validate what goes into and comes out of individual tool calls. The OpenAI Agents SDK provides `@tool_input_guardrail` and `@tool_output_guardrail` decorators, tool timeouts, stop behaviors, and failure handlers for fine-grained control over tool execution.
+
+## Tool Input Guardrails
+
+A `@tool_input_guardrail` inspects the arguments before a tool is called. Use it to validate parameters, enforce business rules, or block dangerous inputs:
+
+```python
+from agents import Agent, Runner, function_tool
+from agents import tool_input_guardrail, ToolGuardrailFunctionOutput
+
+@tool_input_guardrail
+async def validate_amount(ctx, agent, tool_name, tool_input):
+    """Block transactions over $10,000."""
+    if tool_name == "process_payment":
+        amount = tool_input.get("amount", 0)
+        if amount > 10000:
+            return ToolGuardrailFunctionOutput.reject_content(
+                f"Amount ${amount} exceeds the $10,000 limit."
+            )
+    return ToolGuardrailFunctionOutput.allow()
+
+@function_tool
+def process_payment(amount: float, recipient: str) -> str:
+    """Process a payment to a recipient."""
+    return f"Payment of ${amount} sent to {recipient}"
+
+agent = Agent(
+    name="Payment Agent",
+    instructions="You process payments for users.",
+    tools=[process_payment],
+    tool_input_guardrails=[validate_amount],
+)
+```
+
+## Tool Output Guardrails
+
+A `@tool_output_guardrail` inspects the result after a tool has executed. Use it to redact sensitive data or block problematic outputs:
+
+```python
+from agents import tool_output_guardrail, ToolGuardrailFunctionOutput
+
+@tool_output_guardrail
+async def redact_secrets(ctx, agent, tool_name, tool_output):
+    """Block tool outputs that contain API keys."""
+    if "sk-" in str(tool_output) or "api_key" in str(tool_output).lower():
+        return ToolGuardrailFunctionOutput.reject_content(
+            "Tool output contained sensitive credentials and was blocked."
+        )
+    return ToolGuardrailFunctionOutput.allow()
+
+agent = Agent(
+    name="Secure Agent",
+    instructions="You help users with their configurations.",
+    tools=[process_payment],
+    tool_output_guardrails=[redact_secrets],
+)
+```
+
+## ToolGuardrailFunctionOutput
+
+Tool guardrails return a `ToolGuardrailFunctionOutput` with two factory methods:
+
+| Method | Description |
+|--------|-------------|
+| `ToolGuardrailFunctionOutput.allow()` | Let the tool call proceed (input) or let the output pass through |
+| `ToolGuardrailFunctionOutput.reject_content(message)` | Block the tool call/output and return the message as an error |
+
+## Tool Timeouts
+
+Set a timeout on tools to prevent long-running operations from blocking the agent:
+
+```python
+@function_tool(timeout=10, timeout_behavior="raise")
+def slow_api_call(query: str) -> str:
+    """Call an external API that might be slow."""
+    import time
+    time.sleep(15)
+    return f"Result for {query}"
+```
+
+| `timeout_behavior` | Description |
+|---------------------|-------------|
+| `"raise"` | Raise a `ToolTimeoutError` if the tool exceeds the timeout |
+| `"return_error"` | Return an error string to the agent instead of raising |
+
+## Stopping on First Tool Result
+
+Use `tool_use_behavior="stop_on_first_tool"` to make the agent stop after the first tool call completes, returning the tool's output as the final result:
+
+```python
+agent = Agent(
+    name="Lookup Agent",
+    instructions="Look up the requested information.",
+    tools=[lookup_database],
+    tool_use_behavior="stop_on_first_tool",
+)
+
+result = await Runner.run(agent, "Find user #123")
+print(result.final_output)  # Direct tool output, no further LLM processing
+```
+
+This is useful when you want the tool's raw output without additional LLM summarization.
+
+## StopAtTools
+
+`StopAtTools` lets you specify which tools should stop execution when called:
+
+```python
+from agents import StopAtTools
+
+agent = Agent(
+    name="Router Agent",
+    instructions="Route the user to the right department.",
+    tools=[route_to_sales, route_to_support, general_lookup],
+    tool_use_behavior=StopAtTools(
+        stop_at_tool_names=["route_to_sales", "route_to_support"]
+    ),
+)
+```
+
+The agent stops when it calls `route_to_sales` or `route_to_support`, but continues normally if it calls `general_lookup`.
+
+## Failure Error Function
+
+Use `failure_error_function` to customize the error message when a tool call fails:
+
+```python
+def custom_failure_handler(tool_name: str, error: Exception) -> str:
+    return (
+        f"The tool '{tool_name}' encountered an error: {error}. "
+        f"Please try a different approach or ask the user for clarification."
+    )
+
+agent = Agent(
+    name="Resilient Agent",
+    instructions="You are a helpful assistant.",
+    tools=[process_payment],
+    failure_error_function=custom_failure_handler,
+)
+```
+
+## Combining Tool Guardrails
+
+Stack input and output guardrails together for comprehensive protection:
+
+```python
+agent = Agent(
+    name="Enterprise Agent",
+    instructions="You handle financial operations.",
+    tools=[process_payment, lookup_account],
+    tool_input_guardrails=[validate_amount, check_permissions],
+    tool_output_guardrails=[redact_secrets, audit_log],
+)
+```
+
+## Tool Guardrails vs Agent Guardrails
+
+| Feature | Agent Guardrails | Tool Guardrails |
+|---------|------------------|-----------------|
+| Scope | Entire agent input/output | Individual tool calls |
+| Decorators | `@input_guardrail` / `@output_guardrail` | `@tool_input_guardrail` / `@tool_output_guardrail` |
+| Return type | `GuardrailFunctionOutput` | `ToolGuardrailFunctionOutput` |
+| Blocking | Raises tripwire exception | Returns rejection as tool error |
+| Use case | Content safety, PII detection | Parameter validation, data redaction |
+
+## Key Takeaways
+
+- Use `@tool_input_guardrail` to validate tool arguments before execution
+- Use `@tool_output_guardrail` to inspect and filter tool results after execution
+- Call `ToolGuardrailFunctionOutput.reject_content()` to block and `.allow()` to pass through
+- Set tool timeouts with `timeout` and `timeout_behavior` parameters
+- Use `tool_use_behavior="stop_on_first_tool"` to return raw tool output without LLM post-processing
+- Use `StopAtTools` to stop execution only on specific tools
+- Customize tool failure messages with `failure_error_function`

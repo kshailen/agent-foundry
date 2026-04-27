@@ -1,0 +1,66 @@
+{
+  "title": "CrewAI",
+  "description": "Master multi-agent orchestration with CrewAI. Learn to define roles, tasks, and processes to build collaborative AI agent teams.",
+  "icon": "users",
+  "sections": [
+    {
+      "title": "Getting Started",
+      "topics": [
+        { "slug": "introduction", "title": "What is CrewAI?", "difficulty": "beginner" },
+        { "slug": "installation", "title": "Installation & First Crew", "difficulty": "beginner", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/crewai/installation.ipynb" }
+      ]
+    },
+    {
+      "title": "Beginner: Core Concepts",
+      "topics": [
+        { "slug": "agents", "title": "Defining Agents with Roles & Goals", "difficulty": "beginner", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/crewai/agents.ipynb" },
+        { "slug": "tasks", "title": "Tasks & Expected Outputs", "difficulty": "beginner", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/crewai/tasks.ipynb" },
+        { "slug": "crews", "title": "Assembling a Crew", "difficulty": "beginner", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/crewai/crews.ipynb" },
+        { "slug": "sequential-process", "title": "Sequential Process", "difficulty": "beginner", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/crewai/sequential-process.ipynb" }
+      ]
+    },
+    {
+      "title": "Beginner: Project",
+      "topics": [
+        { "slug": "project-blog-writer", "title": "Project: Blog Writing Crew", "difficulty": "beginner", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/crewai/project-blog-writer.ipynb" }
+      ]
+    },
+    {
+      "title": "Intermediate: Features",
+      "topics": [
+        { "slug": "tools", "title": "Built-in Tools", "difficulty": "intermediate", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/crewai/tools.ipynb" },
+        { "slug": "custom-tools", "title": "Building Custom Tools", "difficulty": "intermediate", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/crewai/custom-tools.ipynb" },
+        { "slug": "hierarchical-process", "title": "Hierarchical Process", "difficulty": "intermediate", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/crewai/hierarchical-process.ipynb" },
+        { "slug": "structured-output", "title": "Structured Outputs with Pydantic", "difficulty": "intermediate", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/crewai/structured-output.ipynb" },
+        { "slug": "task-context", "title": "Task Dependencies & Context", "difficulty": "intermediate", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/crewai/task-context.ipynb" },
+        { "slug": "human-input", "title": "Human-in-the-Loop", "difficulty": "intermediate", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/crewai/human-input.ipynb" },
+        { "slug": "planning", "title": "Crew Planning", "difficulty": "intermediate", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/crewai/planning.ipynb" }
+      ]
+    },
+    {
+      "title": "Intermediate: Projects",
+      "topics": [
+        { "slug": "project-market-research", "title": "Project: Market Research System", "difficulty": "intermediate", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/crewai/project-market-research.ipynb" },
+        { "slug": "project-code-review", "title": "Project: Code Review Crew", "difficulty": "intermediate", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/crewai/project-code-review.ipynb" }
+      ]
+    },
+    {
+      "title": "Advanced: Features",
+      "topics": [
+        { "slug": "memory", "title": "Memory System", "difficulty": "advanced", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/crewai/memory.ipynb" },
+        { "slug": "knowledge", "title": "Knowledge Sources & RAG", "difficulty": "advanced", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/crewai/knowledge.ipynb" },
+        { "slug": "flows", "title": "CrewAI Flows", "difficulty": "advanced", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/crewai/flows.ipynb" },
+        { "slug": "conditional-tasks", "title": "Conditional Tasks", "difficulty": "advanced", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/crewai/conditional-tasks.ipynb" },
+        { "slug": "async-execution", "title": "Async Execution", "difficulty": "advanced", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/crewai/async-execution.ipynb" },
+        { "slug": "training", "title": "Training Crews", "difficulty": "advanced", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/crewai/training.ipynb" }
+      ]
+    },
+    {
+      "title": "Advanced: Projects",
+      "topics": [
+        { "slug": "project-newsletter-flow", "title": "Project: AI Newsletter Pipeline", "difficulty": "advanced", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/crewai/project-newsletter-flow.ipynb" },
+        { "slug": "project-support-system", "title": "Project: Customer Support System", "difficulty": "advanced", "notebookUrl": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/crewai/project-support-system.ipynb" }
+      ]
+    }
+  ]
+}

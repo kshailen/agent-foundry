@@ -1,0 +1,54 @@
+## The Problem
+
+You built a conversational assistant, but every time the user sends a new message the agent starts from scratch. The user says "My name is Alice" in turn one, then asks "What is my name?" in turn two—and the agent has no idea. The root cause is simple: **no conversation history is being tracked or passed between turns**. Each invocation is completely independent. Your job is to add message history so the agent can reference what was said earlier in the conversation.
+
+## Examples
+
+### Example 1
+
+**User input (turn 1):** My name is Alice and I work at Acme Corp.
+
+**User input (turn 2):** What company do I work at?
+
+**Current (bad) output:** I don't have that information. Could you tell me where you work?
+
+**Expected (good) output:** You work at Acme Corp!
+
+### Example 2
+
+**User input (turn 1):** I'm planning a trip to Japan next month.
+
+**User input (turn 2):** What cuisine should I try there?
+
+**Current (bad) output:** Could you clarify where you're traveling? I'd be happy to suggest cuisines!
+
+**Expected (good) output:** Since you're heading to Japan, you should definitely try sushi, ramen, tempura, and okonomiyaki!
+
+### Example 3
+
+**User input (turn 1):** I prefer Python over JavaScript.
+
+**User input (turn 2):** Can you write me a hello world?
+
+**User input (turn 3):** What language did I say I prefer?
+
+**Current (bad) output:** I'm not sure which language you prefer. Could you let me know?
+
+**Expected (good) output:** You said you prefer Python!
+
+## Your Task
+
+Modify the agent so it **maintains conversation history** across turns:
+
+- Accumulate both user and assistant messages after each turn.
+- Pass the full history into subsequent calls so the model sees prior context.
+- The agent must remember at least the last 5 turns of conversation.
+- Do not use external databases or file storage—an in-memory solution is sufficient.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Remembers user's name:** When asked after introduction, the agent correctly recalls the user's name.
+- **Remembers contextual details:** The agent correctly recalls facts shared in earlier turns such as workplace, preferences, or plans.
+- **Coherent across 5+ turns:** The agent maintains context through at least 5 consecutive turns without losing information.

@@ -1,0 +1,207 @@
+## Approach
+
+The starter code uses a single generalist agent to handle three entirely different types of queries — data analysis, coding, and writing. Because the agent's prompt is broad ("jack of all trades"), it produces mediocre results for each category. The fix is to replace the generalist with three specialist agents, each with a tightly scoped system prompt for its domain, and add a router that classifies incoming queries and directs them to the correct specialist.
+
+In CrewAI, the router is implemented as a separate classification task that runs first, and conditional logic selects the right specialist crew based on the classification. In OpenAI Agents SDK, the router agent uses handoffs to transfer control to the appropriate specialist agent based on the query type.
+
+Each specialist's prompt is deliberately narrow — the data analyst only handles statistical and data queries, the coder only handles programming tasks, and the writer only handles writing tasks. This focus produces better results because the LLM can fully commit to a single domain's conventions and quality standards.
+
+## Solution
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai import LLM
+
+llm = LLM(model="gpt-4o-mini")
+
+data_specialist = Agent(
+    role="Data Analyst",
+    goal="Provide detailed data analysis, statistical methods, and data-driven insights",
+    backstory="You are a senior data scientist specializing in statistical analysis and data interpretation.",
+    llm=llm,
+)
+
+code_specialist = Agent(
+    role="Software Engineer",
+    goal="Write clean, efficient, well-tested code with proper error handling",
+    backstory="You are a senior software engineer who writes production-quality code.",
+    llm=llm,
+)
+
+writing_specialist = Agent(
+    role="Professional Writer",
+    goal="Produce polished, well-structured professional writing",
+    backstory="You are a professional writer skilled in business communication and technical writing.",
+    llm=llm,
+)
+
+router = Agent(
+    role="Query Router",
+    goal="Classify user queries into exactly one category: data, code, or writing",
+    backstory="You are a query classifier. You respond with exactly one word: data, code, or writing.",
+    llm=llm,
+)
+
+def route_and_execute(query: str) -> str:
+    classify_task = Task(
+        description=f"Classify this query into exactly one category (data, code, or writing). Respond with only the category name.\n\nQuery: {query}",
+        expected_output="One word: data, code, or writing",
+        agent=router,
+    )
+    classify_crew = Crew(agents=[router], tasks=[classify_task], process=Process.sequential)
+    category = str(classify_crew.kickoff()).strip().lower()
+
+    if "data" in category:
+        specialist = data_specialist
+    elif "code" in category:
+        specialist = code_specialist
+    else:
+        specialist = writing_specialist
+
+    work_task = Task(
+        description=query,
+        expected_output="A detailed, high-quality response",
+        agent=specialist,
+    )
+    work_crew = Crew(agents=[specialist], tasks=[work_task], process=Process.sequential)
+    return str(work_crew.kickoff())
+
+result = route_and_execute("Analyze the correlation between columns A and B in my dataset")
+print(result)
+
+result = route_and_execute("Write a Python function to merge two sorted lists")
+print(result)
+
+result = route_and_execute("Draft a professional email declining a meeting invitation")
+print(result)
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+
+data_specialist = Agent(
+    name="Data Analyst",
+    instructions="You are a senior data scientist. Provide detailed data analysis, statistical methods, and data-driven insights. Only handle data and analytics queries.",
+)
+
+code_specialist = Agent(
+    name="Software Engineer",
+    instructions="You are a senior software engineer. Write clean, efficient, well-tested code with proper error handling. Only handle coding and programming queries.",
+)
+
+writing_specialist = Agent(
+    name="Professional Writer",
+    instructions="You are a professional writer skilled in business communication and technical writing. Produce polished, well-structured professional writing. Only handle writing queries.",
+)
+
+router = Agent(
+    name="Router",
+    instructions="You are a query router. Analyze the user's query and hand it off to the appropriate specialist: Data Analyst for data/analytics queries, Software Engineer for coding/programming queries, or Professional Writer for writing/communication queries.",
+    handoffs=[data_specialist, code_specialist, writing_specialist],
+)
+
+result = Runner.run_sync(router, "Analyze the correlation between columns A and B in my dataset")
+print(result.final_output)
+
+result = Runner.run_sync(router, "Write a Python function to merge two sorted lists")
+print(result.final_output)
+
+result = Runner.run_sync(router, "Draft a professional email declining a meeting invitation")
+print(result.final_output)
+```
+
+### LangGraph
+
+```python
+from typing import TypedDict, Literal
+from langgraph.graph import StateGraph, START, END
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import SystemMessage, HumanMessage
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+class State(TypedDict):
+    query: str
+    category: str
+    response: str
+
+def router(state: State) -> State:
+    messages = [
+        SystemMessage(content="Classify this query into exactly one category: data, code, or writing. Respond with only the category name."),
+        HumanMessage(content=state["query"]),
+    ]
+    result = llm.invoke(messages)
+    category = result.content.strip().lower()
+    if "data" in category:
+        return {"category": "data"}
+    elif "code" in category:
+        return {"category": "code"}
+    else:
+        return {"category": "writing"}
+
+def route_to_specialist(state: State) -> Literal["data_specialist", "code_specialist", "writing_specialist"]:
+    return f"{state['category']}_specialist"
+
+def data_specialist(state: State) -> State:
+    messages = [
+        SystemMessage(content="You are a senior data scientist. Provide detailed data analysis, statistical methods, and data-driven insights. Only handle data and analytics queries."),
+        HumanMessage(content=state["query"]),
+    ]
+    result = llm.invoke(messages)
+    return {"response": result.content}
+
+def code_specialist(state: State) -> State:
+    messages = [
+        SystemMessage(content="You are a senior software engineer. Write clean, efficient, well-tested code with proper error handling. Only handle coding and programming queries."),
+        HumanMessage(content=state["query"]),
+    ]
+    result = llm.invoke(messages)
+    return {"response": result.content}
+
+def writing_specialist(state: State) -> State:
+    messages = [
+        SystemMessage(content="You are a professional writer skilled in business communication and technical writing. Produce polished, well-structured professional writing. Only handle writing queries."),
+        HumanMessage(content=state["query"]),
+    ]
+    result = llm.invoke(messages)
+    return {"response": result.content}
+
+graph = StateGraph(State)
+graph.add_node("router", router)
+graph.add_node("data_specialist", data_specialist)
+graph.add_node("code_specialist", code_specialist)
+graph.add_node("writing_specialist", writing_specialist)
+
+graph.add_edge(START, "router")
+graph.add_conditional_edges("router", route_to_specialist)
+graph.add_edge("data_specialist", END)
+graph.add_edge("code_specialist", END)
+graph.add_edge("writing_specialist", END)
+
+app = graph.compile()
+
+result = app.invoke({"query": "Analyze the correlation between columns A and B in my dataset"})
+print(result["response"])
+
+result = app.invoke({"query": "Write a Python function to merge two sorted lists"})
+print(result["response"])
+
+result = app.invoke({"query": "Draft a professional email declining a meeting invitation"})
+print(result["response"])
+```
+
+## Why This Works
+
+Specialist agents outperform generalists because their system prompts are focused and domain-specific. A data analyst agent knows to think in terms of statistical methods, correlations, and data structures. A code specialist applies software engineering best practices. A writing specialist focuses on tone, structure, and clarity. The router ensures each query reaches the right expert, so the user always gets a domain-appropriate response.
+
+In OpenAI Agents SDK, handoffs are the native routing mechanism — the router agent evaluates the query and transfers control to the appropriate specialist, carrying the conversation context along. In CrewAI, the router runs as a classification step, and conditional logic dispatches to the right specialist crew.
+
+## Key Takeaways
+
+- Specialist agents with focused prompts consistently outperform generalist agents because the LLM can fully commit to one domain's conventions and quality standards.
+- A router layer (whether an agent with handoffs or a classification step) is essential for directing queries to the right specialist.
+- In OpenAI Agents SDK, `handoffs` provide a clean, built-in routing mechanism between agents.

@@ -1,0 +1,239 @@
+## Approach
+
+Vector similarity search works well for natural language queries ("What calibration tools do you offer?") but fails for exact term lookups like product codes (`SKU-1148`). Embeddings capture semantic meaning, not exact strings — the embedding for "SKU-1148" does not reliably map to the document containing that specific code. The retriever may return a completely different product.
+
+The fix is hybrid search: combine keyword-based search (BM25) with vector search. BM25 excels at exact term matching because it operates on raw text tokens, so `SKU-1148` will always find the document containing that string. Vector search handles semantic queries where the user's wording differs from the document text. An ensemble retriever merges results from both methods using reciprocal rank fusion, giving you the best of both worlds.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+from langchain_community.retrievers import BM25Retriever
+from langchain.retrievers import EnsembleRetriever
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="Product SKU-7291: Industrial-grade widget. Price: $45.99. Weight: 2.3kg."),
+    Document(page_content="Product SKU-1148: Precision calibration tool. Price: $129.00. Accuracy: ±0.01mm."),
+    Document(page_content="Product SKU-3364: Heavy-duty mounting bracket. Price: $18.50. Material: Stainless steel."),
+    Document(page_content="All products come with a 2-year warranty and free shipping on orders over $100."),
+    Document(page_content="Product SKU-9902: Digital multimeter with auto-ranging. Price: $89.99. Display: LCD."),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+vector_retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+
+bm25_retriever = BM25Retriever.from_documents(documents, k=3)
+
+ensemble_retriever = EnsembleRetriever(
+    retrievers=[bm25_retriever, vector_retriever],
+    weights=[0.5, 0.5],
+)
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "Answer based on context.\n\nContext: {context}"),
+    ("human", "{question}"),
+])
+
+def ask(question: str) -> str:
+    docs = ensemble_retriever.invoke(question)
+    context = "\n".join([doc.page_content for doc in docs])
+    chain = prompt | llm
+    result = chain.invoke({"context": context, "question": question})
+    return result.content
+
+print(ask("What is the price of SKU-1148?"))
+print(ask("Tell me about your calibration products."))
+```
+
+### LangGraph
+
+```python
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+from langchain_community.retrievers import BM25Retriever
+from langchain.retrievers import EnsembleRetriever
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="Product SKU-7291: Industrial-grade widget. Price: $45.99. Weight: 2.3kg."),
+    Document(page_content="Product SKU-1148: Precision calibration tool. Price: $129.00. Accuracy: ±0.01mm."),
+    Document(page_content="Product SKU-3364: Heavy-duty mounting bracket. Price: $18.50. Material: Stainless steel."),
+    Document(page_content="All products come with a 2-year warranty and free shipping on orders over $100."),
+    Document(page_content="Product SKU-9902: Digital multimeter with auto-ranging. Price: $89.99. Display: LCD."),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+vector_retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+
+bm25_retriever = BM25Retriever.from_documents(documents, k=3)
+
+ensemble_retriever = EnsembleRetriever(
+    retrievers=[bm25_retriever, vector_retriever],
+    weights=[0.5, 0.5],
+)
+
+class State(TypedDict):
+    question: str
+    context: str
+    answer: str
+
+def retrieve(state: State) -> State:
+    docs = ensemble_retriever.invoke(state["question"])
+    context = "\n".join([doc.page_content for doc in docs])
+    return {"context": context}
+
+def answer(state: State) -> State:
+    response = llm.invoke(
+        f"Answer based on context.\n\nContext: {state['context']}\n\nQuestion: {state['question']}"
+    )
+    return {"answer": response.content}
+
+graph = StateGraph(State)
+graph.add_node("retrieve", retrieve)
+graph.add_node("answer", answer)
+graph.add_edge(START, "retrieve")
+graph.add_edge("retrieve", "answer")
+graph.add_edge("answer", END)
+
+app = graph.compile()
+print(app.invoke({"question": "What is the price of SKU-1148?"})["answer"])
+print(app.invoke({"question": "Tell me about your calibration products."})["answer"])
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from crewai.tools import tool
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+from langchain_community.retrievers import BM25Retriever
+from langchain.retrievers import EnsembleRetriever
+
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="Product SKU-7291: Industrial-grade widget. Price: $45.99. Weight: 2.3kg."),
+    Document(page_content="Product SKU-1148: Precision calibration tool. Price: $129.00. Accuracy: ±0.01mm."),
+    Document(page_content="Product SKU-3364: Heavy-duty mounting bracket. Price: $18.50. Material: Stainless steel."),
+    Document(page_content="All products come with a 2-year warranty and free shipping on orders over $100."),
+    Document(page_content="Product SKU-9902: Digital multimeter with auto-ranging. Price: $89.99. Display: LCD."),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+vector_retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+
+bm25_retriever = BM25Retriever.from_documents(documents, k=3)
+
+ensemble_retriever = EnsembleRetriever(
+    retrievers=[bm25_retriever, vector_retriever],
+    weights=[0.5, 0.5],
+)
+
+
+@tool
+def search_products(query: str) -> str:
+    """Search the product catalog using hybrid search."""
+    docs = ensemble_retriever.invoke(query)
+    return "\n".join([doc.page_content for doc in docs])
+
+
+assistant = Agent(
+    role="Product Assistant",
+    goal="Answer product questions accurately based on catalog data",
+    backstory="You are a helpful product assistant.",
+    tools=[search_products],
+)
+
+task1 = Task(
+    description="What is the price of SKU-1148?",
+    expected_output="The price of the product",
+    agent=assistant,
+)
+crew1 = Crew(agents=[assistant], tasks=[task1])
+print(crew1.kickoff())
+
+task2 = Task(
+    description="Tell me about your calibration products.",
+    expected_output="Information about calibration products",
+    agent=assistant,
+)
+crew2 = Crew(agents=[assistant], tasks=[task2])
+print(crew2.kickoff())
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from agents.tool import function_tool
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+from langchain_community.retrievers import BM25Retriever
+from langchain.retrievers import EnsembleRetriever
+
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="Product SKU-7291: Industrial-grade widget. Price: $45.99. Weight: 2.3kg."),
+    Document(page_content="Product SKU-1148: Precision calibration tool. Price: $129.00. Accuracy: ±0.01mm."),
+    Document(page_content="Product SKU-3364: Heavy-duty mounting bracket. Price: $18.50. Material: Stainless steel."),
+    Document(page_content="All products come with a 2-year warranty and free shipping on orders over $100."),
+    Document(page_content="Product SKU-9902: Digital multimeter with auto-ranging. Price: $89.99. Display: LCD."),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+vector_retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+
+bm25_retriever = BM25Retriever.from_documents(documents, k=3)
+
+ensemble_retriever = EnsembleRetriever(
+    retrievers=[bm25_retriever, vector_retriever],
+    weights=[0.5, 0.5],
+)
+
+
+@function_tool
+def search_products(query: str) -> str:
+    """Search the product catalog using hybrid search."""
+    docs = ensemble_retriever.invoke(query)
+    return "\n".join([doc.page_content for doc in docs])
+
+
+agent = Agent(
+    name="Product Assistant",
+    instructions="Answer product questions accurately based on catalog data.",
+    tools=[search_products],
+)
+
+result = Runner.run_sync(agent, "What is the price of SKU-1148?")
+print(result.final_output)
+
+result2 = Runner.run_sync(agent, "Tell me about your calibration products.")
+print(result2.final_output)
+```
+
+## Why This Works
+
+BM25 does exact token matching, so a query containing "SKU-1148" will always surface the document with that exact string. Vector search provides semantic understanding for natural language queries. The `EnsembleRetriever` with equal weights merges results from both methods using reciprocal rank fusion, ensuring that exact matches are found while semantic relevance is preserved. Documents appearing in both result sets are deduplicated and boosted in rank.
+
+## Key Takeaways
+
+- Vector search alone cannot reliably match exact identifiers like SKUs, product codes, or IDs.
+- BM25 (keyword search) excels at exact term matching and complements vector search's semantic capabilities.
+- `EnsembleRetriever` with reciprocal rank fusion is the standard LangChain pattern for hybrid search.

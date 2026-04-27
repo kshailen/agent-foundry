@@ -1,0 +1,170 @@
+# Reducers & Annotated State
+
+In the previous topic you saw that nodes return partial state updates. But what happens when two nodes return the same key? By default LangGraph **overwrites** the previous value. Reducers let you change that behavior — appending to lists, merging messages, or applying any custom merge logic.
+
+## Default Behavior: Overwrite
+
+Without a reducer, returning a key replaces whatever was there before:
+
+```python
+from typing import TypedDict
+from langgraph.graph import StateGraph, START, END
+
+class State(TypedDict):
+    value: str
+
+def node_a(state: State) -> dict:
+    return {"value": "A"}
+
+def node_b(state: State) -> dict:
+    return {"value": "B"}
+
+graph = StateGraph(State)
+graph.add_node("a", node_a)
+graph.add_node("b", node_b)
+graph.add_edge(START, "a")
+graph.add_edge("a", "b")
+graph.add_edge("b", END)
+
+app = graph.compile()
+result = app.invoke({"value": ""})
+print(result["value"])  # "B" — node_b overwrote node_a
+```
+
+This is fine for scalar values but breaks down when you need to accumulate data across nodes.
+
+## Annotated State with Reducers
+
+The `Annotated` type hint pairs a field type with a **reducer function**. The reducer receives the current value and the returned value and decides how to combine them:
+
+```python
+from typing import TypedDict, Annotated
+
+def combine(current: str, new: str) -> str:
+    return f"{current} | {new}" if current else new
+
+class State(TypedDict):
+    log: Annotated[str, combine]
+```
+
+Now every time a node returns `{"log": "some text"}`, the `combine` function merges it with the existing value instead of replacing it.
+
+## operator.add for List Appending
+
+The most common reducer is `operator.add`, which concatenates lists:
+
+```python
+import operator
+from typing import TypedDict, Annotated
+from langgraph.graph import StateGraph, START, END
+
+class State(TypedDict):
+    steps: Annotated[list[str], operator.add]
+
+def step_one(state: State) -> dict:
+    return {"steps": ["step_one completed"]}
+
+def step_two(state: State) -> dict:
+    return {"steps": ["step_two completed"]}
+
+graph = StateGraph(State)
+graph.add_node("step_one", step_one)
+graph.add_node("step_two", step_two)
+graph.add_edge(START, "step_one")
+graph.add_edge("step_one", "step_two")
+graph.add_edge("step_two", END)
+
+app = graph.compile()
+result = app.invoke({"steps": []})
+print(result["steps"])
+# ["step_one completed", "step_two completed"]
+```
+
+Each node appends to the list rather than replacing it. This is essential for building up message histories, logs, and tool results.
+
+## add_messages Reducer
+
+LangGraph provides a purpose-built reducer for chat message lists that handles deduplication by message ID:
+
+```python
+from typing import Annotated
+from typing_extensions import TypedDict
+from langgraph.graph import add_messages
+
+class State(TypedDict):
+    messages: Annotated[list, add_messages]
+```
+
+`add_messages` appends new messages to the list. If a returned message has the same `id` as an existing one, it **replaces** that message instead of duplicating it. This is useful when the LLM re-generates a response or a tool result is updated.
+
+```python
+from langchain_core.messages import HumanMessage, AIMessage
+
+def chat_node(state: State) -> dict:
+    response = llm.invoke(state["messages"])
+    return {"messages": [response]}
+```
+
+The returned AI message is appended to the existing list automatically.
+
+## MessagesState: Prebuilt Shortcut
+
+For the common case of a state with just a `messages` field, LangGraph provides `MessagesState`:
+
+```python
+from langgraph.graph import MessagesState, StateGraph, START, END
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+def chatbot(state: MessagesState) -> dict:
+    response = llm.invoke(state["messages"])
+    return {"messages": [response]}
+
+graph = StateGraph(MessagesState)
+graph.add_node("chatbot", chatbot)
+graph.add_edge(START, "chatbot")
+graph.add_edge("chatbot", END)
+
+app = graph.compile()
+```
+
+`MessagesState` is equivalent to:
+
+```python
+class MessagesState(TypedDict):
+    messages: Annotated[list[AnyMessage], add_messages]
+```
+
+It saves boilerplate when your graph only needs a message list.
+
+## Reducer Summary
+
+| Reducer | Use Case | Behavior |
+|---------|----------|----------|
+| *(none — default)* | Scalar values | Overwrites previous value |
+| `operator.add` | Lists, strings | Concatenates / appends |
+| `add_messages` | Chat message lists | Appends; replaces by ID if duplicate |
+| Custom function | Any merge logic | `fn(current, new) -> merged` |
+
+## Extending MessagesState
+
+You can add extra fields alongside `messages`:
+
+```python
+from langgraph.graph import MessagesState
+
+class AgentState(MessagesState):
+    tool_results: Annotated[list[str], operator.add]
+    final_answer: str
+```
+
+This gives you the `add_messages` reducer on `messages`, `operator.add` on `tool_results`, and default overwrite on `final_answer`.
+
+## Key Takeaways
+
+- By default LangGraph overwrites state fields — use `Annotated[type, reducer_fn]` when you need custom merge logic
+- `operator.add` is the go-to reducer for accumulating lists
+- `add_messages` handles chat histories with built-in deduplication by message ID
+- `MessagesState` is a one-liner shortcut for the common messages-only state pattern
+- You can extend `MessagesState` with additional fields and their own reducers

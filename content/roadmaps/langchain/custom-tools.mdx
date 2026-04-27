@@ -1,0 +1,192 @@
+# Custom Tools & Advanced Schemas
+
+Beyond the basics of the `@tool` decorator, LangChain lets you define complex input schemas with Pydantic, handle tool errors gracefully, and build tools that update agent state directly.
+
+## Pydantic args_schema on @tool
+
+For complex tools, define a Pydantic model as the `args_schema` to get full control over input validation and descriptions:
+
+```python
+from langchain_core.tools import tool
+from pydantic import BaseModel, Field
+from typing import Optional
+
+class SearchInput(BaseModel):
+    query: str = Field(description="The search query string")
+    max_results: int = Field(default=5, description="Maximum number of results to return")
+    category: Optional[str] = Field(default=None, description="Filter by category")
+    sort_by: str = Field(default="relevance", description="Sort by: relevance, date, or rating")
+
+@tool(args_schema=SearchInput)
+def advanced_search(query: str, max_results: int = 5, category: Optional[str] = None, sort_by: str = "relevance") -> str:
+    """Search for items with advanced filtering options."""
+    result = f"Searching '{query}' (max: {max_results}, category: {category}, sort: {sort_by})"
+    return result
+```
+
+The `args_schema` gives the LLM detailed descriptions for every parameter, leading to more accurate tool calls.
+
+## Complex Input Types
+
+Pydantic schemas support nested objects, lists, enums, and other complex types:
+
+```python
+from pydantic import BaseModel, Field
+from typing import List
+from enum import Enum
+
+class Priority(str, Enum):
+    low = "low"
+    medium = "medium"
+    high = "high"
+    critical = "critical"
+
+class TaskInput(BaseModel):
+    title: str = Field(description="Task title")
+    description: str = Field(description="Detailed task description")
+    priority: Priority = Field(description="Task priority level")
+    tags: List[str] = Field(default_factory=list, description="List of tags")
+    assignee: Optional[str] = Field(default=None, description="Person assigned to this task")
+
+@tool(args_schema=TaskInput)
+def create_task(title: str, description: str, priority: Priority, tags: List[str] = [], assignee: Optional[str] = None) -> str:
+    """Create a new task in the project management system."""
+    return f"Created task '{title}' with priority {priority.value}, assigned to {assignee or 'unassigned'}"
+```
+
+## ToolNode for LangGraph
+
+`ToolNode` is a prebuilt LangGraph node that executes tools. It takes a list of tools and handles routing, execution, and error management:
+
+```python
+from langgraph.prebuilt import ToolNode
+
+tools = [advanced_search, create_task]
+tool_node = ToolNode(tools)
+```
+
+`ToolNode` is what `create_react_agent` uses internally. You can use it directly when building custom LangGraph workflows:
+
+```python
+from langchain_core.messages import AIMessage, ToolCall
+
+message = AIMessage(
+    content="",
+    tool_calls=[
+        ToolCall(
+            id="call_1",
+            name="advanced_search",
+            args={"query": "python tutorials", "max_results": 3},
+        )
+    ],
+)
+
+result = tool_node.invoke({"messages": [message]})
+print(result["messages"][-1].content)
+```
+
+## handle_tool_errors
+
+By default, tool errors crash the agent. Enable `handle_tool_errors` on `ToolNode` to let the agent recover from failures:
+
+```python
+tool_node = ToolNode(
+    tools,
+    handle_tool_errors=True,
+)
+```
+
+With `handle_tool_errors=True`, if a tool raises an exception, the error message is returned to the LLM as a `ToolMessage`. The agent can then decide to retry with different arguments or respond to the user.
+
+You can also provide a custom error handler:
+
+```python
+def custom_error_handler(error: Exception) -> str:
+    return f"Tool failed: {str(error)}. Please try a different approach."
+
+tool_node = ToolNode(
+    tools,
+    handle_tool_errors=custom_error_handler,
+)
+```
+
+Or use it directly on `create_react_agent`:
+
+```python
+from langchain.chat_models import init_chat_model
+from langgraph.prebuilt import create_react_agent
+
+model = init_chat_model("gpt-4o-mini", model_provider="openai")
+
+@tool
+def divide(a: float, b: float) -> float:
+    """Divide a by b."""
+    return a / b
+
+agent = create_react_agent(
+    model=model,
+    tools=[divide],
+    tool_node_kwargs={"handle_tool_errors": True},
+)
+```
+
+## State-Updating Tools with Command
+
+Tools can update the agent's state directly using `Command`. This is powerful for tools that need to modify the conversation or inject system messages:
+
+```python
+from langgraph.types import Command
+
+@tool
+def update_context(context: str) -> Command:
+    """Update the agent's system context with new information."""
+    from langchain_core.messages import SystemMessage
+    return Command(
+        update={
+            "messages": [SystemMessage(content=f"Updated context: {context}")]
+        }
+    )
+```
+
+`Command` lets a tool push messages, update state keys, or even redirect the agent to a different node in a custom graph.
+
+## Tools That Return Artifacts
+
+For tools that produce large outputs (files, images, data), use `response_format="content_and_artifact"` to separate the message from the artifact:
+
+```python
+@tool(response_format="content_and_artifact")
+def generate_report(topic: str) -> tuple:
+    """Generate a detailed report on a topic."""
+    summary = f"Report on {topic} generated successfully."
+    full_report = f"# {topic}\n\nDetailed analysis...\n\nConclusion: ..."
+    return summary, full_report
+```
+
+The first element (summary) goes to the LLM, the second (full report) is stored as an artifact.
+
+## Injecting Runtime Dependencies
+
+Use `InjectedToolArg` to pass runtime dependencies (like database connections or API clients) that the LLM shouldn't control:
+
+```python
+from typing import Annotated
+from langchain_core.tools import tool, InjectedToolArg
+
+@tool
+def query_database(sql: str, db_connection: Annotated[object, InjectedToolArg]) -> str:
+    """Run a SQL query against the database."""
+    return f"Query result for: {sql}"
+```
+
+The `db_connection` parameter is hidden from the LLM's schema and injected at runtime.
+
+## Key Takeaways
+
+- Use `args_schema` with Pydantic models for complex tool inputs with detailed descriptions
+- Pydantic supports nested objects, enums, lists, and optional fields for rich schemas
+- `ToolNode` executes tools and is used internally by `create_react_agent`
+- `handle_tool_errors` lets agents recover from tool failures instead of crashing
+- `Command` allows tools to update agent state, inject messages, or redirect execution
+- Use `response_format="content_and_artifact"` for tools with large outputs
+- `InjectedToolArg` hides runtime dependencies from the LLM's schema

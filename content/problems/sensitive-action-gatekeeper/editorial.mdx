@@ -1,0 +1,168 @@
+## Approach
+
+The bug is that all tools — including destructive ones like `delete_file` and `send_email` — execute immediately when the agent decides to call them. There is no confirmation step, so a misunderstood request or a hallucinated tool call can permanently delete files or send unintended emails with no chance to stop it.
+
+The fix is to classify tools as "sensitive" or "safe" and insert a confirmation gate before sensitive tool execution. Safe tools (like `read_file`) execute immediately without interruption. Sensitive tools (like `delete_file` and `send_email`) are intercepted by a wrapper that prompts the user to confirm the action before it runs. The confirmation prompt describes exactly what action will be taken and with what arguments, so the user can make an informed decision. If the user declines, the action is cancelled and a message confirms nothing was executed.
+
+The implementation wraps each sensitive tool function in a gatekeeper that calls `input()` for confirmation. In production, this confirmation step would typically be a UI dialog or API callback rather than a console prompt, but the pattern is the same: intercept the tool call, describe the pending action, and wait for approval before executing.
+
+## Solution
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from agents.tool import function_tool
+
+SENSITIVE_TOOLS = {"delete_file", "send_email"}
+
+def confirm_action(action_description: str) -> bool:
+    response = input(f"⚠️ Confirmation required: {action_description}\nProceed? (yes/no): ")
+    return response.strip().lower() in ("yes", "y")
+
+@function_tool
+def read_file(filename: str) -> str:
+    """Read a file from the filesystem."""
+    return f"Contents of {filename}: [file data]"
+
+@function_tool
+def delete_file(filename: str) -> str:
+    """Delete a file from the filesystem."""
+    if not confirm_action(f"Delete file '{filename}'"):
+        return f"Action cancelled. {filename} was not deleted."
+    return f"Deleted {filename} successfully"
+
+@function_tool
+def send_email(to: str, subject: str, body: str) -> str:
+    """Send an email to a recipient."""
+    if not confirm_action(f"Send email to '{to}' with subject '{subject}'"):
+        return f"Action cancelled. Email to {to} was not sent."
+    return f"Email sent to {to}: {subject}"
+
+agent = Agent(
+    name="File Manager",
+    instructions="You are a file management assistant. Help users read, delete, and send files.",
+    tools=[read_file, delete_file, send_email],
+)
+
+result = Runner.run_sync(agent, "Delete the file report.pdf")
+print(result.final_output)
+```
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+
+SENSITIVE_TOOLS = {"delete_file", "send_email"}
+
+def confirm_action(action_description: str) -> bool:
+    response = input(f"⚠️ Confirmation required: {action_description}\nProceed? (yes/no): ")
+    return response.strip().lower() in ("yes", "y")
+
+@tool
+def read_file(filename: str) -> str:
+    """Read a file from the filesystem."""
+    return f"Contents of {filename}: [file data]"
+
+@tool
+def delete_file(filename: str) -> str:
+    """Delete a file from the filesystem."""
+    if not confirm_action(f"Delete file '{filename}'"):
+        return f"Action cancelled. {filename} was not deleted."
+    return f"Deleted {filename} successfully"
+
+@tool
+def send_email(to: str, subject: str, body: str) -> str:
+    """Send an email to a recipient."""
+    if not confirm_action(f"Send email to '{to}' with subject '{subject}'"):
+        return f"Action cancelled. Email to {to} was not sent."
+    return f"Email sent to {to}: {subject}"
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a file management assistant. Help users read, delete, and send files."),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}"),
+])
+
+tools = [read_file, delete_file, send_email]
+agent = create_tool_calling_agent(llm, tools, prompt)
+executor = AgentExecutor(agent=agent, tools=tools)
+
+result = executor.invoke({"input": "Delete the file report.pdf"})
+print(result["output"])
+```
+
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from crewai import LLM
+from crewai.tools import tool
+
+llm = LLM(model="gpt-4o-mini")
+
+SENSITIVE_TOOLS = {"delete_file", "send_email"}
+
+
+def confirm_action(action_description: str) -> bool:
+    response = input(f"Confirmation required: {action_description}\nProceed? (yes/no): ")
+    return response.strip().lower() in ("yes", "y")
+
+
+@tool
+def read_file(filename: str) -> str:
+    """Read a file from the filesystem."""
+    return f"Contents of {filename}: [file data]"
+
+
+@tool
+def delete_file(filename: str) -> str:
+    """Delete a file from the filesystem."""
+    if not confirm_action(f"Delete file '{filename}'"):
+        return f"Action cancelled. {filename} was not deleted."
+    return f"Deleted {filename} successfully"
+
+
+@tool
+def send_email(to: str, subject: str, body: str) -> str:
+    """Send an email to a recipient."""
+    if not confirm_action(f"Send email to '{to}' with subject '{subject}'"):
+        return f"Action cancelled. Email to {to} was not sent."
+    return f"Email sent to {to}: {subject}"
+
+
+agent = Agent(
+    role="File Manager",
+    goal="Help users read, delete, and send files",
+    backstory="You are a file management assistant.",
+    tools=[read_file, delete_file, send_email],
+    llm=llm,
+)
+
+task = Task(
+    description="Delete the file report.pdf",
+    expected_output="Confirmation of action taken",
+    agent=agent,
+)
+
+crew = Crew(agents=[agent], tasks=[task])
+result = crew.kickoff()
+print(result)
+```
+
+## Why This Works
+
+The confirmation gate is embedded directly inside each sensitive tool function. When the agent decides to call `delete_file` or `send_email`, the function runs the `confirm_action` check before performing the destructive operation. This means the agent's decision-making is unchanged — it still decides which tool to call and with what arguments — but the actual execution is gated on human approval. Safe tools like `read_file` have no gate and execute instantly. If the user types "no," the tool returns a cancellation message that the agent can relay to the user, and the destructive action never runs. This pattern ensures that even if the agent hallucinates a tool call or misinterprets a request, no irreversible action happens without explicit human consent.
+
+## Key Takeaways
+
+- Destructive or irreversible actions (delete, send, modify) should always require explicit user confirmation before execution.
+- Classify tools as "sensitive" or "safe" and apply the confirmation gate only to sensitive ones — don't slow down read-only operations.
+- The confirmation prompt should clearly describe the action and its arguments so the user can make an informed decision.

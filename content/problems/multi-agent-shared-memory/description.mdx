@@ -1,0 +1,47 @@
+## The Problem
+
+You have three agents — a Researcher, an Analyst, and a Writer — collaborating on a report. Currently each agent operates in **complete isolation**: the Researcher finds data but the Analyst can't see it, and the Writer only sees the last agent's output, missing the Researcher's raw findings. There is no shared scratchpad or collaboration layer. Your job is to add a **shared memory** that all agents can read from and write to, with attribution and no silent overwrites.
+
+## Examples
+
+### Example 1
+
+**Scenario:** Researcher finds 5 renewable energy trends. Analyst needs to analyze them.
+
+**Current (bad) behavior:** Analyst receives only the final `result` string from the state, losing the structured data the Researcher found. The Analyst has to re-research or work with incomplete information.
+
+**Expected (good) behavior:** Researcher writes findings to the shared scratchpad: `[Researcher] Top 5 trends: 1. Solar... 2. Wind...` The Analyst reads this scratchpad and performs analysis on the actual data.
+
+### Example 2
+
+**Scenario:** Writer needs both raw research data and the Analyst's insights.
+
+**Current (bad) behavior:** Writer only sees the Analyst's output. The original research data from the Researcher is lost.
+
+**Expected (good) behavior:** Writer reads the shared scratchpad and sees entries from both the Researcher and the Analyst, producing a report that integrates raw data with analysis.
+
+### Example 3
+
+**Scenario:** Both Researcher and Analyst write to shared memory.
+
+**Current (bad) behavior:** If they wrote to the same variable, one would overwrite the other.
+
+**Expected (good) behavior:** Each entry is appended with attribution: `[Researcher] ...`, `[Analyst] ...`. Nothing is overwritten.
+
+## Your Task
+
+Add a **shared scratchpad** for multi-agent collaboration:
+
+- Create a shared data structure (e.g., a list) accessible to all agents.
+- Each agent can append entries with its name as attribution.
+- Each agent reads the full scratchpad before running so it has context from previous agents.
+- Entries are append-only — no agent can overwrite another's entries.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **All agents can read shared memory:** Every agent in the workflow can access the shared scratchpad.
+- **Writes are attributed:** Each entry tracks which agent wrote it.
+- **No silent overwrites:** Agents append to shared memory rather than overwriting.
+- **Downstream agents see upstream data:** Later agents can access findings from earlier agents.

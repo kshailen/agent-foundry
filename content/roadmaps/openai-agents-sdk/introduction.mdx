@@ -1,0 +1,35 @@
+# What is the OpenAI Agents SDK?
+
+The OpenAI Agents SDK is a lightweight, production-ready Python framework from OpenAI for building agentic applications. It provides primitives for creating agents, equipping them with tools, orchestrating handoffs between agents, and adding guardrails — all with built-in tracing.
+
+## Key Design Principles
+
+The SDK is built around a few core ideas:
+
+- **Minimal abstractions** — just enough structure to be useful, without hiding what's happening
+- **Python-native** — tools are plain Python functions, agents are simple objects
+- **First-party integration** — built by OpenAI, tightly integrated with their models
+- **Production-ready** — includes tracing, guardrails, and streaming out of the box
+
+## Core Primitives
+
+| Primitive | Description |
+|-----------|-------------|
+| **Agent** | An LLM configured with a name, instructions, tools, and optional handoffs |
+| **Tool** | A Python function the agent can call, with automatic schema generation |
+| **Handoff** | A mechanism for one agent to transfer control to another |
+| **Guardrail** | Input/output validators that run in parallel with the agent |
+| **Runner** | The execution loop that manages agent turns, tool calls, and handoffs |
+
+## When to Use the OpenAI Agents SDK
+
+This SDK is a great fit when you:
+
+- Want a lightweight, opinionated framework without heavy dependencies
+- Are already using OpenAI models and want tight integration
+- Need multi-agent handoffs (e.g., triage → specialist flows)
+- Want built-in tracing and guardrails without extra tooling
+
+## What You'll Learn
+
+This roadmap covers everything from creating your first agent to building multi-agent systems with handoffs, guardrails, and production tracing.

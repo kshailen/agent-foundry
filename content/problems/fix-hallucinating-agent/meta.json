@@ -1,0 +1,50 @@
+{
+  "number": 1,
+  "title": "Fix the Hallucinating Agent",
+  "difficulty": "easy",
+  "categories": [
+    "prompt-design"
+  ],
+  "frameworks": [
+    "langchain",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "You may only modify the system prompt",
+    "The agent must still answer the user's question helpfully",
+    "No additional tools may be added"
+  ],
+  "hints": [
+    "Think about what instruction would prevent the agent from guessing URLs",
+    "Explicitly tell the agent what to do when it doesn't have verified information",
+    "Add a constraint like: 'Never fabricate URLs, citations, or links. If you do not have a verified source, say so explicitly.'"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain.agents import AgentExecutor, create_tool_calling_agent\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom langchain_community.tools import DuckDuckGoSearchRun\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\nsearch = DuckDuckGoSearchRun()\n\n# BUG: This system prompt allows the agent to hallucinate URLs\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a helpful research assistant. Answer questions thoroughly.\"),\n    (\"human\", \"{input}\"),\n    (\"placeholder\", \"{agent_scratchpad}\"),\n])\n\nagent = create_tool_calling_agent(llm, [search], prompt)\nexecutor = AgentExecutor(agent=agent, tools=[search])\n\n# Test: Ask something that might trigger hallucinated URLs\nresult = executor.invoke({\"input\": \"What are the best resources to learn LangChain?\"})\nprint(result[\"output\"])",
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom agents.tool import function_tool\nimport httpx\n\n@function_tool\ndef search_web(query: str) -> str:\n    \"\"\"Search the web for information.\"\"\"\n    # Simulated search\n    return f\"Search results for: {query}\"\n\n# BUG: This instruction allows the agent to hallucinate URLs\nagent = Agent(\n    name=\"Research Assistant\",\n    instructions=\"You are a helpful research assistant. Answer questions thoroughly.\",\n    tools=[search_web],\n)\n\n# Test: Ask something that might trigger hallucinated URLs\nresult = Runner.run_sync(agent, \"What are the best resources to learn about AI agents?\")\nprint(result.final_output)",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai.tools import tool\n\n@tool\ndef search_web(query: str) -> str:\n    \"\"\"Search the web for information.\"\"\"\n    return f\"Search results for: {query}\"\n\n# BUG: This agent allows hallucination of URLs\nassistant = Agent(\n    role=\"Research Assistant\",\n    goal=\"Answer questions thoroughly\",\n    backstory=\"You are a helpful research assistant.\",\n    tools=[search_web],\n)\n\n# Test: Ask something that might trigger hallucinated URLs\ntask = Task(\n    description=\"What are the best resources to learn about AI agents?\",\n    expected_output=\"A helpful answer with resources\",\n    agent=assistant,\n)\n\ncrew = Crew(agents=[assistant], tasks=[task])\nresult = crew.kickoff()\nprint(result)"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/fix-hallucinating-agent-langchain.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/fix-hallucinating-agent-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/fix-hallucinating-agent-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "no-fake-urls",
+      "label": "No fabricated URLs",
+      "description": "The agent never outputs a URL it hasn't retrieved from a tool"
+    },
+    {
+      "id": "still-helpful",
+      "label": "Still answers helpfully",
+      "description": "The agent provides a useful, informative answer to the user's question"
+    },
+    {
+      "id": "graceful-unknown",
+      "label": "Handles unknowns gracefully",
+      "description": "When lacking verified information, the agent acknowledges the gap instead of guessing"
+    }
+  ]
+}

@@ -1,0 +1,187 @@
+# Functional API
+
+LangGraph's Graph API uses `StateGraph`, nodes, and edges to define workflows. The **Functional API** offers an alternative: write plain Python functions decorated with `@entrypoint` and `@task`, and use standard control flow (loops, conditionals, try/except) instead of graph edges.
+
+## Graph API vs. Functional API
+
+| Aspect | Graph API | Functional API |
+|--------|-----------|----------------|
+| Structure | Explicit nodes + edges | Decorated functions |
+| Control flow | Conditional edges, routing functions | Python `if`/`for`/`while` |
+| State | TypedDict flowing through graph | Function arguments + return values |
+| Persistence | Automatic via checkpointer | `@task` return values are checkpointed |
+| Best for | Complex multi-agent graphs | Simpler workflows, familiar Python style |
+
+## @entrypoint
+
+The `@entrypoint` decorator marks the main function of your workflow. It defines the input/output boundary and enables persistence when a checkpointer is provided:
+
+```python
+from langgraph.func import entrypoint, task
+
+@entrypoint()
+def my_workflow(topic: str) -> str:
+    joke = write_joke(topic).result()
+    return joke
+```
+
+The entrypoint function is what you `.invoke()` or `.stream()` on — it replaces `graph.compile()`.
+
+## @task
+
+The `@task` decorator marks sub-operations. Each task returns a **future** that must be resolved with `.result()`:
+
+```python
+from langgraph.func import task
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+@task
+def write_joke(topic: str) -> str:
+    response = llm.invoke(f"Write a short joke about {topic}")
+    return response.content
+
+@task
+def rate_joke(joke: str) -> str:
+    response = llm.invoke(f"Rate this joke 1-10: {joke}")
+    return response.content
+```
+
+### Why Futures?
+
+Tasks return futures so LangGraph can:
+- **Checkpoint** their return values for durability
+- **Replay** completed tasks on resume instead of re-executing them
+- Support potential **parallel execution** in the future
+
+Always call `.result()` to get the actual value.
+
+## Building a Simple Workflow
+
+Here's the joke-rating example from the Graph API topic, rebuilt with the Functional API:
+
+```python
+from langgraph.func import entrypoint, task
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+@task
+def write_joke(topic: str) -> str:
+    response = llm.invoke(f"Write a short joke about {topic}")
+    return response.content
+
+@task
+def rate_joke(joke: str) -> str:
+    response = llm.invoke(f"Rate this joke 1-10 and explain: {joke}")
+    return response.content
+
+@entrypoint()
+def joke_workflow(topic: str) -> dict:
+    joke = write_joke(topic).result()
+    rating = rate_joke(joke).result()
+    return {"joke": joke, "rating": rating}
+
+result = joke_workflow.invoke("AI agents")
+print(result)
+```
+
+No `StateGraph`, no `add_edge`, no `START`/`END` — just Python functions.
+
+## Control Flow with Python
+
+The real power of the Functional API is using native Python for control flow:
+
+```python
+@entrypoint()
+def iterative_writer(topic: str) -> str:
+    joke = write_joke(topic).result()
+    for attempt in range(3):
+        rating = rate_joke(joke).result()
+        if "8" in rating or "9" in rating or "10" in rating:
+            return joke
+        joke = write_joke(topic).result()
+    return joke
+```
+
+This retry loop would require conditional edges and cycle detection in the Graph API. With the Functional API, it's a standard `for` loop.
+
+## Rebuilding the Tool-Calling Agent
+
+Here's the tool-calling agent from the previous topic, rebuilt with the Functional API:
+
+```python
+from langgraph.func import entrypoint, task
+from langchain_openai import ChatOpenAI
+from langchain_core.tools import tool
+from langchain_core.messages import HumanMessage, ToolMessage
+
+@tool
+def add(a: float, b: float) -> float:
+    """Add two numbers together."""
+    return a + b
+
+@tool
+def multiply(a: float, b: float) -> float:
+    """Multiply two numbers together."""
+    return a * b
+
+tools = [add, multiply]
+tools_by_name = {t.name: t for t in tools}
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+llm_with_tools = llm.bind_tools(tools)
+
+@task
+def call_llm(messages: list) -> dict:
+    response = llm_with_tools.invoke(messages)
+    return response
+
+@task
+def call_tool(tool_call: dict) -> str:
+    tool_fn = tools_by_name[tool_call["name"]]
+    result = tool_fn.invoke(tool_call["args"])
+    return ToolMessage(content=str(result), tool_call_id=tool_call["id"])
+
+@entrypoint()
+def agent(question: str) -> str:
+    messages = [HumanMessage(content=question)]
+
+    while True:
+        response = call_llm(messages).result()
+        messages.append(response)
+
+        if not response.tool_calls:
+            return response.content
+
+        for tc in response.tool_calls:
+            tool_result = call_tool(tc).result()
+            messages.append(tool_result)
+
+result = agent.invoke("What is 15 * 3 + 20?")
+print(result)
+```
+
+The agent loop is a `while True` with an `if` break — no conditional edges needed.
+
+## When to Use Which API
+
+| Scenario | Recommended API |
+|----------|----------------|
+| Simple linear or looping workflows | Functional API |
+| Complex multi-agent coordination | Graph API |
+| Familiar Python developers | Functional API |
+| Need visual graph debugging | Graph API |
+| Rapid prototyping | Functional API |
+| Production multi-step pipelines | Graph API |
+
+Both APIs support checkpointing, streaming, and LangSmith tracing. Choose based on your workflow complexity and team preference.
+
+## Key Takeaways
+
+- The Functional API uses `@entrypoint` and `@task` decorators instead of `StateGraph` and edges
+- Tasks return futures — call `.result()` to get the value
+- Standard Python `if`/`for`/`while` replaces conditional edges and routing functions
+- The Functional API is ideal for simpler workflows and developers who prefer plain Python
+- Both APIs are fully compatible with checkpointing, streaming, and tracing

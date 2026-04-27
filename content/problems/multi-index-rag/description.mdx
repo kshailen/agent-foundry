@@ -1,0 +1,46 @@
+## The Problem
+
+Your application serves two audiences: **end users** who ask FAQ-style questions ("How do I reset my password?") and **developers** who ask technical questions ("What is the API endpoint for password reset?"). Both sets of documents are dumped into a single vector store index. When an end user asks how to reset their password, the retriever returns a mix of the FAQ answer and raw API endpoint documentation—confusing the user. When a developer asks for the API endpoint, they get the FAQ answer instead of the technical spec. Your job is to **split the documents into separate indexes** and **route queries to the correct one** based on query type.
+
+## Examples
+
+### Example 1
+
+**User input:** How do I reset my password?
+
+**Current (bad) output:** A confusing mix of "Go to Settings > Security > Reset Password" and "POST /api/v2/auth/reset-password - Requires email field" — the user doesn't need API details.
+
+**Expected (good) output:** Go to Settings > Security > Reset Password. *(Answer from FAQ index only.)*
+
+### Example 2
+
+**User input:** What is the API endpoint for password reset?
+
+**Current (bad) output:** Returns the FAQ "Go to Settings" answer instead of the API specification.
+
+**Expected (good) output:** POST /api/v2/auth/reset-password — Requires email field. Returns 200 with reset token. *(Answer from technical index only.)*
+
+### Example 3
+
+**User input:** What payment methods do you accept?
+
+**Current (bad) output:** Might return billing API documentation alongside the actual FAQ answer about Visa, Mastercard, and PayPal.
+
+**Expected (good) output:** We accept Visa, Mastercard, and PayPal.
+
+## Your Task
+
+Restructure the RAG pipeline to:
+
+- Store FAQ documents and technical documents in separate vector store indexes.
+- Add a routing step that classifies each query as FAQ or technical before retrieval.
+- Search only the appropriate index based on the query classification.
+- Return clean, relevant answers from the correct document set.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Uses separate indexes:** FAQ and technical documents are stored in separate vector store indexes.
+- **Routes queries to correct index:** The agent correctly routes FAQ questions to the FAQ index and technical questions to the technical index.
+- **Returns accurate answers:** Answers are sourced from the correct index and are accurate for the query type.

@@ -1,0 +1,112 @@
+## Approach
+
+The bug in the starter code is straightforward: raw user input — including HTML tags, `<script>` blocks, and event-handler attributes — is passed directly to the agent with no preprocessing. While the LLM itself won't execute JavaScript, the unsanitized content can be echoed into logs, downstream UIs, or tool arguments, creating XSS risks and unpredictable behavior.
+
+The fix is to add an input sanitization step that runs before the agent sees the message. Python's `re` module provides a simple way to strip all HTML tags using a regular expression. The regex `<[^>]*>` matches any opening, closing, or self-closing HTML tag and replaces it with an empty string. After stripping tags, we also collapse any extra whitespace left behind to keep the message clean. This approach preserves the legitimate text content while removing all markup — exactly what the constraints require.
+
+The key insight is that sanitization should be a preprocessing function applied to user input, not something you rely on the LLM to handle. By cleaning the input before it enters the agent pipeline, you guarantee that no HTML or script content ever reaches the model, tools, or downstream systems.
+
+## Solution
+
+### OpenAI Agents SDK
+
+```python
+import re
+from agents import Agent, Runner
+
+def sanitize_input(text: str) -> str:
+    cleaned = re.sub(r"<[^>]*>", "", text)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+agent = Agent(
+    name="Support Assistant",
+    instructions="You are a helpful customer support assistant.",
+)
+
+user_input = 'Hello <script>alert("xss")</script> can you help me?'
+safe_input = sanitize_input(user_input)
+
+result = Runner.run_sync(agent, safe_input)
+print(result.final_output)
+```
+
+### LangChain
+
+```python
+import re
+from langchain_openai import ChatOpenAI
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+
+@tool
+def lookup_account(name: str) -> str:
+    """Look up a customer account by name."""
+    return f"Account found for {name}"
+
+def sanitize_input(text: str) -> str:
+    cleaned = re.sub(r"<[^>]*>", "", text)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a helpful customer support assistant."),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}"),
+])
+
+agent = create_tool_calling_agent(llm, [lookup_account], prompt)
+executor = AgentExecutor(agent=agent, tools=[lookup_account])
+
+user_input = 'Hello <script>alert("xss")</script> can you help me?'
+safe_input = sanitize_input(user_input)
+
+result = executor.invoke({"input": safe_input})
+print(result["output"])
+```
+
+### CrewAI
+
+```python
+import re
+from crewai import Agent, Task, Crew
+
+
+def sanitize_input(text: str) -> str:
+    cleaned = re.sub(r"<[^>]*>", "", text)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+
+assistant = Agent(
+    role="Support Assistant",
+    goal="Help customers with their questions",
+    backstory="You are a helpful customer support assistant.",
+)
+
+user_input = 'Hello <script>alert("xss")</script> can you help me?'
+safe_input = sanitize_input(user_input)
+
+task = Task(
+    description=safe_input,
+    expected_output="A helpful response",
+    agent=assistant,
+)
+
+crew = Crew(agents=[assistant], tasks=[task])
+result = crew.kickoff()
+print(result)
+```
+
+## Why This Works
+
+The `sanitize_input` function acts as a gate between raw user input and the agent. The regex `<[^>]*>` matches everything between angle brackets — covering `<script>` blocks, `<b>` tags, `<img>` tags with event handlers, and any other HTML element. By stripping these before the agent processes the message, the text content (`Hello can you help me?`) is preserved while all markup is removed. The whitespace cleanup ensures the resulting string reads naturally. Because this runs as a pure preprocessing step, it doesn't change the agent's logic or behavior — it simply guarantees the agent only ever sees clean text.
+
+## Key Takeaways
+
+- Always sanitize user input before it reaches the LLM — don't rely on the model to ignore dangerous content.
+- A simple regex like `<[^>]*>` handles the majority of HTML/script injection cases.
+- Preprocessing-based guardrails are cheap, deterministic, and framework-agnostic — they work the same way regardless of which agent framework you use.

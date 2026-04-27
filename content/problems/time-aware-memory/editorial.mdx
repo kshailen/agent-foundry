@@ -1,0 +1,258 @@
+## Approach
+
+The bug is that facts are stored without any temporal metadata. When the user says "I had a meeting today" on Monday and "I submitted a report today" on Tuesday, both facts are stored as plain strings with no date attached. On Wednesday, asking "What did I do yesterday?" is meaningless to the agent because it cannot distinguish Monday's events from Tuesday's. Relative time expressions like "yesterday" or "last week" require a temporal anchor to resolve correctly.
+
+The fix has three components. First, attach a timestamp to every stored fact so we know when it was recorded. Second, include the current date and time in the system prompt so the model can interpret relative references. Third, add a retrieval function that filters facts by time range — when the user asks about "yesterday," compute the actual date and return only facts from that window.
+
+The implementation stores facts as tuples of `(datetime, text)` and provides a `get_facts_in_range()` function. The system prompt is dynamically built with the current date and the relevant timestamped facts, enabling the model to give temporally accurate answers.
+
+## Solution
+
+### LangChain
+
+```python
+from datetime import datetime, timedelta
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+memory = []
+
+def store_fact(fact: str, timestamp: datetime = None):
+    ts = timestamp or datetime.now()
+    memory.append({"fact": fact, "timestamp": ts})
+
+def get_facts_in_range(start: datetime, end: datetime) -> list[dict]:
+    return [m for m in memory if start <= m["timestamp"] <= end]
+
+def get_all_facts_formatted() -> str:
+    return "\n".join(
+        f"[{m['timestamp'].strftime('%Y-%m-%d %A')}] {m['fact']}" for m in memory
+    )
+
+def chat(user_input: str, current_time: datetime = None) -> str:
+    now = current_time or datetime.now()
+    store_fact(f"User said: {user_input}", now)
+
+    facts_formatted = get_all_facts_formatted()
+    system_content = (
+        f"You are a helpful assistant.\n"
+        f"Current date and time: {now.strftime('%Y-%m-%d %A %H:%M')}\n\n"
+        f"Timestamped facts:\n{facts_formatted}\n\n"
+        f"When the user uses relative time references like 'yesterday' or 'last week', "
+        f"resolve them to actual dates based on the current date above."
+    )
+
+    messages = [
+        SystemMessage(content=system_content),
+        HumanMessage(content=user_input),
+    ]
+    response = llm.invoke(messages)
+    return response.content
+
+monday = datetime(2025, 1, 6, 10, 0)
+tuesday = datetime(2025, 1, 7, 10, 0)
+wednesday = datetime(2025, 1, 8, 10, 0)
+
+# Monday
+print(chat("I had a meeting with the design team today.", monday))
+
+# Tuesday
+print(chat("I submitted the Q3 report today.", tuesday))
+
+# Wednesday — "yesterday" should mean Tuesday
+print(chat("What did I do yesterday?", wednesday))
+
+# Query by range
+print(chat("What happened in the last 3 days?", wednesday))
+
+print(f"\nStored memory: {[(m['timestamp'].strftime('%Y-%m-%d'), m['fact']) for m in memory]}")
+```
+
+### LangGraph
+
+```python
+from datetime import datetime, timedelta
+from langchain_openai import ChatOpenAI
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict
+from langchain_core.messages import HumanMessage, SystemMessage
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+memory = []
+
+def store_fact(fact: str, timestamp: datetime = None):
+    ts = timestamp or datetime.now()
+    memory.append({"fact": fact, "timestamp": ts})
+
+def get_all_facts_formatted() -> str:
+    return "\n".join(
+        f"[{m['timestamp'].strftime('%Y-%m-%d %A')}] {m['fact']}" for m in memory
+    )
+
+class State(TypedDict):
+    query: str
+    current_time: str
+    response: str
+
+def answer(state: State) -> State:
+    now = datetime.fromisoformat(state["current_time"])
+    store_fact(f"User said: {state['query']}", now)
+
+    facts_formatted = get_all_facts_formatted()
+    system_content = (
+        f"You are a helpful assistant.\n"
+        f"Current date and time: {now.strftime('%Y-%m-%d %A %H:%M')}\n\n"
+        f"Timestamped facts:\n{facts_formatted}\n\n"
+        f"When the user uses relative time references like 'yesterday' or 'last week', "
+        f"resolve them to actual dates based on the current date above."
+    )
+
+    messages = [
+        SystemMessage(content=system_content),
+        HumanMessage(content=state["query"]),
+    ]
+    response = llm.invoke(messages)
+    return {"response": response.content}
+
+graph = StateGraph(State)
+graph.add_node("answer", answer)
+graph.add_edge(START, "answer")
+graph.add_edge("answer", END)
+app = graph.compile()
+
+# Monday
+print(app.invoke({"query": "I had a meeting with the design team today.", "current_time": "2025-01-06T10:00:00"})["response"])
+
+# Tuesday
+print(app.invoke({"query": "I submitted the Q3 report today.", "current_time": "2025-01-07T10:00:00"})["response"])
+
+# Wednesday
+print(app.invoke({"query": "What did I do yesterday?", "current_time": "2025-01-08T10:00:00"})["response"])
+
+print(f"\nStored memory: {[(m['timestamp'].strftime('%Y-%m-%d'), m['fact']) for m in memory]}")
+```
+
+
+### CrewAI
+
+```python
+from datetime import datetime, timedelta
+from crewai import Agent, Task, Crew
+from crewai import LLM
+
+llm = LLM(model="gpt-4o-mini")
+
+memory = []
+
+
+def store_fact(fact: str, timestamp: datetime = None):
+    ts = timestamp or datetime.now()
+    memory.append({"fact": fact, "timestamp": ts})
+
+
+def get_all_facts_formatted() -> str:
+    return "\n".join(
+        f"[{m['timestamp'].strftime('%Y-%m-%d %A')}] {m['fact']}" for m in memory
+    )
+
+
+def chat(user_input: str, current_time: datetime = None) -> str:
+    now = current_time or datetime.now()
+    store_fact(f"User said: {user_input}", now)
+
+    facts_formatted = get_all_facts_formatted()
+    backstory = (
+        f"You are a helpful assistant.\n"
+        f"Current date and time: {now.strftime('%Y-%m-%d %A %H:%M')}\n\n"
+        f"Timestamped facts:\n{facts_formatted}\n\n"
+        f"When the user uses relative time references like 'yesterday' or 'last week', "
+        f"resolve them to actual dates based on the current date above."
+    )
+
+    agent = Agent(
+        role="Helpful Assistant",
+        goal="Answer questions using timestamped facts",
+        backstory=backstory,
+        llm=llm,
+    )
+    task = Task(description=user_input, expected_output="A helpful response", agent=agent)
+    crew = Crew(agents=[agent], tasks=[task])
+    return str(crew.kickoff())
+
+
+monday = datetime(2025, 1, 6, 10, 0)
+tuesday = datetime(2025, 1, 7, 10, 0)
+wednesday = datetime(2025, 1, 8, 10, 0)
+
+print(chat("I had a meeting with the design team today.", monday))
+print(chat("I submitted the Q3 report today.", tuesday))
+print(chat("What did I do yesterday?", wednesday))
+print(chat("What happened in the last 3 days?", wednesday))
+
+print(f"\nStored memory: {[(m['timestamp'].strftime('%Y-%m-%d'), m['fact']) for m in memory]}")
+```
+
+### OpenAI Agents SDK
+
+```python
+from datetime import datetime, timedelta
+from agents import Agent, Runner
+
+memory = []
+
+
+def store_fact(fact: str, timestamp: datetime = None):
+    ts = timestamp or datetime.now()
+    memory.append({"fact": fact, "timestamp": ts})
+
+
+def get_all_facts_formatted() -> str:
+    return "\n".join(
+        f"[{m['timestamp'].strftime('%Y-%m-%d %A')}] {m['fact']}" for m in memory
+    )
+
+
+def chat(user_input: str, current_time: datetime = None) -> str:
+    now = current_time or datetime.now()
+    store_fact(f"User said: {user_input}", now)
+
+    facts_formatted = get_all_facts_formatted()
+    instructions = (
+        f"You are a helpful assistant.\n"
+        f"Current date and time: {now.strftime('%Y-%m-%d %A %H:%M')}\n\n"
+        f"Timestamped facts:\n{facts_formatted}\n\n"
+        f"When the user uses relative time references like 'yesterday' or 'last week', "
+        f"resolve them to actual dates based on the current date above."
+    )
+
+    agent = Agent(name="Assistant", instructions=instructions)
+    result = Runner.run_sync(agent, user_input)
+    return result.final_output
+
+
+monday = datetime(2025, 1, 6, 10, 0)
+tuesday = datetime(2025, 1, 7, 10, 0)
+wednesday = datetime(2025, 1, 8, 10, 0)
+
+print(chat("I had a meeting with the design team today.", monday))
+print(chat("I submitted the Q3 report today.", tuesday))
+print(chat("What did I do yesterday?", wednesday))
+print(chat("What happened in the last 3 days?", wednesday))
+
+print(f"\nStored memory: {[(m['timestamp'].strftime('%Y-%m-%d'), m['fact']) for m in memory]}")
+```
+
+## Why This Works
+
+By attaching timestamps to every fact, the memory becomes temporally indexed. When the user asks "What did I do yesterday?", the system prompt tells the model the current date is Wednesday, January 8th. The model sees that the fact from Tuesday, January 7th is "yesterday" and can answer correctly: "You submitted the Q3 report." Monday's meeting with the design team is correctly identified as two days ago, not yesterday.
+
+The key enabler is including the current date in the system prompt. Without it, the model has no temporal anchor — it cannot resolve "yesterday" to an actual date. With both timestamps on facts and the current date in context, the model can perform temporal reasoning naturally, matching relative references to the correct events.
+
+## Key Takeaways
+
+- Memory without timestamps makes temporal queries impossible — "yesterday" and "last week" are meaningless without a reference point.
+- Always include the current date and time in the system prompt so the model can resolve relative time references.
+- Storing timestamps alongside facts enables time-range filtering, allowing the agent to answer questions about specific time periods accurately.

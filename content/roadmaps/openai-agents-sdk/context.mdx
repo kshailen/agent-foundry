@@ -1,0 +1,146 @@
+# Context & Dependency Injection
+
+Context lets you pass shared state — like database connections, user info, or configuration — into your agents and tools without global variables. The OpenAI Agents SDK uses `RunContextWrapper[T]` to thread a typed context object through the entire run, making it available to every tool call.
+
+## Why Context Matters
+
+Agents often need access to data that isn't part of the conversation — the current user's ID, a database connection, feature flags. Context provides a clean, type-safe way to inject these dependencies.
+
+```
+    Runner.run(agent, input, context=my_context)
+    → agent runs → calls tool → tool receives context as first argument
+```
+
+## Defining a Context Type
+
+Create a dataclass (or any class) to hold your shared state:
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class UserContext:
+    user_id: str
+    user_name: str
+    is_premium: bool = False
+```
+
+## Passing Context to Runner.run
+
+Pass your context object via the `context` parameter:
+
+```python
+from agents import Agent, Runner
+
+agent = Agent(
+    name="Support Agent",
+    instructions="You help users with their account.",
+)
+
+ctx = UserContext(user_id="u_123", user_name="Alice", is_premium=True)
+
+result = Runner.run_sync(agent, "What's my account status?", context=ctx)
+print(result.final_output)
+```
+
+## Tools Receive Context as First Argument
+
+When a tool is called, the SDK automatically passes the context as the first argument via `RunContextWrapper`:
+
+```python
+from agents import Agent, Runner, function_tool, RunContextWrapper
+
+@function_tool
+def get_user_profile(ctx: RunContextWrapper[UserContext]) -> str:
+    """Get the current user's profile information."""
+    user = ctx.context
+    status = "Premium" if user.is_premium else "Free"
+    return f"User: {user.user_name} (ID: {user.user_id}), Plan: {status}"
+
+agent = Agent(
+    name="Profile Agent",
+    instructions="You help users view their profile. Use the get_user_profile tool.",
+    tools=[get_user_profile],
+)
+
+ctx = UserContext(user_id="u_123", user_name="Alice", is_premium=True)
+result = Runner.run_sync(agent, "Show me my profile.", context=ctx)
+print(result.final_output)
+```
+
+The `RunContextWrapper[UserContext]` type annotation tells the SDK to inject the context. Inside the tool, access your data via `ctx.context`.
+
+## Mixing Context and Regular Parameters
+
+Tools can accept both context and regular parameters. The context is always the first argument:
+
+```python
+@function_tool
+def check_order(ctx: RunContextWrapper[UserContext], order_id: str) -> str:
+    """Check the status of an order for the current user."""
+    return f"Order {order_id} for user {ctx.context.user_name}: Shipped"
+
+agent = Agent(
+    name="Order Agent",
+    instructions="You help users check their orders.",
+    tools=[check_order],
+)
+
+ctx = UserContext(user_id="u_123", user_name="Alice")
+result = Runner.run_sync(agent, "Check order ORD-456.", context=ctx)
+print(result.final_output)
+```
+
+The model only sees `order_id` as a parameter — it never knows about the context injection.
+
+## ToolContext for Tool Metadata
+
+`ToolContext` extends `RunContextWrapper` with additional metadata about the current tool call:
+
+```python
+from agents import function_tool, ToolContext
+
+@function_tool
+def log_action(ctx: ToolContext[UserContext], action: str) -> str:
+    """Log a user action."""
+    return (
+        f"Logged: {action} by {ctx.context.user_name} "
+        f"(tool: {ctx.tool_name}, call_id: {ctx.tool_call_id})"
+    )
+```
+
+| Property | Description |
+|----------|-------------|
+| `ctx.tool_name` | Name of the tool being called |
+| `ctx.tool_call_id` | Unique ID for this specific tool call |
+| `ctx.context` | Your custom context object |
+
+## Dynamic Instructions with Context
+
+Agent instructions can be a function that receives the context, enabling personalized behavior:
+
+```python
+from agents import Agent, Runner, RunContextWrapper
+
+def dynamic_instructions(ctx: RunContextWrapper[UserContext], agent: Agent) -> str:
+    user = ctx.context
+    tier = "premium" if user.is_premium else "free"
+    return f"You are helping {user.user_name}, a {tier} user. Be extra helpful to premium users."
+
+agent = Agent(
+    name="Support Agent",
+    instructions=dynamic_instructions,
+)
+
+ctx = UserContext(user_id="u_123", user_name="Alice", is_premium=True)
+result = Runner.run_sync(agent, "I need help.", context=ctx)
+print(result.final_output)
+```
+
+## Key Takeaways
+
+- Define a context type (dataclass) to hold shared state like user info or config
+- Pass context to `Runner.run(context=obj)` — it flows through the entire run
+- Tools receive context as their first argument via `RunContextWrapper[T]`
+- `ToolContext[T]` extends the wrapper with `tool_name` and `tool_call_id` metadata
+- Agent instructions can be a function that receives context for dynamic personalization

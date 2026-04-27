@@ -1,0 +1,43 @@
+## The Problem
+
+You have a two-agent flow: a **sales agent** helps the customer choose a plan, then hands off to an **onboarding agent** to set up the account. The problem is that when the handoff happens, the onboarding agent has **no knowledge** of what was discussed during the sales conversation. It asks the customer to repeat their plan choice, team size, and preferences. Your task is to **preserve the full conversation context** during the handoff so the onboarding agent can pick up seamlessly.
+
+## Examples
+
+### Example 1
+
+**User input (to sales):** I'm interested in the Pro plan for my team of 10.
+
+**User input (to onboarding):** Great, I'd like to set up my account now.
+
+**Current (bad) output:** The onboarding agent asks: "Welcome! What plan would you like? How many team members?" — repeating questions already answered.
+
+**Expected (good) output:** The onboarding agent says: "Welcome! I see you've chosen the Pro plan for 10 team members. Let's get your account set up. First, I'll need your company email…"
+
+### Example 2
+
+**User input (to sales):** I need the Enterprise plan with SSO and custom integrations.
+
+**User input (to onboarding):** Let's proceed with setup.
+
+**Current (bad) output:** Onboarding has no idea about the Enterprise plan or SSO requirement and starts with generic setup steps.
+
+**Expected (good) output:** Onboarding acknowledges the Enterprise plan, SSO requirement, and custom integrations, then walks through the relevant setup process.
+
+## Your Task
+
+Fix the starter code so that:
+
+- The **conversation history** from the sales agent is passed to the onboarding agent during handoff.
+- The onboarding agent **knows** what was discussed and does not ask the user to repeat information.
+- The handoff uses an **explicit mechanism** (not accidental shared state).
+- The transition feels seamless to the user.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Conversation context preserved:** The full conversation history from Agent A is available to Agent B after handoff.
+- **No repeated questions:** Agent B does not ask the user to repeat information already provided to Agent A.
+- **Seamless handoff experience:** The transition between agents feels continuous to the user.
+- **Explicit handoff mechanism:** The handoff is done through an explicit mechanism, not accidental state sharing.

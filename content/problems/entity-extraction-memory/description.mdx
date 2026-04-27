@@ -1,0 +1,54 @@
+## The Problem
+
+Your assistant handles multi-turn conversations but has no structured understanding of the **entities** mentioned — people, places, dates, organizations. When a user says "I met Sarah in Tokyo last March," the agent processes it as unstructured text. A few turns later, asking "Who did I mention?" or "What city was that meeting in?" relies entirely on the model finding it in the raw conversation history. Your job is to add **automatic entity extraction** that identifies and stores named entities so the agent can reference them reliably.
+
+## Examples
+
+### Example 1
+
+**User input (turn 1):** I met with Sarah and David in Tokyo last March to discuss the Q1 report.
+
+**User input (turn 4):** List all the people I've mentioned so far.
+
+**Current (bad) output:** I'm not sure exactly who you've mentioned. Could you remind me?
+
+**Expected (good) output:** You've mentioned Sarah, David, and Professor Mueller.
+
+### Example 2
+
+**User input (turn 1):** I met with Sarah in Tokyo last March.
+
+**User input (turn 3):** Next week I'm flying to Berlin to meet Professor Mueller on January 15th.
+
+**User input (turn 4):** What cities have come up in our conversation?
+
+**Current (bad) output:** Could you remind me which cities we discussed?
+
+**Expected (good) output:** We've discussed Tokyo (from your March meeting) and Berlin (your upcoming trip).
+
+### Example 3
+
+**User input (turn 1):** The project deadline is December 1st and the client is Acme Corp.
+
+**User input (turn 3):** What date is the deadline?
+
+**Current (bad) output:** I don't have that information. What's your deadline?
+
+**Expected (good) output:** The project deadline is December 1st.
+
+## Your Task
+
+Add **automatic entity extraction and storage** to the agent:
+
+- After each turn, extract named entities (people, places, dates, organizations) from the user's message.
+- Store them in a structured format (e.g., `{"people": ["Sarah", "David"], "places": ["Tokyo"]}`).
+- Inject the entity store into the agent's context so it can reference them in future turns.
+- The extraction should be automatic — no manual tagging by the user.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Extracts named entities:** The agent automatically identifies and stores people, places, and dates from conversation.
+- **Entities are queryable:** The agent can list or reference previously extracted entities when asked directly.
+- **Supports multiple entity types:** The extraction handles at least people, places, and dates correctly.

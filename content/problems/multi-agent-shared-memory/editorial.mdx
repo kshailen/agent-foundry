@@ -1,0 +1,231 @@
+## Approach
+
+The bug is that each agent in the multi-agent pipeline operates in complete isolation. The Researcher finds data but the Analyst cannot see it directly — it only receives the final `result` string from the state, losing structured details. The Writer only sees the Analyst's output, missing the Researcher's raw findings entirely. There is no shared scratchpad for agents to collaborate through.
+
+The fix adds a shared scratchpad to the state that all agents can read from and append to. Each entry is tagged with the writing agent's name for attribution. The scratchpad uses an append-only pattern — agents add entries but never overwrite previous ones. Before running, each agent reads the full scratchpad to get context from all previous agents. This ensures downstream agents have access to all upstream findings, not just the immediately preceding agent's output.
+
+In LangGraph, the scratchpad is added as a field in the state dictionary. In CrewAI, a shared context string is built and injected into each task's description so agents can reference earlier findings.
+
+## Solution
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+
+shared_scratchpad = []
+
+def add_to_scratchpad(agent_name: str, entry: str):
+    shared_scratchpad.append(f"[{agent_name}] {entry}")
+
+def get_scratchpad() -> str:
+    if not shared_scratchpad:
+        return "No entries yet."
+    return "\n".join(shared_scratchpad)
+
+researcher = Agent(
+    role="Researcher",
+    goal="Find key data points about renewable energy trends.",
+    backstory="You are an expert researcher who finds relevant data.",
+    verbose=True,
+)
+
+analyst = Agent(
+    role="Analyst",
+    goal="Analyze data and extract insights.",
+    backstory="You are a data analyst who turns raw data into insights.",
+    verbose=True,
+)
+
+writer = Agent(
+    role="Writer",
+    goal="Write a compelling report from the analysis.",
+    backstory="You are a technical writer who creates clear reports.",
+    verbose=True,
+)
+
+research_task = Task(
+    description=(
+        "Research the top 5 renewable energy trends for 2025. "
+        "When done, your output will be added to the shared scratchpad for other agents."
+    ),
+    expected_output="A list of 5 trends with supporting data.",
+    agent=researcher,
+)
+
+analysis_task = Task(
+    description=(
+        "Analyze the research findings and identify the most impactful trend. "
+        "Use the research output provided in the context from the previous task."
+    ),
+    expected_output="An analysis with the top trend identified.",
+    agent=analyst,
+    context=[research_task],
+)
+
+writing_task = Task(
+    description=(
+        "Write a 3-paragraph summary report combining research and analysis. "
+        "Use all findings from previous tasks provided in the context."
+    ),
+    expected_output="A polished 3-paragraph report.",
+    agent=writer,
+    context=[research_task, analysis_task],
+)
+
+crew = Crew(
+    agents=[researcher, analyst, writer],
+    tasks=[research_task, analysis_task, writing_task],
+    verbose=True,
+)
+
+result = crew.kickoff()
+print(result)
+```
+
+### LangGraph
+
+```python
+from langchain_openai import ChatOpenAI
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict, Annotated
+from langchain_core.messages import HumanMessage, SystemMessage
+import operator
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+class State(TypedDict):
+    task: str
+    result: str
+    scratchpad: Annotated[list, operator.add]
+
+def researcher(state: State) -> State:
+    scratchpad_context = "\n".join(state.get("scratchpad", []))
+    messages = [
+        SystemMessage(content=f"You are a researcher. Find key data points.\n\nShared scratchpad:\n{scratchpad_context}"),
+        HumanMessage(content=state["task"]),
+    ]
+    response = llm.invoke(messages)
+    return {
+        "result": response.content,
+        "scratchpad": [f"[Researcher] {response.content}"],
+    }
+
+def analyst(state: State) -> State:
+    scratchpad_context = "\n".join(state.get("scratchpad", []))
+    messages = [
+        SystemMessage(content=f"You are an analyst. Analyze the data.\n\nShared scratchpad:\n{scratchpad_context}"),
+        HumanMessage(content=f"Analyze the findings and identify the most impactful trend."),
+    ]
+    response = llm.invoke(messages)
+    return {
+        "result": response.content,
+        "scratchpad": [f"[Analyst] {response.content}"],
+    }
+
+def writer(state: State) -> State:
+    scratchpad_context = "\n".join(state.get("scratchpad", []))
+    messages = [
+        SystemMessage(content=f"You are a technical writer. Write a report.\n\nShared scratchpad:\n{scratchpad_context}"),
+        HumanMessage(content="Write a 3-paragraph summary report combining all research and analysis from the scratchpad."),
+    ]
+    response = llm.invoke(messages)
+    return {
+        "result": response.content,
+        "scratchpad": [f"[Writer] {response.content}"],
+    }
+
+graph = StateGraph(State)
+graph.add_node("researcher", researcher)
+graph.add_node("analyst", analyst)
+graph.add_node("writer", writer)
+graph.add_edge(START, "researcher")
+graph.add_edge("researcher", "analyst")
+graph.add_edge("analyst", "writer")
+graph.add_edge("writer", END)
+app = graph.compile()
+
+result = app.invoke({
+    "task": "Research renewable energy trends and write a report.",
+    "scratchpad": [],
+})
+print(result["result"])
+
+print("\n=== Shared Scratchpad ===")
+for entry in result["scratchpad"]:
+    print(entry[:120] + "...")
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+
+shared_scratchpad = []
+
+def add_to_scratchpad(agent_name: str, entry: str):
+    shared_scratchpad.append(f"[{agent_name}] {entry}")
+
+def get_scratchpad() -> str:
+    if not shared_scratchpad:
+        return "No entries yet."
+    return "\n".join(shared_scratchpad)
+
+researcher = Agent(
+    name="Researcher",
+    instructions="You are a researcher. Find key data points.",
+)
+
+analyst = Agent(
+    name="Analyst",
+    instructions="You are an analyst. Analyze the data.",
+)
+
+writer = Agent(
+    name="Writer",
+    instructions="You are a technical writer. Write a report.",
+)
+
+task = "Research renewable energy trends and write a report."
+
+scratchpad_context = get_scratchpad()
+research_result = Runner.run_sync(
+    researcher,
+    f"Shared scratchpad:\n{scratchpad_context}\n\n{task}",
+)
+add_to_scratchpad("Researcher", research_result.final_output)
+
+scratchpad_context = get_scratchpad()
+analysis_result = Runner.run_sync(
+    analyst,
+    f"Shared scratchpad:\n{scratchpad_context}\n\nAnalyze the findings and identify the most impactful trend.",
+)
+add_to_scratchpad("Analyst", analysis_result.final_output)
+
+scratchpad_context = get_scratchpad()
+report_result = Runner.run_sync(
+    writer,
+    f"Shared scratchpad:\n{scratchpad_context}\n\nWrite a 3-paragraph summary report combining all research and analysis from the scratchpad.",
+)
+add_to_scratchpad("Writer", report_result.final_output)
+
+print(report_result.final_output)
+
+print("\n=== Shared Scratchpad ===")
+for entry in shared_scratchpad:
+    print(entry[:120] + "...")
+```
+
+## Why This Works
+
+The shared scratchpad gives every agent a view into the work of all other agents. In the LangGraph solution, the scratchpad is a list in the state that accumulates entries using `operator.add` (the annotated reducer). Each agent reads the full scratchpad to see all prior contributions, then appends its own output. The Writer sees both the Researcher's raw data and the Analyst's insights, enabling a comprehensive report.
+
+In the CrewAI solution, the `context` parameter on each task explicitly passes the output of prior tasks as context. The analysis task receives the research task's output, and the writing task receives both. This is CrewAI's built-in mechanism for the same pattern — downstream tasks get upstream context without a shared global variable.
+
+The append-only pattern ensures agents never overwrite each other. Attribution tags (`[Researcher]`, `[Analyst]`) make it clear who contributed what, enabling the downstream agents to weigh and reference specific sources.
+
+## Key Takeaways
+
+- In multi-agent pipelines, each agent needs access to upstream findings — not just the immediately preceding agent's output.
+- An append-only shared scratchpad with attribution is a simple, effective pattern for multi-agent collaboration.
+- The scratchpad should be injected into each agent's context before it runs, ensuring all agents have complete visibility into prior work.

@@ -1,0 +1,113 @@
+# Checkpointing & Persistence
+
+LangGraph graphs are stateless by default — each `invoke` starts fresh. **Checkpointing** changes this by saving the state after every node execution. This enables resuming interrupted runs, time-travel debugging, and building multi-turn chatbots that remember prior conversations.
+
+## InMemorySaver
+
+The simplest checkpointer stores state in a Python dictionary. It is useful for development and testing:
+
+```python
+from langgraph.checkpoint.memory import InMemorySaver
+
+checkpointer = InMemorySaver()
+app = graph.compile(checkpointer=checkpointer)
+```
+
+For production you would swap this for a persistent backend like `SqliteSaver` or `PostgresSaver`, but the API stays the same.
+
+## thread_id
+
+A checkpointer saves state **per thread**. You supply a `thread_id` in the config to separate different conversations or sessions:
+
+```python
+config = {"configurable": {"thread_id": "user-42"}}
+result = app.invoke({"messages": [("human", "Hi")]}, config=config)
+```
+
+Every subsequent call with the same `thread_id` continues from where the last one left off. A different `thread_id` starts a completely independent state.
+
+## Multi-Turn Chatbot with Persistence
+
+Here is a complete chatbot that remembers messages across invocations:
+
+```python
+from typing import Annotated
+from typing_extensions import TypedDict
+from langgraph.graph import StateGraph, START, END, add_messages, MessagesState
+from langgraph.checkpoint.memory import InMemorySaver
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+def chatbot(state: MessagesState) -> dict:
+    response = llm.invoke(state["messages"])
+    return {"messages": [response]}
+
+graph = StateGraph(MessagesState)
+graph.add_node("chatbot", chatbot)
+graph.add_edge(START, "chatbot")
+graph.add_edge("chatbot", END)
+
+checkpointer = InMemorySaver()
+app = graph.compile(checkpointer=checkpointer)
+
+config = {"configurable": {"thread_id": "demo"}}
+
+result1 = app.invoke({"messages": [("human", "My name is Alice")]}, config=config)
+print(result1["messages"][-1].content)
+
+result2 = app.invoke({"messages": [("human", "What is my name?")]}, config=config)
+print(result2["messages"][-1].content)
+```
+
+The second invocation receives the full message history from the first, so the LLM can recall the user's name.
+
+## get_state()
+
+After running the graph, you can inspect the current checkpoint:
+
+```python
+snapshot = app.get_state(config)
+print(snapshot.values["messages"])
+print(snapshot.next)
+```
+
+`get_state` returns a `StateSnapshot` object containing the saved values and metadata.
+
+## StateSnapshot Fields
+
+| Field | Description |
+|-------|-------------|
+| `values` | The full state dict at this checkpoint |
+| `next` | Tuple of node names that would execute next (empty if the graph finished) |
+| `config` | The config dict including `thread_id` and `checkpoint_id` |
+| `parent_config` | Config pointing to the previous checkpoint |
+| `metadata` | Dict with `source`, `step`, `writes`, and `parents` |
+| `created_at` | ISO timestamp of when the checkpoint was created |
+| `tasks` | Pending tasks at this checkpoint |
+
+## get_state_history()
+
+You can walk through every checkpoint ever saved for a thread:
+
+```python
+for snapshot in app.get_state_history(config):
+    print(f"Step {snapshot.metadata['step']}: next={snapshot.next}")
+    print(f"  Messages: {len(snapshot.values['messages'])}")
+```
+
+This enables **time-travel debugging** — you can replay the graph from any prior checkpoint by passing its `config` back to `invoke` or `get_state`.
+
+```python
+history = list(app.get_state_history(config))
+old_config = history[-2].config
+old_state = app.get_state(old_config)
+```
+
+## Key Takeaways
+
+- Compile with a checkpointer (`InMemorySaver` for dev, database-backed for prod) to enable persistence
+- Use `thread_id` in the config to isolate independent conversations or sessions
+- `get_state(config)` returns a `StateSnapshot` with the current values, next nodes, and metadata
+- `get_state_history(config)` yields every checkpoint for a thread, enabling time-travel debugging
+- Multi-turn chatbots become trivial: just call `invoke` with the same `thread_id` and LangGraph appends to the existing message history

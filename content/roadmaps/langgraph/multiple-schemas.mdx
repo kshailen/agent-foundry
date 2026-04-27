@@ -1,0 +1,127 @@
+# Multiple State Schemas
+
+As graphs grow complex, you often want different views of the state for different purposes. The graph's input might only need a question string, the output might only need an answer, but internally the nodes pass around intermediate data the caller should never see. LangGraph supports this with **multiple state schemas**.
+
+## InputState and OutputState
+
+You can define separate TypedDicts for what the graph accepts and what it returns:
+
+```python
+from typing import TypedDict, Annotated
+from langgraph.graph import add_messages
+
+class InputState(TypedDict):
+    question: str
+
+class OutputState(TypedDict):
+    answer: str
+
+class OverallState(TypedDict):
+    question: str
+    answer: str
+    messages: Annotated[list, add_messages]
+    research_notes: str
+```
+
+`InputState` defines the fields the caller provides. `OutputState` defines the fields the caller receives. `OverallState` is the internal state that all nodes work with — it's a superset of both.
+
+## StateGraph with Schema Parameters
+
+Pass the schemas to `StateGraph` using `input` and `output` keyword arguments:
+
+```python
+from langgraph.graph import StateGraph, START, END
+
+graph = StateGraph(
+    OverallState,
+    input=InputState,
+    output=OutputState,
+)
+```
+
+When you call `app.invoke({"question": "What is LangGraph?"})`, LangGraph validates the input against `InputState`. When the graph finishes, it filters the state to only include fields from `OutputState` — so the caller sees `{"answer": "..."}` without any internal fields leaking out.
+
+## Private Internal Channels
+
+Fields in `OverallState` that do not appear in `InputState` or `OutputState` are **private internal channels**. They exist only during graph execution:
+
+```python
+class OverallState(TypedDict):
+    question: str          # in InputState
+    answer: str            # in OutputState
+    messages: Annotated[list, add_messages]  # internal only
+    research_notes: str    # internal only
+```
+
+`messages` and `research_notes` are available to every node but invisible to the caller. This keeps your graph's API clean.
+
+## Complete Example
+
+```python
+from typing import TypedDict, Annotated
+from langgraph.graph import StateGraph, START, END, add_messages
+from langchain_openai import ChatOpenAI
+
+class InputState(TypedDict):
+    question: str
+
+class OutputState(TypedDict):
+    answer: str
+
+class OverallState(TypedDict):
+    question: str
+    answer: str
+    messages: Annotated[list, add_messages]
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+def research(state: OverallState) -> dict:
+    response = llm.invoke([
+        ("system", "Research the following question and provide detailed notes."),
+        ("human", state["question"]),
+    ])
+    return {"messages": [response]}
+
+def synthesize(state: OverallState) -> dict:
+    response = llm.invoke([
+        ("system", "Synthesize a concise answer from the research notes."),
+        *state["messages"],
+    ])
+    return {"answer": response.content}
+
+graph = StateGraph(
+    OverallState,
+    input=InputState,
+    output=OutputState,
+)
+graph.add_node("research", research)
+graph.add_node("synthesize", synthesize)
+graph.add_edge(START, "research")
+graph.add_edge("research", "synthesize")
+graph.add_edge("synthesize", END)
+
+app = graph.compile()
+
+result = app.invoke({"question": "What are reducers in LangGraph?"})
+print(result)
+# {"answer": "Reducers are functions that..."} — only OutputState fields
+```
+
+The caller sends `{"question": "..."}` and receives `{"answer": "..."}`. The internal `messages` list is never exposed.
+
+## When to Use Multiple Schemas
+
+| Scenario | Approach |
+|----------|----------|
+| Simple graph, all fields relevant to caller | Single `State` TypedDict |
+| Graph has internal working data | Separate `InputState`, `OutputState`, `OverallState` |
+| Subgraphs with different interfaces | Each subgraph defines its own input/output schemas |
+| API-facing graphs | Use schemas to define a clean public contract |
+
+## Key Takeaways
+
+- Define `InputState`, `OutputState`, and `OverallState` as separate TypedDicts to control what the caller sees
+- Pass schemas via `StateGraph(OverallState, input=InputState, output=OutputState)`
+- Fields in `OverallState` that are not in `InputState` or `OutputState` are private internal channels
+- This pattern keeps your graph's public API clean while allowing rich internal state
+- Multiple schemas are especially useful for subgraphs and API-facing applications

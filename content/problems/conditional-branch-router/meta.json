@@ -1,0 +1,51 @@
+{
+  "number": 90,
+  "title": "Conditional Branch Router",
+  "difficulty": "easy",
+  "categories": [
+    "orchestration"
+  ],
+  "frameworks": [
+    "langgraph",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "The router must support exactly three branches: complaint, question, and feedback",
+    "Each branch must have its own handler with distinct behavior",
+    "The routing decision must be made by an LLM classification step, not keyword matching",
+    "All branches must merge back into a single output node"
+  ],
+  "hints": [
+    "Use a classifier node that outputs a category, then add conditional edges from that node to each branch handler",
+    "In LangGraph, use add_conditional_edges with a routing function that returns the branch name",
+    "Each branch handler should have a specialized system prompt tailored to that input type"
+  ],
+  "starterCode": {
+    "langgraph": "from langchain_openai import ChatOpenAI\nfrom langchain_core.messages import HumanMessage, SystemMessage\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# BUG: All inputs are processed the same way regardless of type\n# TODO: Add conditional routing so complaints, questions, and feedback each get distinct handling\ndef handle_input(message: str) -> str:\n    response = llm.invoke([\n        SystemMessage(content=\"You are a customer service agent. Handle the following message.\"),\n        HumanMessage(content=message),\n    ])\n    return response.content\n\ntest_inputs = [\n    \"Your product broke after one day! I want a refund!\",\n    \"What payment methods do you accept?\",\n    \"I love your new feature, the dark mode is great!\",\n]\nfor msg in test_inputs:\n    result = handle_input(msg)\n    print(f\"Input: {msg}\\nOutput: {result}\\n\")",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\n# BUG: All inputs are processed the same way regardless of type\n# TODO: Add conditional routing so complaints, questions, and feedback each get distinct handling\nagent = Agent(\n    name=\"Customer Service\",\n    instructions=\"You are a customer service agent. Handle the following message.\",\n)\n\ntest_inputs = [\n    \"Your product broke after one day! I want a refund!\",\n    \"What payment methods do you accept?\",\n    \"I love your new feature, the dark mode is great!\",\n]\nfor msg in test_inputs:\n    result = Runner.run_sync(agent, msg)\n    print(f\"Input: {msg}\\nOutput: {result.final_output}\\n\")",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai import LLM\n\nllm = LLM(model=\"gpt-4o-mini\")\n\n# BUG: All inputs are processed the same way regardless of type\n# TODO: Add conditional routing so complaints, questions, and feedback each get distinct handling\nagent = Agent(\n    role=\"Customer Service\",\n    goal=\"Handle customer messages\",\n    backstory=\"You are a customer service agent. Handle the following message.\",\n    llm=llm,\n)\n\ntest_inputs = [\n    \"Your product broke after one day! I want a refund!\",\n    \"What payment methods do you accept?\",\n    \"I love your new feature, the dark mode is great!\",\n]\n\nfor msg in test_inputs:\n    task = Task(\n        description=msg,\n        expected_output=\"A response to the customer\",\n        agent=agent,\n    )\n    crew = Crew(agents=[agent], tasks=[task])\n    result = crew.kickoff()\n    print(f\"Input: {msg}\\nOutput: {result}\\n\")"
+  },
+  "colabUrls": {
+    "langgraph": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/conditional-branch-router-langgraph.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/conditional-branch-router-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/conditional-branch-router-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "three-distinct-branches",
+      "label": "Three distinct branches",
+      "description": "The workflow contains separate handlers for complaints, questions, and feedback"
+    },
+    {
+      "id": "llm-based-routing",
+      "label": "LLM-based routing",
+      "description": "The routing decision is made by an LLM classifier, not hardcoded keyword matching"
+    },
+    {
+      "id": "branch-specific-behavior",
+      "label": "Branch-specific behavior",
+      "description": "Each branch produces noticeably different responses appropriate to the input type"
+    }
+  ]
+}

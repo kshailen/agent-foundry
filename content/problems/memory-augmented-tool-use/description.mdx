@@ -1,0 +1,52 @@
+## The Problem
+
+Your assistant has tools to fetch weather and stock prices. Every time the user asks "What's the weather in Tokyo?", the agent calls the weather API — even if it fetched the exact same data 30 seconds ago. This wastes API calls, increases latency, and costs money. The agent has **no memory of previous tool results**. Your job is to add a memory cache so the agent checks for existing data before calling a tool, and caches new results for future queries.
+
+## Examples
+
+### Example 1
+
+**Query 1:** What's the weather in Tokyo?
+
+**Query 2:** What's the weather in Tokyo?
+
+**Current (bad) behavior:** Both queries trigger an API call. Total calls: 2.
+
+**Expected (good) behavior:** Query 1 calls the API and caches the result. Query 2 returns the cached result. Total calls: 1. The agent says something like: "Based on my earlier check, the weather in Tokyo is 72°F and sunny."
+
+### Example 2
+
+**Query 1:** What's AAPL stock price?
+
+**Query 2:** What's the price of AAPL?
+
+**Current (bad) behavior:** Both queries trigger separate API calls even though they ask for the same data.
+
+**Expected (good) behavior:** Query 1 fetches and caches. Query 2 recognizes it's the same data and uses the cache. The agent mentions it's using previously fetched data.
+
+### Example 3
+
+**Query 1:** What's the weather in Tokyo?
+
+**Query 2:** What's the weather in Paris?
+
+**Current (bad) behavior:** Both calls go through (which is correct here).
+
+**Expected (good) behavior:** Both calls go through because they're different cities. Paris data is also cached for future use.
+
+## Your Task
+
+Add **memory-augmented tool use** to the agent:
+
+- Before calling any tool, check a memory cache for matching results.
+- If a cache hit is found, return the cached data without calling the tool.
+- If no cache hit, call the tool and store the result in the cache.
+- The agent should mention when it uses cached data versus a fresh call.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Uses cached results:** When the same data has been fetched before, the agent returns cached results without calling the tool.
+- **Calls tool on cache miss:** When data is not in memory, the agent correctly calls the tool.
+- **Reduces redundant API calls:** Duplicate queries result in fewer total tool calls than without caching.

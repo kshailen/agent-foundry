@@ -1,0 +1,46 @@
+## The Problem
+
+Your customer lookup agent queries an internal database and returns detailed records — including email addresses and phone numbers. This PII (Personally Identifiable Information) is being sent directly to the end user with no filtering. Depending on who's asking, this is a privacy violation and potentially a compliance issue. The database query is fine; the problem is that **the agent has no PII detection or redaction layer**. Your job is to add a post-processing step that detects emails and phone numbers in the agent's output and replaces them with redaction placeholders before the response reaches the user.
+
+## Examples
+
+### Example 1
+
+**User input:** Find the details for Alice
+
+**Current (bad) output:** `Customer: Alice, Email: alice@example.com, Phone: 555-867-5309, Status: Active`
+
+**Expected (good) output:** `Customer: Alice, Email: [EMAIL_REDACTED], Phone: [PHONE_REDACTED], Status: Active`
+
+### Example 2
+
+**User input:** Look up Bob's contact info
+
+**Current (bad) output:** `Bob can be reached at bob.smith@corp.io or (212) 555-0199.`
+
+**Expected (good) output:** `Bob can be reached at [EMAIL_REDACTED] or [PHONE_REDACTED].`
+
+### Example 3
+
+**User input:** What's the status of customer Charlie?
+
+**Current (bad) output:** `Charlie is an active customer.` *(No PII in this response.)*
+
+**Expected (good) output:** `Charlie is an active customer.` *(No change needed — no PII present.)*
+
+## Your Task
+
+Add a **PII detection and redaction layer** so the agent:
+
+- Scans its own output for email addresses and phone numbers.
+- Replaces detected PII with clearly labeled placeholders (e.g. `[EMAIL_REDACTED]`, `[PHONE_REDACTED]`).
+- Preserves all non-PII content in the response.
+- Works as a post-processing step that does not change the agent's core logic.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Email addresses are redacted:** All email addresses in the output are replaced with a redaction placeholder.
+- **Phone numbers are redacted:** All phone numbers in the output are replaced with a redaction placeholder.
+- **Non-PII content preserved:** The rest of the response remains useful and coherent.

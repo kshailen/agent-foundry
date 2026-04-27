@@ -1,0 +1,51 @@
+{
+  "number": 54,
+  "title": "RAG with Tables",
+  "difficulty": "hard",
+  "categories": [
+    "rag"
+  ],
+  "frameworks": [
+    "langchain",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "Tables in documents must be preserved during chunking",
+    "The agent must correctly answer questions requiring tabular data",
+    "Chunk boundaries must not split table rows apart",
+    "The chunking strategy must handle both prose and tables in the same document"
+  ],
+  "hints": [
+    "Detect table boundaries before chunking and treat each table as an atomic unit",
+    "Consider using markdown or structured formats to represent tables in chunks",
+    "Use a custom text splitter that recognizes table delimiters and keeps tables intact"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI, OpenAIEmbeddings\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom langchain_community.vectorstores import FAISS\nfrom langchain_core.documents import Document\nfrom langchain.text_splitter import CharacterTextSplitter\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\nembeddings = OpenAIEmbeddings()\n\ndocument_text = \"\"\"Company Financial Report Q3 2024\n\nRevenue Summary:\nThe company achieved strong growth across all segments.\n\n| Region       | Q3 Revenue | Q2 Revenue | Growth |\n|-------------|-----------|-----------|--------|\n| North America | $45M      | $38M      | 18.4%  |\n| Europe       | $32M      | $29M      | 10.3%  |\n| Asia Pacific | $28M      | $22M      | 27.3%  |\n| Latin America | $12M      | $11M      | 9.1%   |\n\nExpense Breakdown:\nOperating expenses were well managed this quarter.\n\n| Category     | Amount  | % of Revenue |\n|-------------|---------|-------------|\n| R&D          | $25M    | 21.4%       |\n| Sales        | $18M    | 15.4%       |\n| Operations   | $15M    | 12.8%       |\n| G&A          | $8M     | 6.8%        |\n\nThe company projects continued growth in Q4 2024.\"\"\"\n\n# BUG: Naive character splitting breaks tables apart\nsplitter = CharacterTextSplitter(chunk_size=150, chunk_overlap=20)\nchunks = splitter.split_text(document_text)\ndocs = [Document(page_content=chunk) for chunk in chunks]\n\nvectorstore = FAISS.from_documents(docs, embeddings)\nretriever = vectorstore.as_retriever()\n\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"Answer based on context.\\n\\nContext: {context}\"),\n    (\"human\", \"{question}\"),\n])\n\ndef ask(question: str) -> str:\n    retrieved = retriever.invoke(question)\n    context = \"\\n\".join([doc.page_content for doc in retrieved])\n    chain = prompt | llm\n    result = chain.invoke({\"context\": context, \"question\": question})\n    return result.content\n\nprint(ask(\"What was the revenue growth in Asia Pacific?\"))",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom langchain_openai import OpenAIEmbeddings\nfrom langchain_community.vectorstores import FAISS\nfrom langchain_core.documents import Document\nfrom langchain.text_splitter import CharacterTextSplitter\n\nembeddings = OpenAIEmbeddings()\n\ndocument_text = \"\"\"Company Financial Report Q3 2024\n\nRevenue Summary:\nThe company achieved strong growth across all segments.\n\n| Region       | Q3 Revenue | Q2 Revenue | Growth |\n|-------------|-----------|-----------|--------|\n| North America | $45M      | $38M      | 18.4%  |\n| Europe       | $32M      | $29M      | 10.3%  |\n| Asia Pacific | $28M      | $22M      | 27.3%  |\n| Latin America | $12M      | $11M      | 9.1%   |\n\nExpense Breakdown:\nOperating expenses were well managed this quarter.\n\n| Category     | Amount  | % of Revenue |\n|-------------|---------|-------------|\n| R&D          | $25M    | 21.4%       |\n| Sales        | $18M    | 15.4%       |\n| Operations   | $15M    | 12.8%       |\n| G&A          | $8M     | 6.8%        |\n\nThe company projects continued growth in Q4 2024.\"\"\"\n\n# BUG: Naive character splitting breaks tables apart\nsplitter = CharacterTextSplitter(chunk_size=150, chunk_overlap=20)\nchunks = splitter.split_text(document_text)\ndocs = [Document(page_content=chunk) for chunk in chunks]\n\nvectorstore = FAISS.from_documents(docs, embeddings)\nretriever = vectorstore.as_retriever()\n\ndef ask(question: str) -> str:\n    retrieved = retriever.invoke(question)\n    context = \"\\n\".join([doc.page_content for doc in retrieved])\n    answerer = Agent(\n        role=\"Financial Analyst\",\n        goal=\"Answer questions about financial data\",\n        backstory=f\"Answer based on this context:\\n{context}\",\n    )\n    task = Task(description=question, expected_output=\"A data-backed answer\", agent=answerer)\n    crew = Crew(agents=[answerer], tasks=[task])\n    return str(crew.kickoff())\n\nprint(ask(\"What was the revenue growth in Asia Pacific?\"))",
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom langchain_openai import OpenAIEmbeddings\nfrom langchain_community.vectorstores import FAISS\nfrom langchain_core.documents import Document\nfrom langchain.text_splitter import CharacterTextSplitter\n\nembeddings = OpenAIEmbeddings()\n\ndocument_text = \"\"\"Company Financial Report Q3 2024\n\nRevenue Summary:\nThe company achieved strong growth across all segments.\n\n| Region       | Q3 Revenue | Q2 Revenue | Growth |\n|-------------|-----------|-----------|--------|\n| North America | $45M      | $38M      | 18.4%  |\n| Europe       | $32M      | $29M      | 10.3%  |\n| Asia Pacific | $28M      | $22M      | 27.3%  |\n| Latin America | $12M      | $11M      | 9.1%   |\n\nExpense Breakdown:\nOperating expenses were well managed this quarter.\n\n| Category     | Amount  | % of Revenue |\n|-------------|---------|-------------|\n| R&D          | $25M    | 21.4%       |\n| Sales        | $18M    | 15.4%       |\n| Operations   | $15M    | 12.8%       |\n| G&A          | $8M     | 6.8%        |\n\nThe company projects continued growth in Q4 2024.\"\"\"\n\n# BUG: Naive character splitting breaks tables apart\nsplitter = CharacterTextSplitter(chunk_size=150, chunk_overlap=20)\nchunks = splitter.split_text(document_text)\ndocs = [Document(page_content=chunk) for chunk in chunks]\n\nvectorstore = FAISS.from_documents(docs, embeddings)\nretriever = vectorstore.as_retriever()\n\ndef ask(question: str) -> str:\n    retrieved = retriever.invoke(question)\n    context = \"\\n\".join([doc.page_content for doc in retrieved])\n    agent = Agent(\n        name=\"Financial Analyst\",\n        instructions=f\"Answer the question based on this context. Pay attention to table data.\\n\\nContext:\\n{context}\",\n    )\n    result = Runner.run_sync(agent, question)\n    return result.final_output\n\nprint(ask(\"What was the revenue growth in Asia Pacific?\"))"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/rag-with-tables-langchain.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/rag-with-tables-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/rag-with-tables-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "preserves-tables",
+      "label": "Preserves table structure",
+      "description": "Tables are kept intact during chunking and not split across chunk boundaries"
+    },
+    {
+      "id": "correct-tabular-answers",
+      "label": "Answers tabular questions correctly",
+      "description": "The agent correctly extracts and reports data from tables in the documents"
+    },
+    {
+      "id": "handles-mixed-content",
+      "label": "Handles mixed prose and tables",
+      "description": "The chunking strategy works for documents containing both narrative text and tables"
+    }
+  ]
+}

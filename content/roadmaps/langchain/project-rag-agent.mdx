@@ -1,0 +1,217 @@
+# Project: RAG Knowledge Base
+
+In this project, you'll build an agent that indexes text documents into a vector store, creates a retriever tool, and answers questions with cited sources. This combines RAG fundamentals with agent-based retrieval for a complete knowledge base assistant.
+
+## What You'll Build
+
+A knowledge base agent that can:
+
+- Index a collection of text documents with embeddings
+- Search the knowledge base using semantic similarity
+- Answer questions grounded in actual documents
+- Cite which source documents were used
+
+## Step 1: Prepare Documents
+
+Create a collection of documents representing your knowledge base:
+
+```python
+from langchain_core.documents import Document
+
+documents = [
+    Document(
+        page_content="Python's asyncio library provides infrastructure for writing single-threaded concurrent code using coroutines. It uses an event loop to manage async tasks efficiently.",
+        metadata={"source": "python-async-guide", "topic": "python"},
+    ),
+    Document(
+        page_content="REST APIs use HTTP methods like GET, POST, PUT, and DELETE to perform CRUD operations. They are stateless and use URLs to identify resources.",
+        metadata={"source": "api-design-handbook", "topic": "apis"},
+    ),
+    Document(
+        page_content="PostgreSQL is a powerful open-source relational database. It supports advanced features like JSON columns, full-text search, and window functions.",
+        metadata={"source": "database-fundamentals", "topic": "databases"},
+    ),
+    Document(
+        page_content="Git branching allows developers to work on features independently. The main branch contains production code, while feature branches isolate changes.",
+        metadata={"source": "git-workflows", "topic": "git"},
+    ),
+    Document(
+        page_content="Docker Compose defines multi-container applications in a YAML file. It manages networking, volumes, and dependencies between services.",
+        metadata={"source": "docker-handbook", "topic": "devops"},
+    ),
+    Document(
+        page_content="Unit tests verify individual functions in isolation. Use pytest fixtures for setup and parametrize for testing multiple inputs.",
+        metadata={"source": "testing-best-practices", "topic": "testing"},
+    ),
+    Document(
+        page_content="FastAPI automatically generates OpenAPI documentation from your Python type hints. It supports async endpoints, dependency injection, and Pydantic validation.",
+        metadata={"source": "fastapi-tutorial", "topic": "python"},
+    ),
+    Document(
+        page_content="Redis is an in-memory data store used for caching, session management, and message queuing. It supports data structures like strings, lists, sets, and sorted sets.",
+        metadata={"source": "caching-strategies", "topic": "databases"},
+    ),
+]
+```
+
+## Step 2: Create the Vector Store and Retriever
+
+Index the documents and create a retriever:
+
+```python
+from langchain_openai import OpenAIEmbeddings
+from langchain_core.vectorstores import InMemoryVectorStore
+
+embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+vector_store = InMemoryVectorStore(embedding=embeddings)
+vector_store.add_documents(documents)
+
+retriever = vector_store.as_retriever(search_kwargs={"k": 3})
+```
+
+## Step 3: Build the Retriever Tool
+
+Wrap the retriever in a `@tool` so the agent can use it. Include source citations in the output:
+
+```python
+from langchain_core.tools import tool
+
+@tool
+def search_knowledge_base(query: str) -> str:
+    """Search the technical knowledge base for information.
+
+    Use this tool to find answers about Python, APIs, databases,
+    Git, Docker, testing, and other technical topics.
+    """
+    docs = retriever.invoke(query)
+    if not docs:
+        return "No relevant documents found."
+
+    results = []
+    for doc in docs:
+        source = doc.metadata.get("source", "unknown")
+        topic = doc.metadata.get("topic", "general")
+        results.append(f"[Source: {source} | Topic: {topic}]\n{doc.page_content}")
+
+    return "\n\n---\n\n".join(results)
+```
+
+## Step 4: Create the Agent
+
+Build the agent with `create_react_agent` and the retriever tool:
+
+```python
+from langchain.chat_models import init_chat_model
+from langgraph.prebuilt import create_react_agent
+
+model = init_chat_model("gpt-4o-mini", model_provider="openai")
+
+agent = create_react_agent(
+    model=model,
+    tools=[search_knowledge_base],
+    prompt=(
+        "You are a technical knowledge base assistant. "
+        "Always search the knowledge base before answering questions. "
+        "When you use information from the knowledge base, cite the source document. "
+        "If the knowledge base doesn't have the answer, say so clearly."
+    ),
+)
+```
+
+## Step 5: Query the Knowledge Base
+
+Ask questions and get cited answers:
+
+```python
+from langchain_core.messages import HumanMessage
+
+result = agent.invoke({
+    "messages": [HumanMessage(content="How does Python handle async programming?")]
+})
+print(result["messages"][-1].content)
+```
+
+Try multi-topic queries:
+
+```python
+result = agent.invoke({
+    "messages": [HumanMessage(content="Compare PostgreSQL and Redis — when would I use each?")]
+})
+print(result["messages"][-1].content)
+```
+
+Ask about something not in the knowledge base:
+
+```python
+result = agent.invoke({
+    "messages": [HumanMessage(content="How do I deploy to Kubernetes?")]
+})
+print(result["messages"][-1].content)
+```
+
+## Full Code
+
+```python
+from langchain.chat_models import init_chat_model
+from langchain_core.documents import Document
+from langchain_core.messages import HumanMessage
+from langchain_core.tools import tool
+from langchain_core.vectorstores import InMemoryVectorStore
+from langchain_openai import OpenAIEmbeddings
+from langgraph.prebuilt import create_react_agent
+
+documents = [
+    Document(page_content="Python's asyncio library provides infrastructure for writing single-threaded concurrent code using coroutines.", metadata={"source": "python-async-guide", "topic": "python"}),
+    Document(page_content="REST APIs use HTTP methods like GET, POST, PUT, and DELETE to perform CRUD operations.", metadata={"source": "api-design-handbook", "topic": "apis"}),
+    Document(page_content="PostgreSQL is a powerful open-source relational database with JSON columns and full-text search.", metadata={"source": "database-fundamentals", "topic": "databases"}),
+    Document(page_content="Git branching allows developers to work on features independently from the main branch.", metadata={"source": "git-workflows", "topic": "git"}),
+    Document(page_content="Docker Compose defines multi-container applications in a YAML file.", metadata={"source": "docker-handbook", "topic": "devops"}),
+    Document(page_content="Unit tests verify individual functions in isolation using pytest.", metadata={"source": "testing-best-practices", "topic": "testing"}),
+    Document(page_content="FastAPI generates OpenAPI docs from type hints and supports async endpoints.", metadata={"source": "fastapi-tutorial", "topic": "python"}),
+    Document(page_content="Redis is an in-memory data store for caching, sessions, and message queuing.", metadata={"source": "caching-strategies", "topic": "databases"}),
+]
+
+embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+vector_store = InMemoryVectorStore(embedding=embeddings)
+vector_store.add_documents(documents)
+retriever = vector_store.as_retriever(search_kwargs={"k": 3})
+
+@tool
+def search_knowledge_base(query: str) -> str:
+    """Search the technical knowledge base for information."""
+    docs = retriever.invoke(query)
+    if not docs:
+        return "No relevant documents found."
+    results = []
+    for doc in docs:
+        source = doc.metadata.get("source", "unknown")
+        results.append(f"[{source}] {doc.page_content}")
+    return "\n\n".join(results)
+
+model = init_chat_model("gpt-4o-mini", model_provider="openai")
+
+agent = create_react_agent(
+    model=model,
+    tools=[search_knowledge_base],
+    prompt="You are a technical knowledge base assistant. Always search before answering and cite your sources.",
+)
+
+questions = [
+    "How does Python handle async programming?",
+    "Compare PostgreSQL and Redis.",
+    "What's the best way to write unit tests?",
+]
+
+for question in questions:
+    result = agent.invoke({"messages": [HumanMessage(content=question)]})
+    print(f"Q: {question}")
+    print(f"A: {result['messages'][-1].content}\n")
+```
+
+## Key Takeaways
+
+- A RAG knowledge base agent combines document indexing with agent-based retrieval
+- Wrap the retriever in a `@tool` with a clear docstring so the agent knows when to use it
+- Include source metadata in tool output so the agent can cite its sources
+- The agent decides when to search and can issue multiple queries for complex questions
+- Use `InMemoryVectorStore` for prototyping; swap to a persistent store for production

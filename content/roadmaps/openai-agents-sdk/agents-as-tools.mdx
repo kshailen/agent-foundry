@@ -1,0 +1,162 @@
+# Agents as Tools
+
+Instead of handing off control entirely, you can use other agents as tools — the orchestrator calls them like functions, gets their output back, and continues its own reasoning. The `as_tool()` method turns any agent into a tool that another agent can invoke.
+
+## Handoffs vs. Agents as Tools
+
+These are two distinct patterns for multi-agent collaboration:
+
+| Pattern | Control Flow | Use When |
+|---------|-------------|----------|
+| **Handoffs** | Control transfers completely to the new agent | The new agent should take over the conversation |
+| **Agents as Tools** | Orchestrator calls agent, gets result, continues | You need the result back for further processing |
+
+```
+Handoff:         Orchestrator → Specialist (takes over)
+Agent as Tool:   Orchestrator → Specialist (returns result) → Orchestrator continues
+```
+
+## Basic as_tool Usage
+
+Use `agent.as_tool()` to convert an agent into a callable tool:
+
+```python
+from agents import Agent, Runner
+
+translator = Agent(
+    name="Translator",
+    instructions="You translate text to French. Return only the translation.",
+)
+
+orchestrator = Agent(
+    name="Content Creator",
+    instructions="You create content. Use the translator tool to translate text when asked.",
+    tools=[translator.as_tool(
+        tool_name="translate_to_french",
+        tool_description="Translates text to French",
+    )],
+)
+
+result = Runner.run_sync(orchestrator, "Write a greeting and translate it to French.")
+print(result.final_output)
+```
+
+The orchestrator sends input to the translator agent, receives the translation, and incorporates it into its own response.
+
+## The Orchestrator Pattern
+
+The most powerful use of agents-as-tools is the orchestrator pattern — a manager agent that delegates to specialist agents:
+
+```python
+from agents import Agent, Runner
+
+researcher = Agent(
+    name="Researcher",
+    instructions="You research topics thoroughly. Provide detailed, factual summaries.",
+)
+
+writer = Agent(
+    name="Writer",
+    instructions="You write polished, engaging prose based on provided information.",
+)
+
+critic = Agent(
+    name="Critic",
+    instructions="You review text for accuracy, clarity, and style. Provide specific feedback.",
+)
+
+editor = Agent(
+    name="Editor",
+    instructions=(
+        "You manage the content creation process. "
+        "1. Use the researcher to gather information. "
+        "2. Use the writer to draft content. "
+        "3. Use the critic to review it. "
+        "Produce the final polished output."
+    ),
+    tools=[
+        researcher.as_tool(tool_name="research", tool_description="Research a topic in depth"),
+        writer.as_tool(tool_name="write", tool_description="Write polished content"),
+        critic.as_tool(tool_name="review", tool_description="Review content for quality"),
+    ],
+)
+
+result = Runner.run_sync(editor, "Create a short article about the history of the internet.")
+print(result.final_output)
+```
+
+## Custom Output Extractor
+
+By default, `as_tool` returns the agent's `final_output` as the tool result. Use `custom_output_extractor` to customize what gets returned:
+
+```python
+from agents import Agent
+
+async def extract_with_metadata(run_result):
+    return f"[Source: {run_result.last_agent.name}] {run_result.final_output}"
+
+researcher = Agent(
+    name="Researcher",
+    instructions="You research topics and provide detailed summaries.",
+)
+
+orchestrator = Agent(
+    name="Manager",
+    instructions="You manage research tasks.",
+    tools=[researcher.as_tool(
+        tool_name="research",
+        tool_description="Research a topic",
+        custom_output_extractor=extract_with_metadata,
+    )],
+)
+```
+
+## Conditional Tool Availability with is_enabled
+
+Use `is_enabled` to dynamically control whether an agent-tool is available based on context:
+
+```python
+from agents import Agent, RunContextWrapper
+from dataclasses import dataclass
+
+@dataclass
+class AppContext:
+    enable_premium_features: bool = False
+
+def premium_only(ctx: RunContextWrapper[AppContext], agent: Agent) -> bool:
+    return ctx.context.enable_premium_features
+
+premium_analyst = Agent(
+    name="Premium Analyst",
+    instructions="You provide deep analytical insights.",
+)
+
+agent = Agent(
+    name="Assistant",
+    instructions="You help users. Use the analyst tool if available.",
+    tools=[premium_analyst.as_tool(
+        tool_name="deep_analysis",
+        tool_description="Perform deep analysis (premium feature)",
+        is_enabled=premium_only,
+    )],
+)
+```
+
+When `is_enabled` returns `False`, the tool won't appear in the agent's available tools.
+
+## as_tool Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `tool_name` | `str` | Name the orchestrator sees for this tool |
+| `tool_description` | `str` | Description of what the tool does |
+| `custom_output_extractor` | `callable` | Function to transform the agent's result |
+| `is_enabled` | `callable` | Function returning `bool` to control availability |
+
+## Key Takeaways
+
+- `agent.as_tool()` turns an agent into a tool that returns its result to the calling agent
+- Unlike handoffs, the orchestrator retains control and continues reasoning after the tool call
+- The orchestrator pattern lets a manager agent delegate to specialist agents and synthesize results
+- `custom_output_extractor` transforms how the specialist's output is returned
+- `is_enabled` dynamically controls whether the agent-tool is available based on context

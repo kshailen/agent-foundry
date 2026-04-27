@@ -1,0 +1,210 @@
+## Approach
+
+The bug is that the multi-agent pipeline (research -> analysis -> visualization -> report) runs in a strict sequence with no error isolation. When the analysis agent crashes with a `RuntimeError`, the entire pipeline dies — research results that were already computed are lost, and the visualization and report agents never get a chance to run. One agent's failure cascades through the whole system.
+
+The fix is to wrap each agent's execution in its own error boundary (try/except). If an agent crashes, the error is caught, a fallback message is stored in its output slot, and the pipeline continues to the next agent. The downstream agents receive the fallback message and can work around it. The final report agent aggregates all results — successful outputs and failure markers alike — into a single output that clearly notes which agents failed and what error occurred.
+
+In LangGraph, this means wrapping each node function's core logic in a try/except. In CrewAI, you wrap individual task execution and catch failures, substituting a fallback result. The pattern is the same in both frameworks: isolate, catch, continue, and report.
+
+## Solution
+
+### LangGraph
+
+```python
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict
+
+class State(TypedDict):
+    topic: str
+    research: str
+    analysis: str
+    visualization: str
+    report: str
+
+def research_agent(state: State) -> State:
+    try:
+        return {"research": f"Research findings on {state['topic']}: [detailed research]"}
+    except Exception as e:
+        return {"research": f"⚠️ Unavailable (research agent error: {e})"}
+
+def analysis_agent(state: State) -> State:
+    try:
+        raise RuntimeError("Analysis model failed to load")
+    except Exception as e:
+        return {"analysis": f"⚠️ Unavailable (analysis agent error: {e})"}
+
+def visualization_agent(state: State) -> State:
+    try:
+        return {"visualization": f"Charts generated for {state['topic']}"}
+    except Exception as e:
+        return {"visualization": f"⚠️ Unavailable (visualization agent error: {e})"}
+
+def report_agent(state: State) -> State:
+    sections = []
+    sections.append(f"Research: {state['research']}")
+    sections.append(f"Analysis: {state['analysis']}")
+    sections.append(f"Visualizations: {state['visualization']}")
+
+    has_failures = any("⚠️ Unavailable" in s for s in [state["research"], state["analysis"], state["visualization"]])
+    if has_failures:
+        sections.append("\nNote: Some sections are missing due to processing errors. Report compiled from available data.")
+
+    return {"report": f"Report on {state['topic']}:\n\n" + "\n".join(sections)}
+
+graph = StateGraph(State)
+graph.add_node("research", research_agent)
+graph.add_node("analysis", analysis_agent)
+graph.add_node("visualization", visualization_agent)
+graph.add_node("report", report_agent)
+
+graph.add_edge(START, "research")
+graph.add_edge("research", "analysis")
+graph.add_edge("analysis", "visualization")
+graph.add_edge("visualization", "report")
+graph.add_edge("report", END)
+
+app = graph.compile()
+
+result = app.invoke({"topic": "AI trends 2025", "research": "", "analysis": "", "visualization": "", "report": ""})
+print(result["report"])
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+
+researcher = Agent(
+    role="Research Specialist",
+    goal="Research the given topic thoroughly",
+    backstory="You are an expert researcher with deep knowledge.",
+    verbose=True,
+)
+
+analyst = Agent(
+    role="Data Analyst",
+    goal="Analyze the research findings",
+    backstory="You are a data analyst who finds insights in research.",
+    verbose=True,
+)
+
+visualizer = Agent(
+    role="Visualization Expert",
+    goal="Create visual representations of the analysis",
+    backstory="You turn data into compelling visuals.",
+    verbose=True,
+)
+
+reporter = Agent(
+    role="Report Writer",
+    goal="Compile everything into a final report",
+    backstory="You write clear, comprehensive reports.",
+    verbose=True,
+)
+
+def run_task_safely(crew_instance, task, agent):
+    try:
+        single_crew = Crew(agents=[agent], tasks=[task], verbose=True)
+        return single_crew.kickoff()
+    except Exception as e:
+        return f"⚠️ Unavailable ({agent.role} encountered an error: {e})"
+
+research_task = Task(
+    description="Research AI trends for 2025",
+    agent=researcher,
+    expected_output="Research findings",
+)
+
+analysis_task = Task(
+    description="Analyze the research (NOTE: this will fail due to a simulated error)",
+    agent=analyst,
+    expected_output="Analysis results",
+)
+
+viz_task = Task(
+    description="Create visualizations from the analysis",
+    agent=visualizer,
+    expected_output="Visualization descriptions",
+)
+
+report_task = Task(
+    description="Write the final report combining all outputs",
+    agent=reporter,
+    expected_output="Final report",
+)
+
+results = {}
+task_configs = [
+    ("research", research_task, researcher),
+    ("analysis", analysis_task, analyst),
+    ("visualization", viz_task, visualizer),
+    ("report", report_task, reporter),
+]
+
+for name, task, agent in task_configs:
+    results[name] = run_task_safely(None, task, agent)
+
+print("Final Results:")
+for name, result in results.items():
+    print(f"\n{name.title()}: {result}")
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+
+research_agent = Agent(
+    name="Research Specialist",
+    instructions="You are an expert researcher. Research the given topic thoroughly.",
+)
+
+analysis_agent = Agent(
+    name="Data Analyst",
+    instructions="You are a data analyst who finds insights in research.",
+)
+
+visualization_agent = Agent(
+    name="Visualization Expert",
+    instructions="You turn data into compelling visuals.",
+)
+
+report_agent = Agent(
+    name="Report Writer",
+    instructions="You write clear, comprehensive reports.",
+)
+
+def run_agent_safely(name: str, agent: Agent, prompt: str) -> str:
+    try:
+        if name == "analysis":
+            raise RuntimeError("Analysis model failed to load")
+        result = Runner.run_sync(agent, prompt)
+        return result.final_output
+    except Exception as e:
+        return f"⚠️ Unavailable ({name} agent encountered an error: {e})"
+
+agents_config = [
+    ("research", research_agent, "Research AI trends for 2025"),
+    ("analysis", analysis_agent, "Analyze the research"),
+    ("visualization", visualization_agent, "Create visualizations for AI trends"),
+    ("report", report_agent, "Write the final report combining all outputs"),
+]
+
+results = {}
+for name, agent, prompt in agents_config:
+    results[name] = run_agent_safely(name, agent, prompt)
+
+print("Final Results:")
+for name, output in results.items():
+    print(f"\n{name.title()}: {output}")
+```
+
+## Why This Works
+
+Each agent node catches its own exceptions and stores a failure marker instead of letting the exception propagate up the call stack. When the analysis agent raises `RuntimeError`, its try/except block catches it and returns `"⚠️ Unavailable (analysis agent error: ...)"`. The graph continues to the visualization node (which runs successfully) and then to the report node. The report agent inspects all the inputs it receives and notes which sections are missing due to errors. The user gets a report with research findings, a failure note for analysis, visualization results, and a summary note about the incomplete data. This is vastly better than getting nothing at all, and the clear error reporting helps the user understand exactly what happened.
+
+## Key Takeaways
+
+- Wrap each agent in its own error boundary so a crash in one doesn't cascade through the entire pipeline.
+- Store failure markers (not exceptions) in the state so downstream agents can work with whatever data is available.
+- The final aggregation step should detect and report missing sections, giving users transparency about what failed and what succeeded.

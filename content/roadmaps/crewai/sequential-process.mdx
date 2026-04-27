@@ -1,0 +1,108 @@
+# Sequential Process
+
+In CrewAI, a **sequential process** means your crew runs tasks **one after another** in a **fixed order** you define. Task 1 finishes before task 2 starts, task 2 before task 3, and so on. There is no parallel fan-out within that ordered chain unless you design multiple crews or use a different process model.
+
+## Automatic context passing
+
+With `Process.sequential`, CrewAI **automatically threads context forward**: the **output of task N** is made available as **input context for task N+1**. Later agents see what earlier tasks produced, so each step can refine, summarize, or build on the previous result without you manually wiring every string between tasks in application code.
+
+## Setting sequential mode
+
+Pass `process=Process.sequential` when you build your `Crew`. **Sequential is the default**, so you often get the same behavior even if you omit `process`—but being explicit helps readers and keeps behavior clear if defaults change.
+
+```python
+from crewai import Crew, Process
+
+crew = Crew(
+    agents=[researcher, analyst, writer],
+    tasks=[research_task, analyze_task, write_task],
+    process=Process.sequential,
+    verbose=True,
+)
+```
+
+## Example: researcher → analyst → writer
+
+This pattern fits many content and decision workflows: **gather raw information**, **interpret and structure it**, then **produce a final artifact** (report, email, spec).
+
+```python
+from crewai import Agent, Task, Crew, Process
+
+researcher = Agent(
+    role="Researcher",
+    goal="Collect accurate, sourced facts on the topic.",
+    backstory="You are thorough and cite what you find.",
+    verbose=True,
+)
+
+analyst = Agent(
+    role="Analyst",
+    goal="Turn research into clear insights and implications.",
+    backstory="You spot patterns and separate signal from noise.",
+    verbose=True,
+)
+
+writer = Agent(
+    role="Writer",
+    goal="Produce a polished final summary for the reader.",
+    backstory="You write clearly and match the requested format.",
+    verbose=True,
+)
+
+research_task = Task(
+    description="Research: What are the main benefits and risks of {topic}?",
+    expected_output="Bullet list of benefits and risks with short notes.",
+    agent=researcher,
+)
+
+analyze_task = Task(
+    description="From the research output, identify the top 3 takeaways and one open question.",
+    expected_output="Three takeaways and one open question, each one sentence.",
+    agent=analyst,
+)
+
+write_task = Task(
+    description="Write a short executive summary using the analyst's takeaways.",
+    expected_output="A 2–3 paragraph executive summary.",
+    agent=writer,
+)
+
+crew = Crew(
+    agents=[researcher, analyst, writer],
+    tasks=[research_task, analyze_task, write_task],
+    process=Process.sequential,
+    verbose=True,
+)
+
+result = crew.kickoff(inputs={"topic": "agentic AI in enterprises"})
+```
+
+Here, the **analyst** implicitly builds on the **researcher**’s output, and the **writer** builds on the **analyst**’s—because of sequential ordering and automatic context passing.
+
+## When to use sequential vs hierarchical
+
+- **Use sequential** when the workflow is a **known pipeline**: fixed stages, clear handoffs, and you want **predictable** execution order. Examples: research → draft → edit, or ingest → classify → respond.
+- **Use hierarchical** when you need a **manager-style agent** to **delegate**, **replan**, or **choose** which subordinate does what based on runtime context. That adds flexibility and coordination cost.
+
+Sequential is usually **simpler to reason about**; hierarchical is **more dynamic** but **harder to debug** when delegation goes wrong.
+
+## Task ordering matters
+
+The **order of tasks in the `tasks` list is the execution order**. First item runs first, second runs second, and so on. If you reorder the list, you reorder the pipeline—even if agent roles stay the same—so always align list order with the story you want the crew to tell.
+
+## Sequential vs hierarchical (comparison)
+
+| Dimension | Sequential | Hierarchical |
+|-----------|------------|--------------|
+| Flow | Predictable, linear (or strictly ordered chain) | More dynamic; manager can delegate and adjust |
+| Ordering | You define order via the `tasks` list | Subtasks and delegation shaped by a lead/manager agent |
+| Complexity | Simpler mental model and tracing | Richer coordination; more moving parts |
+| Best for | Pipelines with stable stages | Open-ended work where planning and delegation help |
+
+## Key takeaways
+
+- **Sequential** runs tasks **in list order**, one after another.
+- **Context flows forward automatically**: later tasks see earlier task outputs.
+- Set it with **`process=Process.sequential`**; it is also the **default** for many crews.
+- Prefer sequential for **stable pipelines**; consider hierarchical when you need **runtime delegation and replanning**.
+- **Reorder `tasks`** only when you intend to change **execution order**—the list **is** the schedule.

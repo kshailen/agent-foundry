@@ -1,0 +1,46 @@
+## The Problem
+
+Your financial reports contain important data in **tables**—revenue by region, expense breakdowns, quarterly comparisons. The current RAG pipeline uses a naive character-based text splitter that chops the document into fixed-size chunks with no awareness of table structure. This means table headers end up in one chunk, the first two rows in another, and the remaining rows in yet another. When the agent retrieves a chunk, it gets a fragment of a table with no headers and no context—making it impossible to answer questions like "What was Asia Pacific's revenue growth?" Your job is to implement a **table-aware chunking strategy** that keeps tables intact.
+
+## Examples
+
+### Example 1
+
+**User input:** What was the revenue growth in Asia Pacific?
+
+**Current (bad) output:** The agent retrieves a chunk containing `| Asia Pacific | $28M` but without the table header, so it can't determine which column is Q3, Q2, or Growth. It guesses or hallucinates.
+
+**Expected (good) output:** Asia Pacific's revenue grew 27.3% in Q3 2024, from $22M in Q2 to $28M in Q3.
+
+### Example 2
+
+**User input:** What percentage of revenue goes to R&D?
+
+**Current (bad) output:** The agent retrieves a fragment like `| R&D | $25M |` without the column header explaining what the percentages mean.
+
+**Expected (good) output:** R&D spending was $25M, representing 21.4% of revenue in Q3 2024.
+
+### Example 3
+
+**User input:** Which region had the highest growth?
+
+**Current (bad) output:** Returns an incomplete or wrong answer because the revenue table is split across chunks and the agent can't compare all regions.
+
+**Expected (good) output:** Asia Pacific had the highest growth at 27.3%, followed by North America at 18.4%.
+
+## Your Task
+
+Fix the chunking strategy so the pipeline:
+
+- Detects table boundaries in the document and treats each table as an atomic unit.
+- Keeps table headers with their data rows—never splits a table across chunks.
+- Handles documents with both prose paragraphs and tables.
+- Produces correct answers to questions that require reading tabular data.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Preserves table structure:** Tables are kept intact during chunking and not split across chunk boundaries.
+- **Answers tabular questions correctly:** The agent correctly extracts and reports data from tables in the documents.
+- **Handles mixed prose and tables:** The chunking strategy works for documents containing both narrative text and tables.

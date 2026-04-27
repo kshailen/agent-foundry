@@ -1,0 +1,227 @@
+## Approach
+
+The agent handles multi-turn conversations but treats all content as unstructured text. When a user mentions "Sarah," "Tokyo," and "last March," these entities are not extracted or stored in any structured way. A few turns later, asking "List all the people I've mentioned" requires the model to scan through raw conversation history and find names — which becomes unreliable as the conversation grows or older messages are truncated.
+
+The fix adds automatic entity extraction after each user message. A separate LLM call parses the user's message and returns structured JSON with entity types and values (e.g., `{"people": ["Sarah", "David"], "places": ["Tokyo"], "dates": ["last March"]}`). These are accumulated in a persistent entity store and injected into the system prompt on every turn. This gives the agent a structured, queryable knowledge base of all entities mentioned in the conversation.
+
+The extraction runs as a lightweight post-processing step and does not block the main response. The entity store is a dictionary of lists, keyed by entity type, with deduplication to avoid storing the same entity twice.
+
+## Solution
+
+### LangChain
+
+```python
+import json
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+entity_store = {"people": [], "places": [], "dates": [], "organizations": []}
+history = []
+
+EXTRACTION_PROMPT = """Extract named entities from the following message.
+Return a JSON object with these keys: "people", "places", "dates", "organizations".
+Each value should be a list of strings.
+If a category has no entities, use an empty list.
+Only return the JSON object, nothing else.
+
+Message: {message}"""
+
+def extract_entities(message: str):
+    response = llm.invoke([HumanMessage(content=EXTRACTION_PROMPT.format(message=message))])
+    try:
+        entities = json.loads(response.content.strip().strip("`").strip("json").strip())
+        for category, items in entities.items():
+            if category in entity_store:
+                for item in items:
+                    if item not in entity_store[category]:
+                        entity_store[category].append(item)
+    except json.JSONDecodeError:
+        pass
+
+def build_system_prompt() -> str:
+    base = "You are a helpful assistant."
+    non_empty = {k: v for k, v in entity_store.items() if v}
+    if non_empty:
+        entity_str = "\n".join(f"- {k}: {', '.join(v)}" for k, v in non_empty.items())
+        base += f"\n\nEntities mentioned in this conversation:\n{entity_str}"
+    return base
+
+def chat(user_input: str) -> str:
+    extract_entities(user_input)
+    history.append(HumanMessage(content=user_input))
+    messages = [SystemMessage(content=build_system_prompt())] + history
+    response = llm.invoke(messages)
+    history.append(response)
+    return response.content
+
+# Turn 1: Mentions people and places
+print(chat("I met with Sarah and David in Tokyo last March to discuss the Q1 report."))
+
+# Turn 2: References an entity from turn 1
+print(chat("What city was my meeting in?"))
+
+# Turn 3: More entities
+print(chat("Next week I'm flying to Berlin to meet Professor Mueller on January 15th."))
+
+# Turn 4: Query about people
+print(chat("List all the people I've mentioned so far."))
+
+print(f"\nEntity store: {entity_store}")
+```
+
+### OpenAI Agents SDK
+
+```python
+import json
+from agents import Agent, Runner
+from openai import OpenAI
+
+client = OpenAI()
+
+entity_store = {"people": [], "places": [], "dates": [], "organizations": []}
+history = []
+
+EXTRACTION_PROMPT = """Extract named entities from the following message.
+Return a JSON object with these keys: "people", "places", "dates", "organizations".
+Each value should be a list of strings.
+If a category has no entities, use an empty list.
+Only return the JSON object, nothing else.
+
+Message: {message}"""
+
+def extract_entities(message: str):
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": EXTRACTION_PROMPT.format(message=message)}],
+    )
+    try:
+        entities = json.loads(response.choices[0].message.content.strip().strip("`").strip("json").strip())
+        for category, items in entities.items():
+            if category in entity_store:
+                for item in items:
+                    if item not in entity_store[category]:
+                        entity_store[category].append(item)
+    except json.JSONDecodeError:
+        pass
+
+def build_instructions() -> str:
+    base = "You are a helpful assistant."
+    non_empty = {k: v for k, v in entity_store.items() if v}
+    if non_empty:
+        entity_str = "\n".join(f"- {k}: {', '.join(v)}" for k, v in non_empty.items())
+        base += f"\n\nEntities mentioned in this conversation:\n{entity_str}"
+    return base
+
+def chat(user_input: str) -> str:
+    extract_entities(user_input)
+    history.append({"role": "user", "content": user_input})
+    agent = Agent(
+        name="Assistant",
+        instructions=build_instructions(),
+    )
+    result = Runner.run_sync(agent, history)
+    response_text = result.final_output
+    history.append({"role": "assistant", "content": response_text})
+    return response_text
+
+# Turn 1: Mentions people and places
+print(chat("I met with Sarah and David in Tokyo last March to discuss the Q1 report."))
+
+# Turn 2: References an entity from turn 1
+print(chat("What city was my meeting in?"))
+
+# Turn 3: More entities
+print(chat("Next week I'm flying to Berlin to meet Professor Mueller on January 15th."))
+
+# Turn 4: Query about people
+print(chat("List all the people I've mentioned so far."))
+
+print(f"\nEntity store: {entity_store}")
+```
+
+### CrewAI
+
+```python
+import json
+from crewai import Agent, Task, Crew
+from openai import OpenAI
+
+client = OpenAI()
+
+entity_store = {"people": [], "places": [], "dates": [], "organizations": []}
+history = []
+
+EXTRACTION_PROMPT = """Extract named entities from the following message.
+Return a JSON object with these keys: "people", "places", "dates", "organizations".
+Each value should be a list of strings.
+If a category has no entities, use an empty list.
+Only return the JSON object, nothing else.
+
+Message: {message}"""
+
+
+def extract_entities(message: str):
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": EXTRACTION_PROMPT.format(message=message)}],
+    )
+    try:
+        entities = json.loads(response.choices[0].message.content.strip().strip("`").strip("json").strip())
+        for category, items in entities.items():
+            if category in entity_store:
+                for item in items:
+                    if item not in entity_store[category]:
+                        entity_store[category].append(item)
+    except json.JSONDecodeError:
+        pass
+
+
+def build_instructions() -> str:
+    base = "You are a helpful assistant."
+    non_empty = {k: v for k, v in entity_store.items() if v}
+    if non_empty:
+        entity_str = "\n".join(f"- {k}: {', '.join(v)}" for k, v in non_empty.items())
+        base += f"\n\nEntities mentioned in this conversation:\n{entity_str}"
+    return base
+
+
+def chat(user_input: str) -> str:
+    extract_entities(user_input)
+    history.append(f"User: {user_input}")
+    assistant = Agent(
+        role="Assistant",
+        goal=build_instructions(),
+        backstory="You are a helpful assistant that tracks entities mentioned in conversation.",
+    )
+    task = Task(
+        description="Conversation so far:\n" + "\n".join(history) + f"\n\nRespond to the latest message: {user_input}",
+        expected_output="A helpful response",
+        agent=assistant,
+    )
+    crew = Crew(agents=[assistant], tasks=[task])
+    result = str(crew.kickoff())
+    history.append(f"Assistant: {result}")
+    return result
+
+
+print(chat("I met with Sarah and David in Tokyo last March to discuss the Q1 report."))
+print(chat("What city was my meeting in?"))
+print(chat("Next week I'm flying to Berlin to meet Professor Mueller on January 15th."))
+print(chat("List all the people I've mentioned so far."))
+
+print(f"\nEntity store: {entity_store}")
+```
+
+## Why This Works
+
+The entity extraction step converts unstructured natural language into structured data that is easy to query and display. Instead of the model needing to scan through raw conversation history to find names, the entity store provides a clean, categorized list: `{"people": ["Sarah", "David", "Professor Mueller"], "places": ["Tokyo", "Berlin"]}`. When the user asks "List all people I've mentioned," the agent can read directly from this structured store rather than performing ad-hoc text search.
+
+The extraction uses the LLM itself, which is excellent at recognizing named entities in context. The deduplication logic ensures the same entity is not stored multiple times. By injecting the entity store into the system prompt, the agent always has a reliable, up-to-date inventory of all entities discussed, even if the conversation history is later truncated.
+
+## Key Takeaways
+
+- Structured entity extraction transforms unreliable text-scanning into reliable data retrieval — the agent can answer "who/where/when" questions with confidence.
+- Using the LLM for extraction handles the variety of ways users mention entities without needing rule-based NER systems.
+- Storing entities separately from conversation history makes them resilient to truncation and easy to query by type.

@@ -1,0 +1,188 @@
+# RAG Pipeline
+
+Retrieval-Augmented Generation (RAG) lets an LLM answer questions using your own data. Instead of relying solely on training knowledge, the model retrieves relevant documents and uses them as context for generating accurate, grounded responses.
+
+## The RAG Pattern
+
+A RAG pipeline follows two steps:
+
+1. **Retrieve** — find relevant documents from a knowledge base
+2. **Generate** — pass those documents to the LLM as context for answering
+
+This pattern grounds the model's responses in your actual data, reducing hallucination and keeping answers up to date.
+
+## Document Loaders
+
+Document loaders bring data into LangChain from various sources. Each loader returns a list of `Document` objects with `page_content` and `metadata`:
+
+```python
+from langchain_core.documents import Document
+
+documents = [
+    Document(page_content="Python is a high-level programming language known for readability.", metadata={"source": "python-intro"}),
+    Document(page_content="Machine learning is a subset of AI that learns patterns from data.", metadata={"source": "ml-intro"}),
+    Document(page_content="FastAPI is a modern Python web framework for building APIs.", metadata={"source": "fastapi-intro"}),
+    Document(page_content="Neural networks are computing systems inspired by biological brains.", metadata={"source": "nn-intro"}),
+    Document(page_content="Docker containers package applications with their dependencies.", metadata={"source": "docker-intro"}),
+]
+```
+
+In production, you'd use loaders like `TextLoader`, `PyPDFLoader`, or `WebBaseLoader` to load from files and URLs.
+
+## Text Splitters
+
+Documents are often too large to fit in context. Text splitters break them into smaller, overlapping chunks:
+
+```python
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+splitter = RecursiveCharacterTextSplitter(
+    chunk_size=200,
+    chunk_overlap=50,
+)
+
+long_doc = Document(
+    page_content="Python was created by Guido van Rossum and released in 1991. "
+    "It emphasizes code readability with significant whitespace. "
+    "Python supports multiple programming paradigms including structured, "
+    "object-oriented, and functional programming. "
+    "It has a comprehensive standard library.",
+    metadata={"source": "python-history"},
+)
+
+chunks = splitter.split_documents([long_doc])
+for i, chunk in enumerate(chunks):
+    print(f"Chunk {i}: {chunk.page_content[:80]}...")
+```
+
+`RecursiveCharacterTextSplitter` tries to split on natural boundaries (paragraphs, sentences) before falling back to character-level splits.
+
+## Embeddings
+
+Embeddings convert text into numerical vectors that capture semantic meaning. Similar texts produce similar vectors:
+
+```python
+from langchain_openai import OpenAIEmbeddings
+
+embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+
+vectors = embeddings.embed_documents([
+    "Python programming language",
+    "Machine learning algorithms",
+])
+print(f"Vector dimensions: {len(vectors[0])}")
+```
+
+## Vector Stores
+
+Vector stores index document embeddings for fast similarity search. LangChain's `InMemoryVectorStore` is the simplest option:
+
+```python
+from langchain_core.vectorstores import InMemoryVectorStore
+
+vector_store = InMemoryVectorStore(embedding=embeddings)
+vector_store.add_documents(documents)
+```
+
+Now you can search for documents similar to a query:
+
+```python
+results = vector_store.similarity_search("What is machine learning?", k=2)
+for doc in results:
+    print(f"[{doc.metadata['source']}] {doc.page_content}")
+```
+
+## The Retriever Pattern
+
+A retriever wraps a vector store with a standard interface that returns relevant documents for a query:
+
+```python
+retriever = vector_store.as_retriever(search_kwargs={"k": 2})
+
+docs = retriever.invoke("Tell me about Python web frameworks")
+for doc in docs:
+    print(f"[{doc.metadata['source']}] {doc.page_content}")
+```
+
+Retrievers are the standard way to plug document search into chains and agents.
+
+## Building a 2-Step RAG Chain
+
+The classic RAG chain retrieves documents, formats them as context, and passes everything to the LLM:
+
+```python
+from langchain.chat_models import init_chat_model
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnablePassthrough
+
+model = init_chat_model("gpt-4o-mini", model_provider="openai")
+
+template = ChatPromptTemplate.from_messages([
+    ("system", "Answer the question based only on the following context:\n\n{context}"),
+    ("human", "{question}"),
+])
+
+def format_docs(docs):
+    return "\n\n".join(doc.page_content for doc in docs)
+
+rag_chain = (
+    {"context": retriever | format_docs, "question": RunnablePassthrough()}
+    | template
+    | model
+)
+
+response = rag_chain.invoke("What is Python used for?")
+print(response.content)
+```
+
+This chain retrieves relevant documents, formats them as a context string, and asks the LLM to answer based on that context.
+
+## Agentic RAG
+
+Instead of a fixed chain, you can give an agent a retriever tool. The agent decides when and how to search:
+
+```python
+from langchain_core.tools import tool
+from langgraph.prebuilt import create_react_agent
+
+@tool
+def search_knowledge_base(query: str) -> str:
+    """Search the knowledge base for information. Use this to find answers to technical questions."""
+    docs = retriever.invoke(query)
+    return "\n\n".join(f"[{doc.metadata['source']}] {doc.page_content}" for doc in docs)
+
+agent = create_react_agent(
+    model=model,
+    tools=[search_knowledge_base],
+    prompt="You are a technical assistant. Use the knowledge base tool to find information before answering.",
+)
+
+from langchain_core.messages import HumanMessage
+
+result = agent.invoke({
+    "messages": [HumanMessage(content="Compare Python and Docker — what does each do?")]
+})
+print(result["messages"][-1].content)
+```
+
+Agentic RAG is more flexible — the agent can issue multiple queries, refine its search, and combine results from different retrievals.
+
+## 2-Step RAG vs Agentic RAG
+
+| Aspect | 2-Step RAG Chain | Agentic RAG |
+|--------|-----------------|-------------|
+| Control flow | Fixed: retrieve → generate | Dynamic: agent decides when to retrieve |
+| Number of retrievals | Always one | Agent can search multiple times |
+| Query refinement | None — uses original query | Agent can rephrase and retry |
+| Complexity | Simpler, predictable | More flexible, handles complex questions |
+| Latency | Lower (single retrieval) | Higher (multiple LLM calls possible) |
+
+## Key Takeaways
+
+- RAG grounds LLM responses in your own data by retrieving relevant documents as context
+- `RecursiveCharacterTextSplitter` breaks large documents into overlapping chunks
+- Embeddings convert text to vectors for semantic similarity search
+- Vector stores index documents; use `.as_retriever()` for a standard retrieval interface
+- A 2-step RAG chain follows a fixed retrieve → generate flow
+- Agentic RAG wraps the retriever as a tool, giving the agent control over when and how to search
+- Choose 2-step RAG for simplicity, agentic RAG for complex multi-step questions

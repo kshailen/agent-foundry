@@ -1,0 +1,38 @@
+## The Problem
+
+Your RAG pipeline retrieves documents to answer questions, but it only fetches the **single most relevant document** (top-1). Many real-world questions require combining facts from multiple documents—a project's budget is in one doc, its team size in another, and its delivery timeline in a third. When the retriever returns only one document, the agent gives a partial answer and misses critical details. Your job is to fix the retrieval and synthesis steps so the agent **pulls multiple relevant documents** and **combines their information** into a complete, unified answer.
+
+## Examples
+
+### Example 1
+
+**User input:** Give me a complete summary of Project Alpha.
+
+**Current (bad) output:** Project Alpha started in January 2024 with a budget of $2M. *(Only one fact — misses team size, delivery date, and client feedback.)*
+
+**Expected (good) output:** Project Alpha started in January 2024 with a budget of $2M. The team consists of 12 engineers and 3 designers. The MVP was delivered in June 2024, two weeks ahead of schedule, and received positive client feedback with a satisfaction score of 9.2/10.
+
+### Example 2
+
+**User input:** How did Project Alpha perform?
+
+**Current (bad) output:** An incomplete answer mentioning only one aspect of the project.
+
+**Expected (good) output:** An answer that covers both the delivery timeline (MVP in June 2024, ahead of schedule) and the client feedback (9.2/10 satisfaction score).
+
+## Your Task
+
+Fix the RAG pipeline so the agent:
+
+- Retrieves multiple relevant documents (not just top-1) for each query.
+- Passes all retrieved documents as context to the LLM.
+- Instructs the LLM to synthesize facts from all documents into a single coherent answer.
+- Produces complete answers that cover all relevant information across the corpus.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Retrieves multiple documents:** The retriever returns more than one relevant document for multi-fact queries.
+- **Synthesizes across documents:** The answer combines information from multiple retrieved documents into a coherent response.
+- **Provides complete answers:** The answer includes all relevant facts spread across documents, not just partial information.

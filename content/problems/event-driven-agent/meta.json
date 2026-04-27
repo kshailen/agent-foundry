@@ -1,0 +1,56 @@
+{
+  "number": 100,
+  "title": "Event-Driven Agent",
+  "difficulty": "hard",
+  "categories": [
+    "orchestration"
+  ],
+  "frameworks": [
+    "langgraph",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "The agent must react to events (new email, schedule change, alert) rather than polling or being called directly",
+    "Each event type must trigger a different handler with appropriate behavior",
+    "Events must be processed asynchronously as they arrive, not in a batch",
+    "The agent must maintain context across related events (e.g., follow-up emails in a thread)"
+  ],
+  "hints": [
+    "Define an event queue or bus that the agent subscribes to, with different event types triggering different graph entry points",
+    "In LangGraph, use conditional edges from an event-dispatcher node that routes based on event type",
+    "Maintain a shared state or memory store so the agent remembers context when processing related events"
+  ],
+  "starterCode": {
+    "langgraph": "from langchain_openai import ChatOpenAI\nfrom langchain_core.messages import HumanMessage, SystemMessage\nimport time\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# BUG: Agent uses pull-based polling — checks for events every 5 seconds, wastes resources when idle\n# TODO: Refactor to event-driven architecture where events trigger the agent reactively\ndef poll_for_events():\n    \"\"\"Simulated event source.\"\"\"\n    events = [\n        {\"type\": \"new_email\", \"data\": {\"from\": \"boss@company.com\", \"subject\": \"Q4 Report needed\", \"body\": \"Please prepare the Q4 report by Friday.\"}},\n        {\"type\": \"schedule_change\", \"data\": {\"meeting\": \"Team standup\", \"old_time\": \"9:00 AM\", \"new_time\": \"10:30 AM\"}},\n        {\"type\": \"alert\", \"data\": {\"severity\": \"high\", \"message\": \"Server CPU at 95%\", \"source\": \"monitoring\"}},\n        {\"type\": \"new_email\", \"data\": {\"from\": \"boss@company.com\", \"subject\": \"Re: Q4 Report needed\", \"body\": \"Also include the APAC numbers.\"}},\n    ]\n    return events\n\ndef check_and_process():\n    while True:\n        events = poll_for_events()\n        for event in events:\n            # BUG: All events handled the same way, no event-specific logic\n            response = llm.invoke([\n                SystemMessage(content=\"You are a personal assistant. Handle this event.\"),\n                HumanMessage(content=str(event)),\n            ])\n            print(f\"Event: {event['type']} — Response: {response.content[:100]}...\")\n        print(\"Polling again in 5 seconds...\")\n        time.sleep(5)\n        break  # For demo purposes\n\ncheck_and_process()",
+    "crewai": "from crewai import Agent, Task, Crew\nimport time\n\n# BUG: Agent uses pull-based polling — checks for events every 5 seconds, wastes resources when idle\n# TODO: Refactor to event-driven architecture where events trigger the agent reactively\nassistant = Agent(\n    role=\"Personal Assistant\",\n    goal=\"Handle events as they come in\",\n    backstory=\"You are a personal assistant that processes events.\",\n)\n\ndef poll_for_events():\n    \"\"\"Simulated event source.\"\"\"\n    events = [\n        {\"type\": \"new_email\", \"data\": {\"from\": \"boss@company.com\", \"subject\": \"Q4 Report needed\", \"body\": \"Please prepare the Q4 report by Friday.\"}},\n        {\"type\": \"schedule_change\", \"data\": {\"meeting\": \"Team standup\", \"old_time\": \"9:00 AM\", \"new_time\": \"10:30 AM\"}},\n        {\"type\": \"alert\", \"data\": {\"severity\": \"high\", \"message\": \"Server CPU at 95%\", \"source\": \"monitoring\"}},\n        {\"type\": \"new_email\", \"data\": {\"from\": \"boss@company.com\", \"subject\": \"Re: Q4 Report needed\", \"body\": \"Also include the APAC numbers.\"}},\n    ]\n    return events\n\ndef check_and_process():\n    while True:\n        events = poll_for_events()\n        for event in events:\n            # BUG: All events handled the same way, no event-specific logic\n            task = Task(\n                description=f\"Handle this event: {event}\",\n                expected_output=\"A response to the event\",\n                agent=assistant,\n            )\n            crew = Crew(agents=[assistant], tasks=[task])\n            result = crew.kickoff()\n            print(f\"Event: {event['type']} — Response: {str(result)[:100]}...\")\n        print(\"Polling again in 5 seconds...\")\n        time.sleep(5)\n        break  # For demo purposes\n\ncheck_and_process()",
+    "openai-agents-sdk": "from agents import Agent, Runner\nimport time\n\n# BUG: Agent uses pull-based polling — checks for events every 5 seconds, wastes resources when idle\n# TODO: Refactor to event-driven architecture where events trigger the agent reactively\nagent = Agent(\n    name=\"Personal Assistant\",\n    instructions=\"You are a personal assistant. Handle events as they come in.\",\n)\n\ndef poll_for_events():\n    \"\"\"Simulated event source.\"\"\"\n    events = [\n        {\"type\": \"new_email\", \"data\": {\"from\": \"boss@company.com\", \"subject\": \"Q4 Report needed\", \"body\": \"Please prepare the Q4 report by Friday.\"}},\n        {\"type\": \"schedule_change\", \"data\": {\"meeting\": \"Team standup\", \"old_time\": \"9:00 AM\", \"new_time\": \"10:30 AM\"}},\n        {\"type\": \"alert\", \"data\": {\"severity\": \"high\", \"message\": \"Server CPU at 95%\", \"source\": \"monitoring\"}},\n        {\"type\": \"new_email\", \"data\": {\"from\": \"boss@company.com\", \"subject\": \"Re: Q4 Report needed\", \"body\": \"Also include the APAC numbers.\"}},\n    ]\n    return events\n\ndef check_and_process():\n    while True:\n        events = poll_for_events()\n        for event in events:\n            # BUG: All events handled the same way, no event-specific logic\n            result = Runner.run_sync(agent, f\"Handle this event: {event}\")\n            print(f\"Event: {event['type']} — Response: {result.final_output[:100]}...\")\n        print(\"Polling again in 5 seconds...\")\n        time.sleep(5)\n        break  # For demo purposes\n\ncheck_and_process()"
+  },
+  "colabUrls": {
+    "langgraph": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/event-driven-agent-langgraph.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/event-driven-agent-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/event-driven-agent-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "reactive-processing",
+      "label": "Reactive event processing",
+      "description": "The agent reacts to events as they arrive rather than polling at intervals"
+    },
+    {
+      "id": "event-specific-handlers",
+      "label": "Event-specific handlers",
+      "description": "Each event type triggers a different handler with appropriate behavior"
+    },
+    {
+      "id": "async-processing",
+      "label": "Asynchronous processing",
+      "description": "Events are processed asynchronously as they arrive, not batched"
+    },
+    {
+      "id": "cross-event-context",
+      "label": "Cross-event context",
+      "description": "The agent maintains context across related events like email threads"
+    }
+  ]
+}

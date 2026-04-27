@@ -1,0 +1,227 @@
+# Project: Market Research System
+
+## What You'll Build
+
+You will build a **three-agent CrewAI crew** that performs **market research**: a **web researcher** finds current data on the web (search and scraping), a **data analyst** turns raw findings into insights, and a **report writer** produces a **structured** market report. Together they move from discovery to analysis to a validated, typed deliverable.
+
+## Features Used
+
+- **Agents** — specialized roles with goals, backstories, and tools
+- **Tasks** — discrete steps with descriptions, expected outputs, and optional structured results
+- **Sequential Process** — tasks run in order so each stage builds on the last
+- **Built-in Tools** — `SerperDevTool` (web search), `ScrapeWebsiteTool` (page content)
+- **Structured Output (Pydantic)** — `output_pydantic` on a task for a validated `MarketReport`
+- **Task Context** — later tasks receive outputs from earlier tasks via `context=[...]`
+
+## Step 1: Define the Pydantic Output Model
+
+Define **`MarketReport`** so the final task returns stable fields: industry, lists for trends, competitors, and opportunities, plus an executive summary.
+
+```python
+from pydantic import BaseModel
+
+
+class MarketReport(BaseModel):
+    industry: str
+    trends: list[str]
+    competitors: list[str]
+    opportunities: list[str]
+    summary: str
+```
+
+## Step 2: Define the Three Agents
+
+1. **Market Researcher** — uses **`SerperDevTool`** and **`ScrapeWebsiteTool`** to gather real web data
+2. **Data Analyst** — synthesizes research into trends, competitor landscape, and implications
+3. **Report Writer** — produces the final structured report matching **`MarketReport`**
+
+```python
+from crewai import Agent
+from crewai_tools import ScrapeWebsiteTool, SerperDevTool
+
+search_tool = SerperDevTool()
+scrape_tool = ScrapeWebsiteTool()
+
+market_researcher = Agent(
+    role="Market Researcher",
+    goal="Find accurate, current market information using search and reputable sources",
+    backstory="You search the web, open relevant pages when needed, and collect facts without inventing data.",
+    tools=[search_tool, scrape_tool],
+    verbose=True,
+)
+
+data_analyst = Agent(
+    role="Data Analyst",
+    goal="Turn raw market research into clear trends, competitor notes, and strategic implications",
+    backstory="You are rigorous about separating evidence from speculation and you structure findings for decision-makers.",
+    verbose=True,
+)
+
+report_writer = Agent(
+    role="Report Writer",
+    goal="Deliver a concise, structured market report aligned with the agreed schema",
+    backstory="You write executive-ready summaries and ensure every section maps to the required fields.",
+    verbose=True,
+)
+```
+
+## Step 3: Define the Three Tasks
+
+- **research_task** — gather market data for `{industry}`
+- **analysis_task** — analyze with **`context=[research_task]`** so it sees the research output
+- **report_task** — create the structured report with **`output_pydantic=MarketReport`** and context from prior tasks
+
+```python
+from crewai import Task
+
+research_task = Task(
+    description=(
+        "Research the market for the industry: {industry}. "
+        "Collect key facts, notable companies, recent developments, and source-backed notes."
+    ),
+    expected_output="Organized research notes with themes, data points, and URLs or source hints where available.",
+    agent=market_researcher,
+)
+
+analysis_task = Task(
+    description=(
+        "Using the research, identify major trends, main competitors or segments, and plausible opportunities or risks "
+        "for {industry}. Be explicit about what is supported by the research versus inference."
+    ),
+    expected_output="A structured analysis: trends, competitors, opportunities/risks, and a short narrative synthesis.",
+    agent=data_analyst,
+    context=[research_task],
+)
+
+report_task = Task(
+    description=(
+        "Produce the final market report for {industry}. "
+        "Fill industry, trends, competitors, opportunities, and summary to match the schema exactly."
+    ),
+    expected_output="A MarketReport instance with all required fields populated from the prior research and analysis.",
+    agent=report_writer,
+    context=[research_task, analysis_task],
+    output_pydantic=MarketReport,
+)
+```
+
+## Step 4: Assemble the Crew with `Process.sequential`
+
+Order agents and tasks so execution flows **research → analysis → report**.
+
+```python
+from crewai import Crew, Process
+
+crew = Crew(
+    agents=[market_researcher, data_analyst, report_writer],
+    tasks=[research_task, analysis_task, report_task],
+    process=Process.sequential,
+    verbose=True,
+)
+```
+
+## Step 5: Run with `kickoff`
+
+Pass the target industry via **`inputs`** so `{industry}` resolves in every task description.
+
+```python
+result = crew.kickoff(inputs={"industry": "AI Agents"})
+print(result)
+if result.pydantic:
+    print(result.pydantic.model_dump_json(indent=2))
+```
+
+## Full Code
+
+```python
+import os
+from getpass import getpass
+
+from crewai import Agent, Crew, Process, Task
+from crewai_tools import ScrapeWebsiteTool, SerperDevTool
+from pydantic import BaseModel
+
+
+class MarketReport(BaseModel):
+    industry: str
+    trends: list[str]
+    competitors: list[str]
+    opportunities: list[str]
+    summary: str
+
+
+os.environ["OPENAI_API_KEY"] = getpass("Enter your OpenAI API key: ")
+serper_key = getpass("Enter your Serper API key (required for SerperDevTool): ")
+os.environ["SERPER_API_KEY"] = serper_key
+
+search_tool = SerperDevTool()
+scrape_tool = ScrapeWebsiteTool()
+
+market_researcher = Agent(
+    role="Market Researcher",
+    goal="Find accurate, current market information using search and reputable sources",
+    backstory="You search the web, open relevant pages when needed, and collect facts without inventing data.",
+    tools=[search_tool, scrape_tool],
+    verbose=True,
+)
+
+data_analyst = Agent(
+    role="Data Analyst",
+    goal="Turn raw market research into clear trends, competitor notes, and strategic implications",
+    backstory="You are rigorous about separating evidence from speculation and you structure findings for decision-makers.",
+    verbose=True,
+)
+
+report_writer = Agent(
+    role="Report Writer",
+    goal="Deliver a concise, structured market report aligned with the agreed schema",
+    backstory="You write executive-ready summaries and ensure every section maps to the required fields.",
+    verbose=True,
+)
+
+research_task = Task(
+    description=(
+        "Research the market for the industry: {industry}. "
+        "Collect key facts, notable companies, recent developments, and source-backed notes."
+    ),
+    expected_output="Organized research notes with themes, data points, and URLs or source hints where available.",
+    agent=market_researcher,
+)
+
+analysis_task = Task(
+    description=(
+        "Using the research, identify major trends, main competitors or segments, and plausible opportunities or risks "
+        "for {industry}. Be explicit about what is supported by the research versus inference."
+    ),
+    expected_output="A structured analysis: trends, competitors, opportunities/risks, and a short narrative synthesis.",
+    agent=data_analyst,
+    context=[research_task],
+)
+
+report_task = Task(
+    description=(
+        "Produce the final market report for {industry}. "
+        "Fill industry, trends, competitors, opportunities, and summary to match the schema exactly."
+    ),
+    expected_output="A MarketReport instance with all required fields populated from the prior research and analysis.",
+    agent=report_writer,
+    context=[research_task, analysis_task],
+    output_pydantic=MarketReport,
+)
+
+crew = Crew(
+    agents=[market_researcher, data_analyst, report_writer],
+    tasks=[research_task, analysis_task, report_task],
+    process=Process.sequential,
+    verbose=True,
+)
+
+result = crew.kickoff(inputs={"industry": "AI Agents"})
+print(result)
+if result.pydantic:
+    print(result.pydantic.model_dump_json(indent=2))
+```
+
+## What You Learned
+
+You combined **agents with built-in tools** for real web research, chained work with **task context** so analysis and reporting reuse prior outputs, and finished with **`output_pydantic`** so the crew returns a **validated `MarketReport`** instead of unstructured prose. Running **`Crew`** with **`Process.sequential`** and **`kickoff(inputs={"industry": ...})`** ties the pattern together: dynamic inputs, ordered execution, and typed deliverables you can store or ship to downstream systems.

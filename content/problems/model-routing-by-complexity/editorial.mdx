@@ -1,0 +1,222 @@
+## Approach
+
+The starter code sends every query to `gpt-4o` regardless of complexity. Simple questions like "What is 2 + 2?" cost roughly 10x more than necessary because `gpt-4o-mini` handles them perfectly. The fix adds an intelligent routing layer: a lightweight classifier (itself running on the cheap model) scores each query's complexity, and the router dispatches simple queries to `gpt-4o-mini` while reserving `gpt-4o` for genuinely complex reasoning tasks.
+
+The classifier uses `gpt-4o-mini` to score complexity on a 1-5 scale. Queries scoring 3 or below (greetings, factual lookups, arithmetic, formatting) route to `gpt-4o-mini`. Queries scoring 4 or above (multi-step reasoning, architecture design, nuanced analysis) route to `gpt-4o`. This classifier call is cheap and fast — a few tokens to classify, saving potentially thousands of tokens on the response by picking the right model.
+
+After routing, the solution logs which model handled each query and computes an estimated cost based on token usage from the API response metadata. This makes the cost savings visible and auditable.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage
+
+cheap_llm = ChatOpenAI(model="gpt-4o-mini")
+expensive_llm = ChatOpenAI(model="gpt-4o")
+
+PRICING = {
+    "gpt-4o-mini": {"input": 0.15 / 1_000_000, "output": 0.60 / 1_000_000},
+    "gpt-4o": {"input": 2.50 / 1_000_000, "output": 10.00 / 1_000_000},
+}
+
+
+def classify_complexity(query: str) -> int:
+    response = cheap_llm.invoke([
+        SystemMessage(content="Rate the complexity of this query on a scale of 1-5. 1=trivial (greetings, simple math, factual lookup). 3=moderate. 5=complex (multi-step reasoning, architecture design, nuanced analysis). Reply with ONLY the number."),
+        HumanMessage(content=query),
+    ])
+    score = int(response.content.strip())
+    return max(1, min(5, score))
+
+
+def calculate_cost(usage, model: str) -> float:
+    prices = PRICING[model]
+    return usage.input_tokens * prices["input"] + usage.output_tokens * prices["output"]
+
+
+def handle_query(query: str) -> str:
+    complexity = classify_complexity(query)
+    model_name = "gpt-4o" if complexity >= 4 else "gpt-4o-mini"
+    llm = expensive_llm if complexity >= 4 else cheap_llm
+
+    response = llm.invoke([
+        SystemMessage(content="You are a helpful assistant."),
+        HumanMessage(content=query),
+    ])
+
+    usage = response.usage_metadata
+    cost = calculate_cost(usage, model_name)
+
+    print(f"  [Complexity: {complexity}/5 | Model: {model_name} | "
+          f"Tokens: {usage.input_tokens}in/{usage.output_tokens}out | "
+          f"Est. cost: ${cost:.6f}]")
+
+    return response.content
+
+
+queries = [
+    "What is 2 + 2?",
+    "Explain the trade-offs between microservices and monoliths for a startup with 5 engineers, considering team growth, deployment complexity, and technical debt.",
+    "Convert 100 Fahrenheit to Celsius.",
+    "Design a database schema for a multi-tenant SaaS platform that needs to handle row-level security, audit logging, and cross-tenant analytics.",
+    "What day comes after Monday?",
+]
+for q in queries:
+    print(f"\nQuery: {q}")
+    result = handle_query(q)
+    print(f"Answer: {result}")
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+
+classifier = Agent(
+    name="Complexity Classifier",
+    instructions="Rate the complexity of this query on a scale of 1-5. 1=trivial (greetings, simple math, factual lookup). 3=moderate. 5=complex (multi-step reasoning, architecture design, nuanced analysis). Reply with ONLY the number.",
+    model="gpt-4o-mini",
+)
+
+simple_agent = Agent(
+    name="Simple Assistant",
+    instructions="You are a helpful assistant.",
+    model="gpt-4o-mini",
+)
+
+complex_agent = Agent(
+    name="Complex Assistant",
+    instructions="You are a helpful assistant. Provide thorough, well-reasoned answers.",
+    model="gpt-4o",
+)
+
+PRICING = {
+    "gpt-4o-mini": {"input": 0.15 / 1_000_000, "output": 0.60 / 1_000_000},
+    "gpt-4o": {"input": 2.50 / 1_000_000, "output": 10.00 / 1_000_000},
+}
+
+
+def handle_query(query: str) -> str:
+    classify_result = Runner.run_sync(classifier, query)
+    complexity = int(classify_result.final_output.strip())
+    complexity = max(1, min(5, complexity))
+
+    if complexity >= 4:
+        agent = complex_agent
+        model_name = "gpt-4o"
+    else:
+        agent = simple_agent
+        model_name = "gpt-4o-mini"
+
+    result = Runner.run_sync(agent, query)
+
+    usage = result.raw_responses[-1].usage
+    prices = PRICING[model_name]
+    cost = usage.input_tokens * prices["input"] + usage.output_tokens * prices["output"]
+
+    print(f"  [Complexity: {complexity}/5 | Model: {model_name} | "
+          f"Tokens: {usage.input_tokens}in/{usage.output_tokens}out | "
+          f"Est. cost: ${cost:.6f}]")
+
+    return result.final_output
+
+
+queries = [
+    "What is 2 + 2?",
+    "Explain the trade-offs between microservices and monoliths for a startup with 5 engineers, considering team growth, deployment complexity, and technical debt.",
+    "Convert 100 Fahrenheit to Celsius.",
+    "Design a database schema for a multi-tenant SaaS platform that needs to handle row-level security, audit logging, and cross-tenant analytics.",
+    "What day comes after Monday?",
+]
+for q in queries:
+    print(f"\nQuery: {q}")
+    result = handle_query(q)
+    print(f"Answer: {result}")
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from crewai import LLM
+
+cheap_llm = LLM(model="gpt-4o-mini")
+expensive_llm = LLM(model="gpt-4o")
+
+PRICING = {
+    "gpt-4o-mini": {"input": 0.15 / 1_000_000, "output": 0.60 / 1_000_000},
+    "gpt-4o": {"input": 2.50 / 1_000_000, "output": 10.00 / 1_000_000},
+}
+
+classifier = Agent(
+    role="Complexity Classifier",
+    goal="Rate query complexity on a 1-5 scale",
+    backstory=(
+        "Rate the complexity of queries. 1=trivial (greetings, simple math, factual lookup). "
+        "3=moderate. 5=complex (multi-step reasoning, architecture design, nuanced analysis). "
+        "Reply with ONLY the number."
+    ),
+    llm=cheap_llm,
+)
+
+simple_agent = Agent(
+    role="Simple Assistant",
+    goal="Answer simple questions helpfully",
+    backstory="You are a helpful assistant.",
+    llm=cheap_llm,
+)
+
+complex_agent = Agent(
+    role="Complex Assistant",
+    goal="Provide thorough, well-reasoned answers",
+    backstory="You are a helpful assistant. Provide thorough, well-reasoned answers.",
+    llm=expensive_llm,
+)
+
+
+def handle_query(query: str) -> str:
+    classify_task = Task(description=query, expected_output="A single number 1-5", agent=classifier)
+    classify_crew = Crew(agents=[classifier], tasks=[classify_task])
+    complexity = int(str(classify_crew.kickoff()).strip())
+    complexity = max(1, min(5, complexity))
+
+    if complexity >= 4:
+        agent = complex_agent
+        model_name = "gpt-4o"
+    else:
+        agent = simple_agent
+        model_name = "gpt-4o-mini"
+
+    answer_task = Task(description=query, expected_output="A helpful answer", agent=agent)
+    answer_crew = Crew(agents=[agent], tasks=[answer_task])
+    result = answer_crew.kickoff()
+
+    print(f"  [Complexity: {complexity}/5 | Model: {model_name}]")
+    return str(result)
+
+
+queries = [
+    "What is 2 + 2?",
+    "Explain the trade-offs between microservices and monoliths for a startup with 5 engineers, considering team growth, deployment complexity, and technical debt.",
+    "Convert 100 Fahrenheit to Celsius.",
+    "Design a database schema for a multi-tenant SaaS platform that needs to handle row-level security, audit logging, and cross-tenant analytics.",
+    "What day comes after Monday?",
+]
+for q in queries:
+    print(f"\nQuery: {q}")
+    result = handle_query(q)
+    print(f"Answer: {result}")
+```
+
+## Why This Works
+
+The routing layer adds a small fixed cost (one cheap classifier call per query) but saves substantially on queries that would otherwise use the expensive model unnecessarily. The classifier itself runs on `gpt-4o-mini`, so it does not defeat the purpose of cost optimization. Simple queries like "What is 2+2?" score 1/5 and route to the cheap model at ~1/10th the cost. Complex queries like database schema design score 5/5 and still get the full reasoning power of `gpt-4o`. The cost logging using actual token counts from API responses (not estimates) makes the savings transparent and verifiable.
+
+## Key Takeaways
+
+- Not every query needs your most expensive model — a lightweight classifier can route 60-80% of traffic to a cheaper model with no quality loss.
+- The classifier must run on the cheap model itself, otherwise the routing overhead erases the savings.
+- Log the model used and cost per query so you can audit routing decisions and tune the complexity threshold over time.

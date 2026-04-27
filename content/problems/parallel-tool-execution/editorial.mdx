@@ -1,0 +1,219 @@
+## Approach
+
+The weather assistant calls `get_weather` sequentially for each city — one after another — so three lookups take ~3 seconds (1 second each). Since the lookups are independent (no data dependency between cities), they can run in parallel, reducing total time to ~1 second. The challenge is that the default agent behavior is to call one tool at a time and wait for the result before making the next call.
+
+In LangChain, the fix is straightforward: modern LLMs like GPT-4o-mini can emit multiple tool calls in a single response. By updating the prompt to explicitly instruct the agent to "look up all cities at once in a single step," the LLM generates parallel tool calls that the `AgentExecutor` handles concurrently. In LangGraph, the `create_react_agent` already handles parallel tool calls natively when the LLM emits them — the key is prompting the LLM to request all lookups simultaneously rather than one at a time.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+import time
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+
+@tool
+def get_weather(city: str) -> str:
+    """Get current weather for a city."""
+    time.sleep(1)
+    weather_data = {
+        "new york": "72°F, Sunny",
+        "london": "58°F, Cloudy",
+        "tokyo": "68°F, Partly Cloudy",
+    }
+    return weather_data.get(city.lower(), f"Weather data not available for {city}")
+
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", (
+        "You are a weather assistant. When asked about weather in multiple cities, "
+        "call get_weather for ALL cities simultaneously in a single step. "
+        "Do NOT look them up one at a time — issue all tool calls together."
+    )),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}"),
+])
+
+agent = create_tool_calling_agent(llm, [get_weather], prompt)
+executor = AgentExecutor(agent=agent, tools=[get_weather])
+
+start = time.time()
+result = executor.invoke({"input": "What's the weather in New York, London, and Tokyo?"})
+print(f"Time: {time.time() - start:.1f}s")
+print(result["output"])
+```
+
+### LangGraph
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.tools import tool
+from langgraph.prebuilt import create_react_agent
+import time
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+
+@tool
+def get_weather(city: str) -> str:
+    """Get current weather for a city."""
+    time.sleep(1)
+    weather_data = {
+        "new york": "72°F, Sunny",
+        "london": "58°F, Cloudy",
+        "tokyo": "68°F, Partly Cloudy",
+    }
+    return weather_data.get(city.lower(), f"Weather data not available for {city}")
+
+
+agent = create_react_agent(
+    llm,
+    [get_weather],
+    prompt=(
+        "You are a weather assistant. When asked about weather in multiple cities, "
+        "call get_weather for ALL cities simultaneously in a single step. "
+        "Do NOT look them up one at a time — issue all tool calls together."
+    ),
+)
+
+start = time.time()
+result = agent.invoke({"messages": [("human", "What's the weather in New York, London, and Tokyo?")]})
+print(f"Time: {time.time() - start:.1f}s")
+print(result["messages"][-1].content)
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from crewai.tools import tool
+import time
+
+@tool
+def get_weather(city: str) -> str:
+    """Get current weather for a city."""
+    time.sleep(1)
+    weather_data = {
+        "new york": "72°F, Sunny",
+        "london": "58°F, Cloudy",
+        "tokyo": "68°F, Partly Cloudy",
+    }
+    return weather_data.get(city.lower(), f"Weather data not available for {city}")
+
+ny_agent = Agent(
+    role="NY Weather Reporter",
+    goal="Get weather for New York",
+    backstory="You are a weather assistant for New York.",
+    tools=[get_weather],
+)
+
+london_agent = Agent(
+    role="London Weather Reporter",
+    goal="Get weather for London",
+    backstory="You are a weather assistant for London.",
+    tools=[get_weather],
+)
+
+tokyo_agent = Agent(
+    role="Tokyo Weather Reporter",
+    goal="Get weather for Tokyo",
+    backstory="You are a weather assistant for Tokyo.",
+    tools=[get_weather],
+)
+
+merger = Agent(
+    role="Weather Summarizer",
+    goal="Combine weather data from all cities into a single report",
+    backstory="You combine weather reports into a single summary.",
+)
+
+ny_task = Task(
+    description="Get the current weather in New York using the get_weather tool.",
+    expected_output="Weather for New York",
+    agent=ny_agent,
+    async_execution=True,
+)
+
+london_task = Task(
+    description="Get the current weather in London using the get_weather tool.",
+    expected_output="Weather for London",
+    agent=london_agent,
+    async_execution=True,
+)
+
+tokyo_task = Task(
+    description="Get the current weather in Tokyo using the get_weather tool.",
+    expected_output="Weather for Tokyo",
+    agent=tokyo_agent,
+    async_execution=True,
+)
+
+merge_task = Task(
+    description="Combine the weather results from New York, London, and Tokyo into a single summary.",
+    expected_output="Combined weather report for all three cities",
+    agent=merger,
+    context=[ny_task, london_task, tokyo_task],
+)
+
+crew = Crew(
+    agents=[ny_agent, london_agent, tokyo_agent, merger],
+    tasks=[ny_task, london_task, tokyo_task, merge_task],
+)
+
+start = time.time()
+result = crew.kickoff()
+print(f"Time: {time.time() - start:.1f}s")
+print(result)
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from agents.tool import function_tool
+import time
+
+@function_tool
+def get_weather(city: str) -> str:
+    """Get current weather for a city."""
+    time.sleep(1)
+    weather_data = {
+        "new york": "72°F, Sunny",
+        "london": "58°F, Cloudy",
+        "tokyo": "68°F, Partly Cloudy",
+    }
+    return weather_data.get(city.lower(), f"Weather data not available for {city}")
+
+agent = Agent(
+    name="Weather Reporter",
+    instructions=(
+        "You are a weather assistant. When asked about weather in multiple cities, "
+        "call get_weather for ALL cities simultaneously in a single step. "
+        "Do NOT look them up one at a time — issue all tool calls together."
+    ),
+    tools=[get_weather],
+)
+
+start = time.time()
+result = Runner.run_sync(agent, "What's the weather in New York, London, and Tokyo?")
+print(f"Time: {time.time() - start:.1f}s")
+print(result.final_output)
+```
+
+## Why This Works
+
+Modern LLMs support emitting multiple tool calls in a single response. When the system prompt explicitly instructs the model to "call get_weather for ALL cities simultaneously," the LLM generates a response containing three parallel tool call requests instead of one. Both `AgentExecutor` (LangChain) and `create_react_agent` (LangGraph) handle these parallel calls by executing them concurrently — typically using threading or asyncio — so all three 1-second sleeps overlap, and the total wall-clock time is ~1 second instead of ~3.
+
+The prompt is the critical lever here. Without explicit instruction to parallelize, the LLM defaults to a conversational pattern of "call one tool, get the result, call the next." The system prompt overrides this default by making parallelism an explicit requirement.
+
+## Key Takeaways
+
+- LLMs can emit multiple tool calls in a single response — prompt them to do so when calls are independent.
+- Both LangChain's `AgentExecutor` and LangGraph's `create_react_agent` execute parallel tool calls concurrently by default.
+- The prompt is the primary lever for controlling sequential vs. parallel tool calling behavior.

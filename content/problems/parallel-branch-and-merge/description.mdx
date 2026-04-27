@@ -1,0 +1,45 @@
+## The Problem
+
+Your text-analysis pipeline runs sentiment analysis and entity extraction **sequentially**—one after the other. These two tasks are completely independent, so the pipeline takes roughly twice as long as it needs to. Your job is to **refactor the pipeline into a parallel fan-out/fan-in pattern**: both analyses run at the same time, and a merge step combines their results once both are done.
+
+## Examples
+
+### Example 1
+
+**User input:** Apple CEO Tim Cook announced the new iPhone at their Cupertino headquarters. Customers loved it.
+
+**Current (bad) output:** Results are correct, but processing takes ~2s because sentiment runs first, then entities run after.
+
+**Expected (good) output:** Both analyses run in parallel (~1s total). The merged output:
+```json
+{
+  "sentiment": "positive — customers loved the announcement",
+  "entities": ["Apple", "Tim Cook", "iPhone", "Cupertino"],
+  "processing_time": "1.05s"
+}
+```
+
+### Example 2
+
+**User input:** The project in Berlin failed miserably. Google and Microsoft both pulled out of the partnership.
+
+**Current (bad) output:** Sequential processing returns correct results but with unnecessary latency.
+
+**Expected (good) output:** Parallel processing completes faster. The merged output contains both the sentiment (`negative`) and entities (`Berlin`, `Google`, `Microsoft`) in a single structured response.
+
+## Your Task
+
+Refactor the starter code so that:
+
+- Sentiment analysis and entity extraction **run in parallel** as separate branches.
+- A **merge step** waits for both branches to complete before combining results.
+- The final output is a **single structured object** containing both sentiment and entities.
+- The parallel execution provides a **measurable speedup** over the sequential baseline.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Parallel execution:** Sentiment analysis and entity extraction run concurrently, not one after the other.
+- **Both complete before merge:** The merge step waits for both branches to finish before combining results.
+- **Structured merged output:** The final output contains both sentiment and entities in a single structured result.

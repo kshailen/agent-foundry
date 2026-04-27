@@ -1,0 +1,386 @@
+## Approach
+
+The starter code calls the LLM for every single question, even when the same question (or a semantically identical variant) has already been answered. Questions like "What is your return policy?", "How do I return an item?", and "What's your policy on returns?" are functionally the same query, yet each triggers a fresh LLM call with full token cost and ~1 second latency. The fix adds a semantic caching layer that recognizes when a new question is similar enough to a previously answered one and serves the cached response instantly.
+
+The cache works by converting each query into an embedding vector using an embedding model, then comparing new queries against cached query vectors using cosine similarity. If the similarity exceeds a threshold (e.g., 0.92), the cached response is returned without calling the LLM — at zero token cost and near-zero latency. If no match is found, the LLM is called normally and the query-response pair is added to the cache for future hits. The cache has a configurable maximum size to prevent unbounded memory growth: when the cache is full, the oldest entry is evicted.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_core.messages import HumanMessage, SystemMessage
+import numpy as np
+from collections import OrderedDict
+import time
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+
+SIMILARITY_THRESHOLD = 0.92
+MAX_CACHE_SIZE = 100
+
+
+class SemanticCache:
+    def __init__(self, max_size: int = MAX_CACHE_SIZE, threshold: float = SIMILARITY_THRESHOLD):
+        self.max_size = max_size
+        self.threshold = threshold
+        self.entries = OrderedDict()
+
+    def _cosine_similarity(self, a: list[float], b: list[float]) -> float:
+        a_arr, b_arr = np.array(a), np.array(b)
+        return float(np.dot(a_arr, b_arr) / (np.linalg.norm(a_arr) * np.linalg.norm(b_arr)))
+
+    def get(self, query_embedding: list[float]) -> str | None:
+        best_score = 0.0
+        best_response = None
+        for _, (cached_embedding, cached_response) in self.entries.items():
+            score = self._cosine_similarity(query_embedding, cached_embedding)
+            if score > best_score:
+                best_score = score
+                best_response = cached_response
+        if best_score >= self.threshold:
+            return best_response
+        return None
+
+    def put(self, query: str, embedding: list[float], response: str):
+        if len(self.entries) >= self.max_size:
+            self.entries.popitem(last=False)
+        self.entries[query] = (embedding, response)
+
+
+cache = SemanticCache()
+
+
+def answer_question(question: str) -> str:
+    start = time.time()
+
+    query_embedding = embeddings.embed_query(question)
+    cached = cache.get(query_embedding)
+
+    if cached is not None:
+        elapsed = time.time() - start
+        return f"[CACHE HIT — {elapsed:.3f}s] {cached}"
+
+    response = llm.invoke([
+        SystemMessage(content="You are a helpful customer support agent. Answer concisely."),
+        HumanMessage(content=question),
+    ])
+    cache.put(question, query_embedding, response.content)
+
+    elapsed = time.time() - start
+    return f"[CACHE MISS — {elapsed:.2f}s] {response.content}"
+
+
+questions = [
+    "What is your return policy?",
+    "How do I return an item?",
+    "What's your policy on returns?",
+    "Do you offer free shipping?",
+    "Is shipping free?",
+    "What is your return policy?",
+    "Do you ship for free?",
+    "How can I return a product?",
+]
+for q in questions:
+    result = answer_question(q)
+    print(f"Q: {q}\nA: {result}\n")
+```
+
+### LangGraph
+
+```python
+from langgraph.graph import StateGraph, START, END
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_core.messages import HumanMessage, SystemMessage
+from typing import TypedDict, Optional
+from collections import OrderedDict
+import numpy as np
+import time
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+
+SIMILARITY_THRESHOLD = 0.92
+MAX_CACHE_SIZE = 100
+
+
+class SemanticCache:
+    def __init__(self, max_size: int = MAX_CACHE_SIZE, threshold: float = SIMILARITY_THRESHOLD):
+        self.max_size = max_size
+        self.threshold = threshold
+        self.entries = OrderedDict()
+
+    def _cosine_similarity(self, a: list[float], b: list[float]) -> float:
+        a_arr, b_arr = np.array(a), np.array(b)
+        return float(np.dot(a_arr, b_arr) / (np.linalg.norm(a_arr) * np.linalg.norm(b_arr)))
+
+    def get(self, query_embedding: list[float]) -> str | None:
+        best_score = 0.0
+        best_response = None
+        for _, (cached_embedding, cached_response) in self.entries.items():
+            score = self._cosine_similarity(query_embedding, cached_embedding)
+            if score > best_score:
+                best_score = score
+                best_response = cached_response
+        if best_score >= self.threshold:
+            return best_response
+        return None
+
+    def put(self, query: str, embedding: list[float], response: str):
+        if len(self.entries) >= self.max_size:
+            self.entries.popitem(last=False)
+        self.entries[query] = (embedding, response)
+
+
+cache = SemanticCache()
+
+
+class QueryState(TypedDict):
+    question: str
+    embedding: Optional[list[float]]
+    cached_response: Optional[str]
+    response: Optional[str]
+    cache_hit: bool
+
+
+def embed_query(state: QueryState) -> dict:
+    query_embedding = embeddings.embed_query(state["question"])
+    cached = cache.get(query_embedding)
+    return {
+        "embedding": query_embedding,
+        "cached_response": cached,
+        "cache_hit": cached is not None,
+    }
+
+
+def route_cache(state: QueryState) -> str:
+    return "return_cached" if state["cache_hit"] else "call_llm"
+
+
+def return_cached(state: QueryState) -> dict:
+    return {"response": state["cached_response"]}
+
+
+def call_llm(state: QueryState) -> dict:
+    response = llm.invoke([
+        SystemMessage(content="You are a helpful customer support agent. Answer concisely."),
+        HumanMessage(content=state["question"]),
+    ])
+    cache.put(state["question"], state["embedding"], response.content)
+    return {"response": response.content}
+
+
+graph = StateGraph(QueryState)
+graph.add_node("embed_query", embed_query)
+graph.add_node("return_cached", return_cached)
+graph.add_node("call_llm", call_llm)
+graph.add_edge(START, "embed_query")
+graph.add_conditional_edges("embed_query", route_cache, {"return_cached": "return_cached", "call_llm": "call_llm"})
+graph.add_edge("return_cached", END)
+graph.add_edge("call_llm", END)
+
+app = graph.compile()
+
+questions = [
+    "What is your return policy?",
+    "How do I return an item?",
+    "What's your policy on returns?",
+    "Do you offer free shipping?",
+    "Is shipping free?",
+    "What is your return policy?",
+    "Do you ship for free?",
+    "How can I return a product?",
+]
+for q in questions:
+    start = time.time()
+    result = app.invoke({"question": q, "cache_hit": False})
+    elapsed = time.time() - start
+    hit = "CACHE HIT" if result["cache_hit"] else "CACHE MISS"
+    print(f"Q: {q}\nA: [{hit} — {elapsed:.3f}s] {result['response']}\n")
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai import LLM
+from langchain_openai import OpenAIEmbeddings
+from collections import OrderedDict
+import numpy as np
+import time
+
+llm = LLM(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+
+SIMILARITY_THRESHOLD = 0.92
+MAX_CACHE_SIZE = 100
+
+
+class SemanticCache:
+    def __init__(self, max_size: int = MAX_CACHE_SIZE, threshold: float = SIMILARITY_THRESHOLD):
+        self.max_size = max_size
+        self.threshold = threshold
+        self.entries = OrderedDict()
+
+    def _cosine_similarity(self, a: list[float], b: list[float]) -> float:
+        a_arr, b_arr = np.array(a), np.array(b)
+        return float(np.dot(a_arr, b_arr) / (np.linalg.norm(a_arr) * np.linalg.norm(b_arr)))
+
+    def get(self, query_embedding: list[float]) -> str | None:
+        best_score = 0.0
+        best_response = None
+        for _, (cached_embedding, cached_response) in self.entries.items():
+            score = self._cosine_similarity(query_embedding, cached_embedding)
+            if score > best_score:
+                best_score = score
+                best_response = cached_response
+        if best_score >= self.threshold:
+            return best_response
+        return None
+
+    def put(self, query: str, embedding: list[float], response: str):
+        if len(self.entries) >= self.max_size:
+            self.entries.popitem(last=False)
+        self.entries[query] = (embedding, response)
+
+
+cache = SemanticCache()
+
+support_agent = Agent(
+    role="Customer Support",
+    goal="Answer customer questions concisely",
+    backstory="You are a helpful customer support agent. Answer concisely.",
+    llm=llm,
+)
+
+
+def answer_question(question: str) -> str:
+    start = time.time()
+
+    query_embedding = embeddings.embed_query(question)
+    cached = cache.get(query_embedding)
+
+    if cached is not None:
+        elapsed = time.time() - start
+        return f"[CACHE HIT — {elapsed:.3f}s] {cached}"
+
+    task = Task(description=question, expected_output="A concise answer", agent=support_agent)
+    crew = Crew(agents=[support_agent], tasks=[task], process=Process.sequential)
+    result = crew.kickoff()
+    response_text = str(result)
+    cache.put(question, query_embedding, response_text)
+
+    elapsed = time.time() - start
+    return f"[CACHE MISS — {elapsed:.2f}s] {response_text}"
+
+
+questions = [
+    "What is your return policy?",
+    "How do I return an item?",
+    "What's your policy on returns?",
+    "Do you offer free shipping?",
+    "Is shipping free?",
+    "What is your return policy?",
+    "Do you ship for free?",
+    "How can I return a product?",
+]
+for q in questions:
+    result = answer_question(q)
+    print(f"Q: {q}\nA: {result}\n")
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from langchain_openai import OpenAIEmbeddings
+from collections import OrderedDict
+import numpy as np
+import time
+
+embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+
+SIMILARITY_THRESHOLD = 0.92
+MAX_CACHE_SIZE = 100
+
+
+class SemanticCache:
+    def __init__(self, max_size: int = MAX_CACHE_SIZE, threshold: float = SIMILARITY_THRESHOLD):
+        self.max_size = max_size
+        self.threshold = threshold
+        self.entries = OrderedDict()
+
+    def _cosine_similarity(self, a: list[float], b: list[float]) -> float:
+        a_arr, b_arr = np.array(a), np.array(b)
+        return float(np.dot(a_arr, b_arr) / (np.linalg.norm(a_arr) * np.linalg.norm(b_arr)))
+
+    def get(self, query_embedding: list[float]) -> str | None:
+        best_score = 0.0
+        best_response = None
+        for _, (cached_embedding, cached_response) in self.entries.items():
+            score = self._cosine_similarity(query_embedding, cached_embedding)
+            if score > best_score:
+                best_score = score
+                best_response = cached_response
+        if best_score >= self.threshold:
+            return best_response
+        return None
+
+    def put(self, query: str, embedding: list[float], response: str):
+        if len(self.entries) >= self.max_size:
+            self.entries.popitem(last=False)
+        self.entries[query] = (embedding, response)
+
+
+cache = SemanticCache()
+
+agent = Agent(
+    name="Customer Support",
+    instructions="You are a helpful customer support agent. Answer concisely.",
+    model="gpt-4o-mini",
+)
+
+
+def answer_question(question: str) -> str:
+    start = time.time()
+
+    query_embedding = embeddings.embed_query(question)
+    cached = cache.get(query_embedding)
+
+    if cached is not None:
+        elapsed = time.time() - start
+        return f"[CACHE HIT — {elapsed:.3f}s] {cached}"
+
+    result = Runner.run_sync(agent, question)
+    cache.put(question, query_embedding, result.final_output)
+
+    elapsed = time.time() - start
+    return f"[CACHE MISS — {elapsed:.2f}s] {result.final_output}"
+
+
+questions = [
+    "What is your return policy?",
+    "How do I return an item?",
+    "What's your policy on returns?",
+    "Do you offer free shipping?",
+    "Is shipping free?",
+    "What is your return policy?",
+    "Do you ship for free?",
+    "How can I return a product?",
+]
+for q in questions:
+    result = answer_question(q)
+    print(f"Q: {q}\nA: {result}\n")
+```
+
+## Why This Works
+
+Semantic caching exploits the fact that users often ask the same question in slightly different words. By comparing query embeddings via cosine similarity rather than exact string matching, the cache recognizes that "What is your return policy?" and "How do I return an item?" are semantically close enough to share a response. The embedding comparison is near-instantaneous compared to an LLM call, so cache hits return in milliseconds at zero token cost. The similarity threshold (0.92) is tuned to be high enough to avoid false positives (returning answers to genuinely different questions) while low enough to catch paraphrases. The `OrderedDict`-based eviction policy with a configurable max size prevents the cache from growing unboundedly.
+
+## Key Takeaways
+
+- Semantic caching using embeddings provides dramatically better hit rates than exact-match caching for natural-language queries where users paraphrase heavily.
+- Set the similarity threshold high enough (0.90-0.95) to avoid serving incorrect cached answers for genuinely different questions.
+- Always bound your cache with a max size or TTL — unbounded caches are memory leaks in production.

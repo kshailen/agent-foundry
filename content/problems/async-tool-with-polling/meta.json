@@ -1,0 +1,57 @@
+{
+  "number": 29,
+  "title": "Async Tool with Polling",
+  "difficulty": "hard",
+  "categories": [
+    "tool-calling",
+    "orchestration"
+  ],
+  "frameworks": [
+    "langgraph",
+    "openai-agents-sdk",
+    "crewai"
+  ],
+  "constraints": [
+    "The agent must not block indefinitely waiting for the job to complete",
+    "The agent must poll the job status at reasonable intervals",
+    "The agent must stop polling after the job completes or a timeout is reached",
+    "The final result must be fetched and presented to the user"
+  ],
+  "hints": [
+    "Split the workflow into three tools: start_job (returns job ID), check_status (returns status), and get_result (returns final output)",
+    "In LangGraph, use a loop node that calls check_status and conditionally exits when the job is complete",
+    "Add a maximum retry count or timeout to prevent infinite polling"
+  ],
+  "starterCode": {
+    "langgraph": "from langchain_openai import ChatOpenAI\nfrom langchain_core.tools import tool\nfrom langgraph.prebuilt import create_react_agent\nimport time\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\njob_store = {}\n\n@tool\ndef generate_report(topic: str) -> str:\n    \"\"\"Start a long-running report generation job.\"\"\"\n    # BUG: This either blocks forever (bad) or returns immediately without results (also bad)\n    # TODO: Return a job ID and implement polling to check when the report is ready\n    job_id = f\"JOB-{hash(topic) % 10000:04d}\"\n    job_store[job_id] = {\"status\": \"processing\", \"topic\": topic, \"started\": time.time()}\n    # Simulating: job takes 3 seconds to complete\n    time.sleep(3)\n    job_store[job_id][\"status\"] = \"completed\"\n    job_store[job_id][\"result\"] = f\"Comprehensive report on {topic}: Key findings include market growth of 25%, emerging trends in AI adoption, and regulatory changes expected in Q3.\"\n    return job_store[job_id][\"result\"]\n\nagent = create_react_agent(llm, [generate_report])\n\nresult = agent.invoke({\"messages\": [(\"human\", \"Generate a detailed report on the electric vehicle market\")]})\nprint(result[\"messages\"][-1].content)",
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom agents.tool import function_tool\nimport time\n\njob_store = {}\n\n@function_tool\ndef generate_report(topic: str) -> str:\n    \"\"\"Start a long-running report generation job.\"\"\"\n    # BUG: This either blocks forever (bad) or returns immediately without results (also bad)\n    # TODO: Split into start_job, check_status, and get_result tools\n    # Implement polling so the agent checks status until the job completes\n    job_id = f\"JOB-{hash(topic) % 10000:04d}\"\n    job_store[job_id] = {\"status\": \"processing\", \"topic\": topic, \"started\": time.time()}\n    # Simulating: job takes 3 seconds to complete\n    time.sleep(3)\n    job_store[job_id][\"status\"] = \"completed\"\n    job_store[job_id][\"result\"] = f\"Comprehensive report on {topic}: Key findings include market growth of 25%, emerging trends in AI adoption, and regulatory changes expected in Q3.\"\n    return job_store[job_id][\"result\"]\n\nagent = Agent(\n    name=\"Report Generator\",\n    instructions=\"You are an assistant that generates detailed reports on topics.\",\n    tools=[generate_report],\n)\n\nresult = Runner.run_sync(agent, \"Generate a detailed report on the electric vehicle market\")\nprint(result.final_output)",
+    "crewai": "from crewai import Agent, Task, Crew, Process\nfrom crewai import LLM\nfrom crewai.tools import tool\nimport time\n\nllm = LLM(model=\"gpt-4o-mini\")\njob_store = {}\n\n@tool\ndef generate_report(topic: str) -> str:\n    \"\"\"Start a long-running report generation job.\"\"\"\n    # BUG: This either blocks forever (bad) or returns immediately without results (also bad)\n    # TODO: Split into start_job, check_status, and get_result tools\n    job_id = f\"JOB-{hash(topic) % 10000:04d}\"\n    job_store[job_id] = {\"status\": \"processing\", \"topic\": topic, \"started\": time.time()}\n    time.sleep(3)\n    job_store[job_id][\"status\"] = \"completed\"\n    job_store[job_id][\"result\"] = f\"Comprehensive report on {topic}: Key findings include market growth of 25%, emerging trends in AI adoption, and regulatory changes expected in Q3.\"\n    return job_store[job_id][\"result\"]\n\nagent = Agent(\n    role=\"Report Generator\",\n    goal=\"Generate detailed reports on topics\",\n    backstory=\"You are an assistant that generates detailed reports on topics.\",\n    tools=[generate_report],\n    llm=llm,\n)\n\ntask = Task(description=\"Generate a detailed report on the electric vehicle market\", expected_output=\"A report\", agent=agent)\ncrew = Crew(agents=[agent], tasks=[task], process=Process.sequential)\nresult = crew.kickoff()\nprint(result)"
+  },
+  "colabUrls": {
+    "langgraph": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/async-tool-with-polling-langgraph.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/async-tool-with-polling-openai.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/async-tool-with-polling-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "non-blocking-start",
+      "label": "Job starts without blocking",
+      "description": "The start_job tool returns a job ID immediately without waiting for completion"
+    },
+    {
+      "id": "polling-implemented",
+      "label": "Polling is implemented",
+      "description": "The agent checks job status at intervals until the job completes"
+    },
+    {
+      "id": "timeout-exists",
+      "label": "Timeout prevents infinite loops",
+      "description": "A maximum retry count or timeout stops the agent from polling forever"
+    },
+    {
+      "id": "result-retrieved",
+      "label": "Final result is retrieved",
+      "description": "Once the job completes, the agent fetches and presents the result to the user"
+    }
+  ]
+}

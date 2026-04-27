@@ -1,0 +1,51 @@
+{
+  "number": 94,
+  "title": "Streaming Intermediate Results",
+  "difficulty": "medium",
+  "categories": [
+    "orchestration"
+  ],
+  "frameworks": [
+    "langgraph",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "Each workflow step must emit its result as soon as it completes, before the next step starts",
+    "The user must see intermediate outputs in real time, not just the final answer",
+    "The streaming must work with at least 3 sequential steps",
+    "You may not buffer all results and print them at the end"
+  ],
+  "hints": [
+    "In LangGraph, use stream_mode='updates' or stream_mode='values' to get state updates after each node executes",
+    "Each node should update a specific state key so the stream consumer can identify which step just completed",
+    "In LangChain, use callbacks or streaming handlers to emit results as each chain step finishes"
+  ],
+  "starterCode": {
+    "langgraph": "from langchain_openai import ChatOpenAI\nfrom langchain_core.messages import HumanMessage, SystemMessage\nimport time\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# BUG: Only the final result is shown — user waits with no feedback\n# TODO: Stream intermediate results so the user sees progress after each step\ndef research_topic(topic: str) -> str:\n    outline = llm.invoke([\n        SystemMessage(content=\"Create a brief research outline for this topic. List 3-4 key areas to investigate.\"),\n        HumanMessage(content=topic),\n    ])\n\n    research = llm.invoke([\n        SystemMessage(content=\"Based on this outline, write a detailed research summary for each area.\"),\n        HumanMessage(content=outline.content),\n    ])\n\n    report = llm.invoke([\n        SystemMessage(content=\"Turn this research into a polished final report with an introduction and conclusion.\"),\n        HumanMessage(content=research.content),\n    ])\n\n    # BUG: User only sees the final report after waiting for all 3 steps\n    return report.content\n\nresult = research_topic(\"The impact of AI on healthcare\")\nprint(result)",
+    "crewai": "from crewai import Agent, Task, Crew, Process\nfrom crewai import LLM\n\nllm = LLM(model=\"gpt-4o-mini\")\n\n# BUG: Only the final result is shown — user waits with no feedback\n# TODO: Stream intermediate results so the user sees progress after each step\noutliner = Agent(\n    role=\"Outliner\",\n    goal=\"Create a research outline\",\n    backstory=\"Create a brief research outline. List 3-4 key areas to investigate.\",\n    llm=llm,\n)\n\nresearcher = Agent(\n    role=\"Researcher\",\n    goal=\"Write detailed research summaries\",\n    backstory=\"Write a detailed research summary for each area in the outline.\",\n    llm=llm,\n)\n\nreporter = Agent(\n    role=\"Reporter\",\n    goal=\"Write a polished final report\",\n    backstory=\"Turn research into a polished final report with an introduction and conclusion.\",\n    llm=llm,\n)\n\noutline_task = Task(\n    description=\"Create a research outline for: The impact of AI on healthcare\",\n    expected_output=\"A list of 3-4 key areas to investigate\",\n    agent=outliner,\n)\n\nresearch_task = Task(\n    description=\"Write detailed research for each area\",\n    expected_output=\"Detailed research summary for each area\",\n    agent=researcher,\n    context=[outline_task],\n)\n\nreport_task = Task(\n    description=\"Write a polished final report\",\n    expected_output=\"A polished report with introduction and conclusion\",\n    agent=reporter,\n    context=[research_task],\n)\n\n# BUG: User only sees the final report after waiting for all 3 steps\ncrew = Crew(\n    agents=[outliner, researcher, reporter],\n    tasks=[outline_task, research_task, report_task],\n    process=Process.sequential,\n)\n\nresult = crew.kickoff()\nprint(result)",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\n# BUG: Only the final result is shown — user waits with no feedback\n# TODO: Stream intermediate results so the user sees progress after each step\ndef research_topic(topic: str) -> str:\n    outliner = Agent(\n        name=\"Outliner\",\n        instructions=\"Create a brief research outline for this topic. List 3-4 key areas to investigate.\",\n    )\n    outline_result = Runner.run_sync(outliner, topic)\n\n    researcher = Agent(\n        name=\"Researcher\",\n        instructions=\"Based on this outline, write a detailed research summary for each area.\",\n    )\n    research_result = Runner.run_sync(researcher, outline_result.final_output)\n\n    reporter = Agent(\n        name=\"Reporter\",\n        instructions=\"Turn this research into a polished final report with an introduction and conclusion.\",\n    )\n    report_result = Runner.run_sync(reporter, research_result.final_output)\n\n    # BUG: User only sees the final report after waiting for all 3 steps\n    return report_result.final_output\n\nresult = research_topic(\"The impact of AI on healthcare\")\nprint(result)"
+  },
+  "colabUrls": {
+    "langgraph": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/streaming-intermediate-results-langgraph.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/streaming-intermediate-results-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/streaming-intermediate-results-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "emits-per-step",
+      "label": "Emits results per step",
+      "description": "Each workflow step emits its output as soon as it completes"
+    },
+    {
+      "id": "real-time-visibility",
+      "label": "Real-time visibility",
+      "description": "The user can see intermediate outputs before the final result is ready"
+    },
+    {
+      "id": "step-identification",
+      "label": "Step identification",
+      "description": "Each streamed update identifies which step produced it"
+    }
+  ]
+}

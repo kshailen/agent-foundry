@@ -1,0 +1,150 @@
+# Assembling a Crew
+
+A **Crew** in CrewAI is a coordinated team of agents that work together on a shared set of tasks. You define who does what, in what order (or with what collaboration model), then run the crew with `kickoff()` or batch variants. Crews are where individual agents and tasks become a repeatable multi-agent workflow.
+
+## What is a Crew?
+
+A crew bundles:
+
+- **Agents** — the specialists (researcher, writer, reviewer, and so on).
+- **Tasks** — concrete units of work, each usually assigned to an agent.
+- **Process** — how work flows (for example, one task after another, or a manager-led hierarchy).
+
+When you call `kickoff`, CrewAI orchestrates the LLM calls, tool use, and handoffs so the crew produces a final **CrewOutput** (plus per-task outputs and usage metadata).
+
+## Crew constructor: key parameters
+
+| Parameter | Role |
+|-----------|------|
+| `agents` | List of `Agent` instances that can be assigned to tasks. |
+| `tasks` | List of `Task` objects, often chained with `context` for dependencies. |
+| `process` | Flow control; `Process.sequential` is the default (tasks run in order). Alternatives include `Process.hierarchical` for manager-style coordination. |
+| `verbose` | When `True`, prints richer execution logs for debugging. |
+| `memory` | Enables crew-level memory so prior reasoning can inform later steps (when supported by your setup). |
+| `planning` | When enabled, adds a planning phase before execution to decompose work. |
+| `output_log_file` | Path to append structured run logs for auditing or debugging. |
+| `manager_llm` | LLM used by the **hierarchical** process for the manager role. |
+| `manager_agent` | Optional custom manager `Agent` instead of the default manager behavior. |
+
+```python
+from crewai import Crew, Process
+
+crew = Crew(
+    agents=[researcher, writer],
+    tasks=[research_task, write_task],
+    process=Process.sequential,
+    verbose=True,
+)
+```
+
+## Basic crew creation
+
+Below is a minimal pattern: two agents, two tasks, sequential process, and `context` so the writer task can build on the researcher’s output.
+
+```python
+from crewai import Agent, Task, Crew, Process
+
+researcher = Agent(
+    role="Research Analyst",
+    goal="Find accurate, concise facts on the given topic",
+    backstory="You summarize sources clearly and avoid speculation.",
+    verbose=True,
+)
+
+writer = Agent(
+    role="Content Writer",
+    goal="Turn research into clear prose",
+    backstory="You write tight, readable paragraphs for a general audience.",
+    verbose=True,
+)
+
+research_task = Task(
+    description="Research the topic: {topic}. List 3–5 bullet facts.",
+    expected_output="A short bullet list of facts.",
+    agent=researcher,
+)
+
+write_task = Task(
+    description="Using the research, write one paragraph about {topic}.",
+    expected_output="One paragraph of prose.",
+    agent=writer,
+    context=[research_task],
+)
+
+crew = Crew(
+    agents=[researcher, writer],
+    tasks=[research_task, write_task],
+    process=Process.sequential,
+    verbose=True,
+)
+```
+
+## `crew.kickoff(inputs={...})` and interpolation
+
+Pass a dictionary to `kickoff` to supply values for **placeholders** in agent and task text. Any `{name}` in `description`, `expected_output`, or related strings can be filled from `inputs`.
+
+```python
+result = crew.kickoff(inputs={"topic": "renewable energy in 2026"})
+```
+
+For example, if `description` contains `{topic}`, CrewAI substitutes the string you passed for `topic` before the agents run. This keeps one crew definition reusable across many runs or users.
+
+## `CrewOutput` properties
+
+After `kickoff`, the return value is a `CrewOutput` (or compatible object) with several views of the same run:
+
+| Property | Typical use |
+|----------|-------------|
+| `.raw` | Main final output as a string — easiest for logging or UI. |
+| `.pydantic` | Parsed Pydantic model instance when tasks use structured `output_pydantic`. |
+| `.json_dict` | Dict view of structured JSON output when configured. |
+| `.tasks_output` | Per-task outputs (order and shape follow your task list). |
+| `.token_usage` | Aggregated token usage for the run when available. |
+
+```python
+result = crew.kickoff(inputs={"topic": "CrewAI"})
+
+print(result.raw)
+# print(result.pydantic)   # meaningful when output_pydantic is set on tasks
+# print(result.json_dict)  # meaningful when JSON output is configured
+print(result.tasks_output)
+print(result.token_usage)
+```
+
+## `kickoff_for_each()` for batch runs
+
+When you have **many input dicts** (e.g. one row per customer or per document), `kickoff_for_each` runs the same crew repeatedly with different `inputs` without rebuilding the crew.
+
+```python
+batch_inputs = [
+    {"topic": "machine learning"},
+    {"topic": "supply chains"},
+]
+
+results = crew.kickoff_for_each(inputs=batch_inputs)
+
+for item in results:
+    print(item.raw)
+```
+
+Each element of `results` corresponds to one entry in `inputs`, with its own `CrewOutput`-style payload.
+
+## `@CrewBase` and class-based crews
+
+For larger projects, CrewAI supports a **declarative class** pattern with `@CrewBase` and method decorators:
+
+- `@agent` — methods that return an `Agent`.
+- `@task` — methods that return a `Task`.
+- `@crew` — method that returns a configured `Crew` (wiring agents and tasks).
+- `@before_kickoff` — hooks that run immediately before execution (e.g. validate inputs, set state).
+- `@after_kickoff` — hooks that run after the crew finishes (e.g. post-process output, metrics).
+
+This keeps agents, tasks, and crew assembly in one cohesive module and makes crews easier to test and extend.
+
+## Key takeaways
+
+- A **Crew** is a team of **agents** executing **tasks** under a **process** (sequential by default).
+- Use `kickoff(inputs={...})` so `{placeholders}` in descriptions become dynamic, reusable prompts.
+- Inspect **`CrewOutput`** via `.raw`, `.tasks_output`, and `.token_usage`; use `.pydantic` / `.json_dict` when you configure structured outputs on tasks.
+- Use **`kickoff_for_each`** to batch the same crew over many input dictionaries.
+- **`@CrewBase`** with `@agent`, `@task`, `@crew`, `@before_kickoff`, and `@after_kickoff` scales crew definitions for production codebases.

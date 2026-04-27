@@ -1,0 +1,52 @@
+{
+  "number": 87,
+  "title": "Cross-Framework Pipeline",
+  "difficulty": "hard",
+  "categories": [
+    "multi-agent",
+    "orchestration"
+  ],
+  "frameworks": [
+    "openai-agents-sdk",
+    "langgraph",
+    "crewai"
+  ],
+  "constraints": [
+    "The pipeline must use at least two different frameworks",
+    "Data must flow correctly between framework boundaries",
+    "Each framework must handle its own stage of the pipeline",
+    "The output of one framework's stage must be usable as input to the next"
+  ],
+  "hints": [
+    "Extract the string output from one framework before passing it as input to the next",
+    "Use CrewAI for the research stage and LangGraph for the processing/decision stage",
+    "Define a clear interface (plain string or dict) at each framework boundary"
+  ],
+  "starterCode": {
+    "openai-agents-sdk": "from agents import Agent, Runner\n\n# BUG: Entire pipeline runs in a single framework\n# TODO: Split into a cross-framework pipeline\n\nresearcher = Agent(\n    name=\"Researcher\",\n    instructions=\"You are a research analyst. Gather comprehensive data on the given topic.\",\n)\n\nprocessor = Agent(\n    name=\"Processor\",\n    instructions=\"You are a data processor. Organize and structure research findings.\",\n)\n\nadvisor = Agent(\n    name=\"Advisor\",\n    instructions=\"You are a decision advisor. Make recommendations based on processed data.\",\n)\n\nresearch = Runner.run_sync(researcher, \"Research: Best cloud provider for AI workloads\")\nprocessed = Runner.run_sync(processor, f\"Process this research: {research.final_output}\")\ndecision = Runner.run_sync(advisor, f\"Based on this analysis, provide recommendations: {processed.final_output}\")\nprint(decision.final_output)",
+    "langgraph": "from langchain_openai import ChatOpenAI\nfrom langgraph.graph import StateGraph, START, END\nfrom typing import TypedDict\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\nclass State(TypedDict):\n    topic: str\n    research: str\n    analysis: str\n    recommendation: str\n\n# BUG: All stages use the same framework\n# TODO: Integrate stages from different frameworks\ndef research(state: State) -> dict:\n    response = llm.invoke(f\"Research: {state['topic']}\")\n    return {\"research\": response.content}\n\ndef process(state: State) -> dict:\n    response = llm.invoke(f\"Process this research: {state['research']}\")\n    return {\"analysis\": response.content}\n\ndef decide(state: State) -> dict:\n    response = llm.invoke(f\"Provide recommendations based on: {state['analysis']}\")\n    return {\"recommendation\": response.content}\n\ngraph = StateGraph(State)\ngraph.add_node(\"research\", research)\ngraph.add_node(\"process\", process)\ngraph.add_node(\"decide\", decide)\ngraph.add_edge(START, \"research\")\ngraph.add_edge(\"research\", \"process\")\ngraph.add_edge(\"process\", \"decide\")\ngraph.add_edge(\"decide\", END)\n\napp = graph.compile()\nresult = app.invoke({\"topic\": \"Best cloud provider for AI workloads\", \"research\": \"\", \"analysis\": \"\", \"recommendation\": \"\"})\nprint(result[\"recommendation\"])",
+    "crewai": "from crewai import Agent, Task, Crew, Process\nfrom crewai import LLM\n\nllm = LLM(model=\"gpt-4o-mini\")\n\n# BUG: Entire pipeline runs in CrewAI only\n# TODO: Use CrewAI for research and another framework for processing/decisions\n\nresearcher = Agent(\n    role=\"Researcher\",\n    goal=\"Gather comprehensive data on the topic\",\n    backstory=\"You are a senior research analyst.\",\n    llm=llm,\n)\n\nprocessor = Agent(\n    role=\"Processor\",\n    goal=\"Organize and structure research findings\",\n    backstory=\"You are a data processing specialist.\",\n    llm=llm,\n)\n\nadvisor = Agent(\n    role=\"Advisor\",\n    goal=\"Make recommendations based on processed data\",\n    backstory=\"You are a strategic decision advisor.\",\n    llm=llm,\n)\n\nresearch_task = Task(\n    description=\"Research: {topic}\",\n    expected_output=\"Comprehensive research findings\",\n    agent=researcher,\n)\n\nprocess_task = Task(\n    description=\"Process and organize the research findings\",\n    expected_output=\"Structured analysis\",\n    agent=processor,\n)\n\ndecision_task = Task(\n    description=\"Provide strategic recommendations\",\n    expected_output=\"Actionable recommendations\",\n    agent=advisor,\n)\n\ncrew = Crew(\n    agents=[researcher, processor, advisor],\n    tasks=[research_task, process_task, decision_task],\n    process=Process.sequential,\n)\n\nresult = crew.kickoff(inputs={\"topic\": \"Best cloud provider for AI workloads\"})\nprint(result)"
+  },
+  "colabUrls": {
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/cross-framework-pipeline-openai.ipynb",
+    "langgraph": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/cross-framework-pipeline-langgraph.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/cross-framework-pipeline-crewai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "multi-framework",
+      "label": "Uses multiple frameworks",
+      "description": "The pipeline uses at least two different agent frameworks"
+    },
+    {
+      "id": "data-flows",
+      "label": "Data flows across boundaries",
+      "description": "Output from one framework's stage correctly feeds into the next framework's stage"
+    },
+    {
+      "id": "stages-distinct",
+      "label": "Each framework handles its stage",
+      "description": "Each framework is responsible for a distinct stage of the pipeline"
+    }
+  ]
+}

@@ -1,0 +1,213 @@
+## Approach
+
+The bug in the starter code is straightforward: the agent sends the user's question directly to the LLM without any reference to the five company documents. Because the LLM has no access to the documents at runtime, it falls back on parametric knowledge (its training data) and confidently produces answers that may be wrong, outdated, or entirely fabricated.
+
+The fix is to build a proper retrieval-augmented generation (RAG) pipeline. First, convert the documents into vector embeddings and store them in a vector store. Then, when a question arrives, use a retriever to find the most relevant documents by similarity search. Finally, pass the retrieved documents as context in the system prompt and instruct the LLM to answer only from that context.
+
+The key insight is that grounding the LLM in retrieved documents turns it from a guessing machine into a lookup engine that cites real information. By adding an explicit instruction to answer only from the provided context, you also prevent the model from mixing in parametric knowledge.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="Acme Corp was founded in 2019 and is headquartered in Austin, Texas."),
+    Document(page_content="Acme Corp's flagship product is the AcmeAI platform for enterprise automation."),
+    Document(page_content="Acme Corp raised a $50M Series B in January 2024 led by Sequoia Capital."),
+    Document(page_content="Acme Corp has 200 employees across offices in Austin, New York, and London."),
+    Document(page_content="Acme Corp's CEO is Jane Smith, who previously led engineering at BigTech Inc."),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+retriever = vectorstore.as_retriever()
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system",
+     "You are a helpful assistant. Answer the user's question using ONLY the "
+     "context below. If the answer is not in the context, say you don't know.\n\n"
+     "Context:\n{context}"),
+    ("human", "{question}"),
+])
+
+def ask(question: str) -> str:
+    docs = retriever.invoke(question)
+    context = "\n".join([doc.page_content for doc in docs])
+    chain = prompt | llm
+    result = chain.invoke({"context": context, "question": question})
+    return result.content
+
+print(ask("Where is Acme Corp headquartered?"))
+```
+
+### LangGraph
+
+```python
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="Acme Corp was founded in 2019 and is headquartered in Austin, Texas."),
+    Document(page_content="Acme Corp's flagship product is the AcmeAI platform for enterprise automation."),
+    Document(page_content="Acme Corp raised a $50M Series B in January 2024 led by Sequoia Capital."),
+    Document(page_content="Acme Corp has 200 employees across offices in Austin, New York, and London."),
+    Document(page_content="Acme Corp's CEO is Jane Smith, who previously led engineering at BigTech Inc."),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+retriever = vectorstore.as_retriever()
+
+class State(TypedDict):
+    question: str
+    context: str
+    answer: str
+
+def retrieve(state: State) -> State:
+    docs = retriever.invoke(state["question"])
+    context = "\n".join([doc.page_content for doc in docs])
+    return {"context": context}
+
+def answer_question(state: State) -> State:
+    response = llm.invoke(
+        f"Answer the question using ONLY the context below. "
+        f"If the answer is not in the context, say you don't know.\n\n"
+        f"Context:\n{state['context']}\n\n"
+        f"Question: {state['question']}"
+    )
+    return {"answer": response.content}
+
+graph = StateGraph(State)
+graph.add_node("retrieve", retrieve)
+graph.add_node("answer", answer_question)
+graph.add_edge(START, "retrieve")
+graph.add_edge("retrieve", "answer")
+graph.add_edge("answer", END)
+
+app = graph.compile()
+result = app.invoke({"question": "Who is the CEO of Acme Corp?"})
+print(result["answer"])
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai import LLM
+from crewai.tools import tool
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+
+llm = LLM(model="gpt-4o-mini")
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="Acme Corp was founded in 2019 and is headquartered in Austin, Texas."),
+    Document(page_content="Acme Corp's flagship product is the AcmeAI platform for enterprise automation."),
+    Document(page_content="Acme Corp raised a $50M Series B in January 2024 led by Sequoia Capital."),
+    Document(page_content="Acme Corp has 200 employees across offices in Austin, New York, and London."),
+    Document(page_content="Acme Corp's CEO is Jane Smith, who previously led engineering at BigTech Inc."),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+retriever = vectorstore.as_retriever()
+
+
+@tool
+def search_documents(query: str) -> str:
+    """Search the company knowledge base for relevant documents about Acme Corp."""
+    docs = retriever.invoke(query)
+    return "\n".join([doc.page_content for doc in docs])
+
+
+assistant = Agent(
+    role="Document QA Assistant",
+    goal="Answer questions using ONLY the provided documents",
+    backstory=(
+        "You are a helpful assistant. Answer questions using ONLY the information "
+        "retrieved from the search_documents tool. If the answer is not in the "
+        "documents, say you don't know."
+    ),
+    tools=[search_documents],
+    llm=llm,
+)
+
+task = Task(
+    description="Where is Acme Corp headquartered?",
+    expected_output="The answer based on the documents",
+    agent=assistant,
+)
+
+crew = Crew(agents=[assistant], tasks=[task], process=Process.sequential)
+result = crew.kickoff()
+print(result)
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+from agents.tool import function_tool
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document
+
+embeddings = OpenAIEmbeddings()
+
+documents = [
+    Document(page_content="Acme Corp was founded in 2019 and is headquartered in Austin, Texas."),
+    Document(page_content="Acme Corp's flagship product is the AcmeAI platform for enterprise automation."),
+    Document(page_content="Acme Corp raised a $50M Series B in January 2024 led by Sequoia Capital."),
+    Document(page_content="Acme Corp has 200 employees across offices in Austin, New York, and London."),
+    Document(page_content="Acme Corp's CEO is Jane Smith, who previously led engineering at BigTech Inc."),
+]
+
+vectorstore = FAISS.from_documents(documents, embeddings)
+retriever = vectorstore.as_retriever()
+
+
+@function_tool
+def search_documents(query: str) -> str:
+    """Search the company knowledge base for relevant documents about Acme Corp."""
+    docs = retriever.invoke(query)
+    return "\n".join([doc.page_content for doc in docs])
+
+
+agent = Agent(
+    name="Document QA Assistant",
+    instructions=(
+        "You are a helpful assistant. Answer questions using ONLY the information "
+        "retrieved from the search_documents tool. If the answer is not in the "
+        "documents, say you don't know."
+    ),
+    tools=[search_documents],
+    model="gpt-4o-mini",
+)
+
+result = Runner.run_sync(agent, "Where is Acme Corp headquartered?")
+print(result.final_output)
+```
+
+## Why This Works
+
+By inserting a retrieval step between the user's question and the LLM call, the agent fetches the most semantically relevant documents before generating an answer. The system prompt explicitly restricts the model to the provided context, which prevents hallucination from parametric knowledge. The vector store handles similarity matching so the right document surfaces for each question.
+
+## Key Takeaways
+
+- An LLM without retrieval is answering from its training data, which can be wrong or stale for domain-specific questions.
+- RAG pipelines ground the model in real data by embedding documents and retrieving the relevant ones at query time.
+- A clear system prompt instruction ("answer only from the context") is essential to prevent the model from mixing in its own knowledge.

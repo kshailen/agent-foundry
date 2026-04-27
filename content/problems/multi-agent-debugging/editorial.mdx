@@ -1,0 +1,287 @@
+## Approach
+
+The four-agent pipeline (collector, cleaner, analyzer, reporter) produces incorrect final reports, but with no observability, it is impossible to tell which agent introduced the error. The data might be wrong from the start (collector), corrupted during normalization (cleaner), misinterpreted (analyzer), or misrepresented (reporter). Without tracing, debugging a multi-agent system is like debugging a program without logs — you can only see the final output and guess.
+
+The fix adds tracing/logging to each agent's execution without modifying the agents' core logic or prompts. Each trace entry captures three things: the agent's name, the input it received, and the output it produced. By comparing each agent's output against what the next agent received, you can pinpoint exactly where an error was introduced.
+
+In CrewAI, you can use task callbacks or wrap the crew execution with logging that captures each task's output. In LangGraph, you wrap each node function with a tracing decorator that logs inputs and outputs before and after execution. The key constraint is that the agents' prompts and behavior remain unchanged — you only add observability.
+
+## Solution
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai import LLM
+import logging
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger("agent_trace")
+
+llm = LLM(model="gpt-4o-mini")
+
+trace_log = []
+
+collector = Agent(
+    role="Data Collector",
+    goal="Collect raw data points about a topic",
+    backstory="You gather raw information from various sources.",
+    llm=llm,
+)
+
+cleaner = Agent(
+    role="Data Cleaner",
+    goal="Clean and normalize the collected data",
+    backstory="You remove duplicates, fix formatting, and standardize data.",
+    llm=llm,
+)
+
+analyzer = Agent(
+    role="Data Analyzer",
+    goal="Analyze cleaned data and extract insights",
+    backstory="You find patterns and trends in structured data.",
+    llm=llm,
+)
+
+reporter = Agent(
+    role="Report Generator",
+    goal="Generate a final report from the analysis",
+    backstory="You create clear, executive-ready reports.",
+    llm=llm,
+)
+
+def make_traced_task(description, expected_output, agent, agent_name, context=None):
+    def task_callback(output):
+        entry = {
+            "agent": agent_name,
+            "output": str(output.raw)[:500],
+        }
+        trace_log.append(entry)
+        logger.info(f"\n{'='*60}")
+        logger.info(f"TRACE - Agent: {agent_name}")
+        logger.info(f"Output: {str(output.raw)[:500]}")
+        logger.info(f"{'='*60}")
+
+    kwargs = {
+        "description": description,
+        "expected_output": expected_output,
+        "agent": agent,
+        "callback": task_callback,
+    }
+    if context:
+        kwargs["context"] = context
+    return Task(**kwargs)
+
+collect_task = make_traced_task(
+    "Collect key data points about {topic}",
+    "A list of raw data points",
+    collector, "Data Collector",
+)
+
+clean_task = make_traced_task(
+    "Clean and normalize the collected data",
+    "Cleaned, standardized data",
+    cleaner, "Data Cleaner",
+    context=[collect_task],
+)
+
+analyze_task = make_traced_task(
+    "Analyze the cleaned data for trends and insights",
+    "Key insights and trend analysis",
+    analyzer, "Data Analyzer",
+    context=[clean_task],
+)
+
+report_task = make_traced_task(
+    "Generate a final executive report",
+    "A polished executive report",
+    reporter, "Report Generator",
+    context=[analyze_task],
+)
+
+crew = Crew(
+    agents=[collector, cleaner, analyzer, reporter],
+    tasks=[collect_task, clean_task, analyze_task, report_task],
+    process=Process.sequential,
+)
+
+result = crew.kickoff(inputs={"topic": "global renewable energy adoption trends"})
+print("\n\nFinal Report:", result)
+
+print("\n\n--- FULL TRACE LOG ---")
+for entry in trace_log:
+    print(f"\nAgent: {entry['agent']}")
+    print(f"Output: {entry['output']}")
+```
+
+### LangGraph
+
+```python
+from langchain_openai import ChatOpenAI
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict
+import logging
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger("agent_trace")
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+trace_log = []
+
+class State(TypedDict):
+    topic: str
+    raw_data: str
+    cleaned_data: str
+    analysis: str
+    report: str
+
+def traced(agent_name, input_key, output_key):
+    def decorator(func):
+        def wrapper(state):
+            input_value = state.get(input_key, state.get("topic", ""))
+            logger.info(f"\n{'='*60}")
+            logger.info(f"TRACE - Agent: {agent_name}")
+            logger.info(f"Input: {str(input_value)[:500]}")
+
+            result = func(state)
+
+            output_value = result.get(output_key, "")
+            logger.info(f"Output: {str(output_value)[:500]}")
+            logger.info(f"{'='*60}")
+
+            trace_log.append({
+                "agent": agent_name,
+                "input": str(input_value)[:500],
+                "output": str(output_value)[:500],
+            })
+            return result
+        return wrapper
+    return decorator
+
+@traced("Data Collector", "topic", "raw_data")
+def collect(state: State) -> dict:
+    response = llm.invoke(f"Collect key data points about: {state['topic']}")
+    return {"raw_data": response.content}
+
+@traced("Data Cleaner", "raw_data", "cleaned_data")
+def clean(state: State) -> dict:
+    response = llm.invoke(f"Clean and normalize this data: {state['raw_data']}")
+    return {"cleaned_data": response.content}
+
+@traced("Data Analyzer", "cleaned_data", "analysis")
+def analyze(state: State) -> dict:
+    response = llm.invoke(f"Analyze trends and insights from: {state['cleaned_data']}")
+    return {"analysis": response.content}
+
+@traced("Report Generator", "analysis", "report")
+def report(state: State) -> dict:
+    response = llm.invoke(f"Generate an executive report from: {state['analysis']}")
+    return {"report": response.content}
+
+graph = StateGraph(State)
+graph.add_node("collect", collect)
+graph.add_node("clean", clean)
+graph.add_node("analyze", analyze)
+graph.add_node("report", report)
+graph.add_edge(START, "collect")
+graph.add_edge("collect", "clean")
+graph.add_edge("clean", "analyze")
+graph.add_edge("analyze", "report")
+graph.add_edge("report", END)
+
+app = graph.compile()
+result = app.invoke({
+    "topic": "global renewable energy adoption trends",
+    "raw_data": "",
+    "cleaned_data": "",
+    "analysis": "",
+    "report": "",
+})
+print("\n\nFinal Report:", result["report"])
+
+print("\n\n--- FULL TRACE LOG ---")
+for entry in trace_log:
+    print(f"\nAgent: {entry['agent']}")
+    print(f"Input: {entry['input']}")
+    print(f"Output: {entry['output']}")
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+import logging
+
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+logger = logging.getLogger("agent_trace")
+
+trace_log = []
+
+collector = Agent(
+    name="Data Collector",
+    instructions="You are a data collector. Collect key data points about the given topic.",
+)
+
+cleaner = Agent(
+    name="Data Cleaner",
+    instructions="You are a data cleaner. Clean and normalize the collected data.",
+)
+
+analyzer = Agent(
+    name="Data Analyzer",
+    instructions="You are a data analyst. Analyze the cleaned data for trends and insights.",
+)
+
+reporter = Agent(
+    name="Report Generator",
+    instructions="You are a report writer. Generate a final executive report from the analysis.",
+)
+
+
+def traced_run(agent_name: str, agent: Agent, input_text: str) -> str:
+    logger.info(f"\n{'='*60}")
+    logger.info(f"TRACE - Agent: {agent_name}")
+    logger.info(f"Input: {input_text[:500]}")
+
+    result = Runner.run_sync(agent, input_text)
+    output = result.final_output
+
+    logger.info(f"Output: {output[:500]}")
+    logger.info(f"{'='*60}")
+
+    trace_log.append({
+        "agent": agent_name,
+        "input": input_text[:500],
+        "output": output[:500],
+    })
+    return output
+
+
+topic = "global renewable energy adoption trends"
+
+raw_data = traced_run("Data Collector", collector, f"Collect key data points about: {topic}")
+cleaned_data = traced_run("Data Cleaner", cleaner, f"Clean and normalize this data: {raw_data}")
+analysis = traced_run("Data Analyzer", analyzer, f"Analyze trends and insights from: {cleaned_data}")
+report = traced_run("Report Generator", reporter, f"Generate an executive report from: {analysis}")
+
+print("\n\nFinal Report:", report)
+
+print("\n\n--- FULL TRACE LOG ---")
+for entry in trace_log:
+    print(f"\nAgent: {entry['agent']}")
+    print(f"Input: {entry['input']}")
+    print(f"Output: {entry['output']}")
+```
+
+## Why This Works
+
+The tracing wrappers capture each agent's input and output without changing the agent's behavior. By examining the trace log, you can walk through the pipeline step by step: if the collector gathered correct data but the cleaner's output is wrong, the cleaner is the faulty agent. If the analyzer received clean data but drew incorrect conclusions, the analyzer is at fault.
+
+The `traced` decorator in LangGraph is particularly clean — it wraps any node function, logs its input/output, and stores the trace in a list, all without modifying the node's core logic. In CrewAI, the task callback mechanism serves the same purpose, firing after each task completes and capturing its output.
+
+## Key Takeaways
+
+- Multi-agent pipelines need observability — without tracing, debugging is guesswork because you can only see the final output.
+- A tracing decorator or callback pattern adds observability without modifying agents' core logic, satisfying the constraint that prompts remain unchanged.
+- The trace should capture agent name, input, and output at minimum — this triplet is enough to identify exactly where an error was introduced.

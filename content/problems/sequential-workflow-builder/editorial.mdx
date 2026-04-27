@@ -1,0 +1,235 @@
+## Approach
+
+The starter code handles customer messages with a single monolithic LLM call that classifies the message, processes it, and generates a response all at once. While this produces a reasonable answer, it makes it impossible to log intermediate results, test individual steps, or swap out a single stage. The fix is to decompose the monolithic function into three separate steps — classify, process, respond — each as its own function or node, with data flowing sequentially between them.
+
+This refactoring follows the Single Responsibility Principle applied to agent workflows: each step does exactly one thing and passes its result to the next. The classify step outputs a category label (complaint, question, or request). The process step uses that label to fetch relevant context or tailor behavior. The respond step generates the final customer-facing response using both the classification and the processed context.
+
+In LangGraph, this maps to a StateGraph with three nodes connected by edges. In LangChain, this is a sequential chain where each step is a separate chain invocation with the previous step's output fed in as input.
+
+## Solution
+
+### LangGraph
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+class State(TypedDict):
+    message: str
+    category: str
+    context: str
+    response: str
+
+def classify(state: State) -> dict:
+    response = llm.invoke([
+        SystemMessage(content="Classify the following customer message into exactly one category: complaint, question, or request. Respond with only the category name, nothing else."),
+        HumanMessage(content=state["message"]),
+    ])
+    return {"category": response.content.strip().lower()}
+
+def process(state: State) -> dict:
+    category = state["category"]
+    if "complaint" in category:
+        context = "Customer is upset. Prioritize empathy, apologize, and offer resolution steps. Check order status if applicable."
+    elif "question" in category:
+        context = "Customer needs information. Provide a clear, concise factual answer. Reference FAQs or documentation if relevant."
+    else:
+        context = "Customer has a request. Acknowledge the request and provide step-by-step instructions or next steps."
+    return {"context": context}
+
+def respond(state: State) -> dict:
+    response = llm.invoke([
+        SystemMessage(content=f"You are a customer service agent. Category: {state['category']}. Guidelines: {state['context']}"),
+        HumanMessage(content=state["message"]),
+    ])
+    return {"response": f"[{state['category'].upper()}] {response.content}"}
+
+graph = StateGraph(State)
+graph.add_node("classify", classify)
+graph.add_node("process", process)
+graph.add_node("respond", respond)
+graph.add_edge(START, "classify")
+graph.add_edge("classify", "process")
+graph.add_edge("process", "respond")
+graph.add_edge("respond", END)
+
+app = graph.compile()
+
+messages = [
+    "My order #1234 hasn't arrived yet",
+    "What are your business hours?",
+    "I'd like to return a product",
+]
+for msg in messages:
+    result = app.invoke({"message": msg, "category": "", "context": "", "response": ""})
+    print(f"Input: {msg}\nOutput: {result['response']}\n")
+```
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+def classify(message: str) -> str:
+    response = llm.invoke([
+        SystemMessage(content="Classify the following customer message into exactly one category: complaint, question, or request. Respond with only the category name, nothing else."),
+        HumanMessage(content=message),
+    ])
+    return response.content.strip().lower()
+
+def process(category: str) -> str:
+    if "complaint" in category:
+        return "Customer is upset. Prioritize empathy, apologize, and offer resolution steps. Check order status if applicable."
+    elif "question" in category:
+        return "Customer needs information. Provide a clear, concise factual answer. Reference FAQs or documentation if relevant."
+    else:
+        return "Customer has a request. Acknowledge the request and provide step-by-step instructions or next steps."
+
+def respond(message: str, category: str, context: str) -> str:
+    response = llm.invoke([
+        SystemMessage(content=f"You are a customer service agent. Category: {category}. Guidelines: {context}"),
+        HumanMessage(content=message),
+    ])
+    return f"[{category.upper()}] {response.content}"
+
+messages = [
+    "My order #1234 hasn't arrived yet",
+    "What are your business hours?",
+    "I'd like to return a product",
+]
+for msg in messages:
+    category = classify(msg)
+    context = process(category)
+    result = respond(msg, category, context)
+    print(f"Input: {msg}\nOutput: {result}\n")
+```
+
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai import LLM
+
+llm = LLM(model="gpt-4o-mini")
+
+classifier = Agent(
+    role="Classifier",
+    goal="Classify customer messages into categories",
+    backstory="You classify customer messages into exactly one category: complaint, question, or request. Respond with only the category name.",
+    llm=llm,
+)
+
+processor = Agent(
+    role="Processor",
+    goal="Fetch relevant context based on message category",
+    backstory="Based on the classification, provide relevant handling guidelines. For complaints: prioritize empathy. For questions: provide factual answers. For requests: give step-by-step instructions.",
+    llm=llm,
+)
+
+responder = Agent(
+    role="Responder",
+    goal="Write a professional customer service response",
+    backstory="You are a professional customer service agent. Write a helpful response using the classification and processing context provided.",
+    llm=llm,
+)
+
+messages = [
+    "My order #1234 hasn't arrived yet",
+    "What are your business hours?",
+    "I'd like to return a product",
+]
+
+for msg in messages:
+    classify_task = Task(
+        description=f"Classify this customer message: '{msg}'",
+        expected_output="A single category: complaint, question, or request",
+        agent=classifier,
+    )
+
+    process_task = Task(
+        description=f"Provide handling guidelines for the classified message: '{msg}'",
+        expected_output="Relevant context and guidelines for responding",
+        agent=processor,
+        context=[classify_task],
+    )
+
+    respond_task = Task(
+        description=f"Write a professional response to: '{msg}'",
+        expected_output="A professional customer service response that includes the classification label",
+        agent=responder,
+        context=[classify_task, process_task],
+    )
+
+    crew = Crew(
+        agents=[classifier, processor, responder],
+        tasks=[classify_task, process_task, respond_task],
+        process=Process.sequential,
+    )
+    result = crew.kickoff()
+    print(f"Input: {msg}\nOutput: {result}\n")
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+
+
+def classify(message: str) -> str:
+    classifier = Agent(
+        name="Classifier",
+        instructions="Classify the following customer message into exactly one category: complaint, question, or request. Respond with only the category name, nothing else.",
+    )
+    result = Runner.run_sync(classifier, message)
+    return result.final_output.strip().lower()
+
+
+def process(category: str) -> str:
+    if "complaint" in category:
+        return "Customer is upset. Prioritize empathy, apologize, and offer resolution steps."
+    elif "question" in category:
+        return "Customer needs information. Provide a clear, concise factual answer."
+    else:
+        return "Customer has a request. Acknowledge the request and provide step-by-step instructions."
+
+
+def respond(message: str, category: str, context: str) -> str:
+    responder = Agent(
+        name="Responder",
+        instructions=f"You are a customer service agent. Category: {category}. Guidelines: {context}",
+    )
+    result = Runner.run_sync(responder, message)
+    return f"[{category.upper()}] {result.final_output}"
+
+
+messages = [
+    "My order #1234 hasn't arrived yet",
+    "What are your business hours?",
+    "I'd like to return a product",
+]
+for msg in messages:
+    category = classify(msg)
+    context = process(category)
+    result = respond(msg, category, context)
+    print(f"Input: {msg}\nOutput: {result}\n")
+```
+
+## Why This Works
+
+By splitting the monolithic function into three steps, each step becomes independently testable, loggable, and replaceable. The classify step's output is visible — you can verify the LLM correctly classified "My order hasn't arrived" as a complaint before the response is generated. The process step tailors context based on the category, so complaints get empathetic handling while questions get factual responses. The respond step generates the final answer informed by both the classification and the tailored context.
+
+The classification label is included in the final output (prefixed as `[COMPLAINT]`, `[QUESTION]`, or `[REQUEST]`), making it visible to the user and any downstream systems that need to route or log the interaction.
+
+## Key Takeaways
+
+- Decomposing a monolithic LLM call into separate steps enables independent testing, logging, and swapping of each stage.
+- The classification label should be visible in the final output so downstream systems can use it for routing, logging, or analytics.
+- In LangGraph, a TypedDict state with one field per step's output provides clean data flow between nodes.

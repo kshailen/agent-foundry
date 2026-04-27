@@ -1,0 +1,57 @@
+{
+  "number": 27,
+  "title": "Composable Tool Pipeline",
+  "difficulty": "hard",
+  "categories": [
+    "tool-calling",
+    "orchestration"
+  ],
+  "frameworks": [
+    "langgraph",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "The monolithic tool must be broken into at least 4 small, single-purpose tools",
+    "Each small tool must be independently usable by the agent",
+    "The agent must be able to compose tools into different pipelines depending on the query",
+    "No tool should duplicate logic from another"
+  ],
+  "hints": [
+    "Identify the distinct stages in the monolithic function: fetch, clean, analyze, format \u2014 each becomes its own tool",
+    "Design each tool to accept and return a consistent data format so they snap together like LEGO bricks",
+    "In LangGraph, model the pipeline as a dynamic graph where the agent decides which tools to chain based on the query"
+  ],
+  "starterCode": {
+    "langgraph": "from langchain_openai import ChatOpenAI\nfrom langchain_core.tools import tool\nfrom langgraph.prebuilt import create_react_agent\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# BUG: This monolithic tool does everything \u2014 fetch, clean, analyze, and format.\n# It's impossible to reuse individual steps or compose different pipelines.\n# TODO: Break into small composable tools and build a dynamic LangGraph pipeline.\n\n@tool\ndef process_data(source: str, analysis_type: str) -> str:\n    \"\"\"Fetch data from source, clean it, analyze it, and format a report.\"\"\"\n    raw_data = f\"Raw data from {source}: [revenue: $10M, costs: $6M, employees: 500, growth: 15%, region: US, founded: 2010]\"\n    cleaned = raw_data.replace(\"[\", \"\").replace(\"]\", \"\").strip()\n    if analysis_type == \"financial\":\n        analysis = \"Profit margin: 40%, Revenue per employee: $20K, Healthy financials.\"\n    elif analysis_type == \"growth\":\n        analysis = \"15% YoY growth, above industry average of 10%. Strong trajectory.\"\n    else:\n        analysis = \"General overview: mid-size company with solid fundamentals.\"\n    report = f\"=== Report for {source} ===\\nData: {cleaned}\\nAnalysis: {analysis}\\n==================\"\n    return report\n\nagent = create_react_agent(llm, [process_data])\n\nresult = agent.invoke({\"messages\": [(\"human\", \"Get financial data for Acme Corp and analyze their growth\")]})\nprint(result[\"messages\"][-1].content)",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai import LLM\nfrom crewai.tools import tool\n\nllm = LLM(model=\"gpt-4o-mini\")\n\n# BUG: This monolithic tool does everything \u2014 fetch, clean, analyze, and format.\n# It's impossible to reuse individual steps or compose different pipelines.\n# TODO: Break into small composable tools.\n\n@tool\ndef process_data(source: str, analysis_type: str) -> str:\n    \"\"\"Fetch data from source, clean it, analyze it, and format a report.\"\"\"\n    raw_data = f\"Raw data from {source}: [revenue: $10M, costs: $6M, employees: 500, growth: 15%, region: US, founded: 2010]\"\n    cleaned = raw_data.replace(\"[\", \"\").replace(\"]\", \"\").strip()\n    if analysis_type == \"financial\":\n        analysis = \"Profit margin: 40%, Revenue per employee: $20K, Healthy financials.\"\n    elif analysis_type == \"growth\":\n        analysis = \"15% YoY growth, above industry average of 10%. Strong trajectory.\"\n    else:\n        analysis = \"General overview: mid-size company with solid fundamentals.\"\n    report = f\"=== Report for {source} ===\\nData: {cleaned}\\nAnalysis: {analysis}\\n==================\"\n    return report\n\nagent = Agent(\n    role=\"Data Analyst\",\n    goal=\"Analyze data for users\",\n    backstory=\"You are a data analyst assistant.\",\n    tools=[process_data],\n    llm=llm,\n)\n\ntask = Task(\n    description=\"Get financial data for Acme Corp and analyze their growth\",\n    expected_output=\"A data analysis report\",\n    agent=agent,\n)\n\ncrew = Crew(agents=[agent], tasks=[task])\nresult = crew.kickoff()\nprint(result)",
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom agents.tool import function_tool\n\n# BUG: This monolithic tool does everything \u2014 fetch, clean, analyze, and format.\n# It's impossible to reuse individual steps or compose different pipelines.\n# TODO: Break into small composable tools.\n\n@function_tool\ndef process_data(source: str, analysis_type: str) -> str:\n    \"\"\"Fetch data from source, clean it, analyze it, and format a report.\"\"\"\n    raw_data = f\"Raw data from {source}: [revenue: $10M, costs: $6M, employees: 500, growth: 15%, region: US, founded: 2010]\"\n    cleaned = raw_data.replace(\"[\", \"\").replace(\"]\", \"\").strip()\n    if analysis_type == \"financial\":\n        analysis = \"Profit margin: 40%, Revenue per employee: $20K, Healthy financials.\"\n    elif analysis_type == \"growth\":\n        analysis = \"15% YoY growth, above industry average of 10%. Strong trajectory.\"\n    else:\n        analysis = \"General overview: mid-size company with solid fundamentals.\"\n    report = f\"=== Report for {source} ===\\nData: {cleaned}\\nAnalysis: {analysis}\\n==================\"\n    return report\n\nagent = Agent(\n    name=\"Data Analyst\",\n    instructions=\"You are a data analyst assistant. Help users analyze data.\",\n    tools=[process_data],\n)\n\nresult = Runner.run_sync(agent, \"Get financial data for Acme Corp and analyze their growth\")\nprint(result.final_output)"
+  },
+  "colabUrls": {
+    "langgraph": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/composable-tool-pipeline-langgraph.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/composable-tool-pipeline-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/composable-tool-pipeline-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "decomposed",
+      "label": "Monolith is decomposed",
+      "description": "The single process_data tool is broken into at least 4 independent, single-purpose tools"
+    },
+    {
+      "id": "composable",
+      "label": "Tools are composable",
+      "description": "The agent can chain tools in different orders depending on the query"
+    },
+    {
+      "id": "independently-usable",
+      "label": "Each tool works independently",
+      "description": "Any single tool can be called on its own without requiring the full pipeline"
+    },
+    {
+      "id": "correct-output",
+      "label": "Output is still correct",
+      "description": "The decomposed pipeline produces the same quality of analysis as the monolithic version"
+    }
+  ]
+}

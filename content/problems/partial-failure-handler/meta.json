@@ -1,0 +1,51 @@
+{
+  "number": 70,
+  "title": "Partial Failure Handler",
+  "difficulty": "medium",
+  "categories": [
+    "error-recovery"
+  ],
+  "frameworks": [
+    "langchain",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "If one tool fails, the agent must still return results from the tools that succeeded",
+    "The response must clearly note which tool failed and why",
+    "The agent must not crash or abort entirely due to a single tool failure",
+    "Failed tools must not be silently ignored \u2014 the failure must be reported"
+  ],
+  "hints": [
+    "Wrap each tool call in its own try/except block so failures are isolated",
+    "Collect results and errors separately, then combine them into a single response",
+    "Include a note in the output like 'Note: [tool_name] was unavailable' for any failed tools"
+  ],
+  "starterCode": {
+    "langchain": "from langchain_openai import ChatOpenAI\nfrom langchain.agents import AgentExecutor, create_tool_calling_agent\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom langchain_core.tools import tool\n\n@tool\ndef get_weather(city: str) -> str:\n    \"\"\"Get current weather for a city.\"\"\"\n    return f\"Weather in {city}: 72\u00b0F, sunny\"\n\n@tool\ndef get_news(topic: str) -> str:\n    \"\"\"Get latest news on a topic.\"\"\"\n    return f\"Latest news on {topic}: [headlines]\"\n\n@tool\ndef get_stock_price(ticker: str) -> str:\n    \"\"\"Get current stock price.\"\"\"\n    # BUG: This tool always fails and takes down the entire request\n    raise ConnectionError(\"Stock service unavailable\")\n\n@tool\ndef get_calendar(date: str) -> str:\n    \"\"\"Get calendar events for a date.\"\"\"\n    return f\"Events for {date}: Team standup at 9am\"\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a daily briefing assistant. Gather weather, news, stocks, and calendar info.\"),\n    (\"human\", \"{input}\"),\n    (\"placeholder\", \"{agent_scratchpad}\"),\n])\n\ntools = [get_weather, get_news, get_stock_price, get_calendar]\nagent = create_tool_calling_agent(llm, tools, prompt)\nexecutor = AgentExecutor(agent=agent, tools=tools)\n\n# Test: One tool failure crashes the entire briefing\nresult = executor.invoke({\"input\": \"Give me my morning briefing for today\"})\nprint(result[\"output\"])",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai.tools import tool\n\n@tool\ndef get_weather(city: str) -> str:\n    \"\"\"Get current weather for a city.\"\"\"\n    return f\"Weather in {city}: 72\u00b0F, sunny\"\n\n@tool\ndef get_news(topic: str) -> str:\n    \"\"\"Get latest news on a topic.\"\"\"\n    return f\"Latest news on {topic}: [headlines]\"\n\n@tool\ndef get_stock_price(ticker: str) -> str:\n    \"\"\"Get current stock price.\"\"\"\n    # BUG: This tool always fails and takes down the entire request\n    raise ConnectionError(\"Stock service unavailable\")\n\n@tool\ndef get_calendar(date: str) -> str:\n    \"\"\"Get calendar events for a date.\"\"\"\n    return f\"Events for {date}: Team standup at 9am\"\n\nbriefing_agent = Agent(\n    role=\"Daily Briefing Assistant\",\n    goal=\"Gather weather, news, stocks, and calendar info for a daily briefing\",\n    backstory=\"You are a daily briefing assistant.\",\n    tools=[get_weather, get_news, get_stock_price, get_calendar],\n)\n\ntask = Task(\n    description=\"Give me my morning briefing for today. Gather weather, news, stocks, and calendar info.\",\n    expected_output=\"A complete morning briefing with all available data\",\n    agent=briefing_agent,\n)\n\ncrew = Crew(agents=[briefing_agent], tasks=[task])\nresult = crew.kickoff()\nprint(result)",
+    "openai-agents-sdk": "from agents import Agent, Runner\nfrom agents.tool import function_tool\n\n@function_tool\ndef get_weather(city: str) -> str:\n    \"\"\"Get current weather for a city.\"\"\"\n    return f\"Weather in {city}: 72\u00b0F, sunny\"\n\n@function_tool\ndef get_news(topic: str) -> str:\n    \"\"\"Get latest news on a topic.\"\"\"\n    return f\"Latest news on {topic}: [headlines]\"\n\n@function_tool\ndef get_stock_price(ticker: str) -> str:\n    \"\"\"Get current stock price.\"\"\"\n    # BUG: This tool always fails and takes down the entire request\n    raise ConnectionError(\"Stock service unavailable\")\n\n@function_tool\ndef get_calendar(date: str) -> str:\n    \"\"\"Get calendar events for a date.\"\"\"\n    return f\"Events for {date}: Team standup at 9am\"\n\nagent = Agent(\n    name=\"Daily Briefing Assistant\",\n    instructions=\"You are a daily briefing assistant. Gather weather, news, stocks, and calendar info.\",\n    tools=[get_weather, get_news, get_stock_price, get_calendar],\n)\n\nresult = Runner.run_sync(agent, \"Give me my morning briefing for today\")\nprint(result.final_output)"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/partial-failure-handler-langchain.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/partial-failure-handler-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/partial-failure-handler-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "partial-results-returned",
+      "label": "Successful results are returned",
+      "description": "Results from tools that succeeded are included in the final output"
+    },
+    {
+      "id": "failure-noted",
+      "label": "Failed tool is noted",
+      "description": "The output clearly indicates which tool failed and that its data is unavailable"
+    },
+    {
+      "id": "no-total-crash",
+      "label": "No total crash on partial failure",
+      "description": "The agent does not abort entirely when one tool out of many fails"
+    }
+  ]
+}

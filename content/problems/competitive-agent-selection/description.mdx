@@ -1,0 +1,39 @@
+## The Problem
+
+You have a single agent that solves coding challenges. Its output quality varies from run to run, and there is no way to know if a particular solution is good without manual review. Your task is to implement a **competitive selection** pattern: **three solver agents** independently tackle the same problem, and a separate **judge agent** evaluates all three solutions and selects the best one with a clear rationale.
+
+## Examples
+
+### Example 1
+
+**User input:** Find the longest palindromic substring in a given string.
+
+**Current (bad) output:** A single solution with no comparison — it might be brute-force O(n³) when a better approach exists.
+
+**Expected (good) output:** Three agents produce different solutions (e.g., brute force, dynamic programming, expand-around-center). The judge evaluates correctness, time complexity, and code clarity, then selects the best solution with an explanation like: "Solution B (expand-around-center) is preferred for its O(n²) time complexity and readable implementation."
+
+### Example 2
+
+**User input:** Implement a thread-safe LRU cache.
+
+**Current (bad) output:** One solution that may or may not handle concurrency correctly.
+
+**Expected (good) output:** Three competing implementations. The judge identifies which one correctly handles thread safety, has the best API design, and is most performant, then selects the winner.
+
+## Your Task
+
+Refactor the starter code so that:
+
+- **Three solver agents** with different approaches independently solve the same problem.
+- A **judge agent** (separate from the solvers) evaluates all three solutions.
+- The judge selects the **best solution** and provides a **rationale** for its choice.
+- The final output is the winning solution with the judge's explanation.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Multiple solver agents:** At least three agents independently solve the same problem.
+- **Judge agent evaluates solutions:** A separate judge agent reviews all solutions and selects the best one.
+- **Judge provides rationale:** The judge explains why the selected solution is the best.
+- **Best solution is selected:** The final output is the solution the judge deemed best, not an arbitrary pick.

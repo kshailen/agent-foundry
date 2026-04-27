@@ -1,0 +1,260 @@
+## Approach
+
+The starter code runs a hardcoded three-step pipeline (summarize, translate to Spanish, format) for every task regardless of what the user actually requested. A request to "analyze sentiment and extract entities" still gets summarized, translated, and formatted — producing completely irrelevant output. The core problem is that the workflow structure is static when it should be dynamic.
+
+The fix introduces a planner-executor architecture. A registry defines at least 5 available step types (summarize, translate, extract_entities, classify, sentiment_analysis, format_report, extract_facts, generate_briefing). An LLM-based planner reads the task description and selects the appropriate steps from the registry along with their execution order. These steps are then assembled into an executable workflow graph at runtime and executed against the input data. Different task descriptions produce different workflow compositions — the graph structure is determined by the task, not by hardcoded edges.
+
+In LangGraph, the planner's output is used to dynamically add nodes and edges to a `StateGraph` before compiling. In CrewAI, the planner selects which tasks and agents to include in the crew at runtime.
+
+## Solution
+
+### LangGraph
+
+```python
+from langgraph.graph import StateGraph, START, END
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage
+from typing import TypedDict, Annotated, Optional
+import operator
+import json
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+
+STEP_REGISTRY = {
+    "summarize": "Summarize the text concisely.",
+    "translate": "Translate the text to the target language specified in the task.",
+    "extract_entities": "Extract all named entities (people, organizations, locations, products) and return as a JSON list.",
+    "classify": "Classify the text into a category (e.g., news, finance, disaster, technology, sports). Return the category and a brief justification.",
+    "sentiment_analysis": "Analyze the sentiment of the text. Reply with positive, negative, or neutral and a brief explanation.",
+    "format_report": "Format the accumulated results into a clean, professional report.",
+    "extract_facts": "Extract the key facts from the text as a bulleted list.",
+    "generate_briefing": "Generate a concise executive briefing document from the available information.",
+}
+
+
+class WorkflowState(TypedDict):
+    task: str
+    data: str
+    results: Annotated[list[str], operator.add]
+    final_output: Optional[str]
+
+
+def plan_workflow(task: str) -> list[str]:
+    registry_desc = "\n".join(f"- {name}: {desc}" for name, desc in STEP_REGISTRY.items())
+    response = llm.invoke([
+        SystemMessage(content=f"""You are a workflow planner. Given a task description, select the appropriate steps from this registry and return them in execution order.
+
+Available steps:
+{registry_desc}
+
+Return a JSON array of step names, e.g. ["classify", "extract_facts", "generate_briefing"].
+Select only the steps needed for the task. Return ONLY the JSON array, nothing else."""),
+        HumanMessage(content=task),
+    ])
+    steps = json.loads(response.content.strip())
+    return [s for s in steps if s in STEP_REGISTRY]
+
+
+def make_step_fn(step_name: str):
+    instruction = STEP_REGISTRY[step_name]
+    def step_fn(state: WorkflowState) -> dict:
+        context = state["data"]
+        if state["results"]:
+            context += "\n\nPrevious results:\n" + "\n".join(state["results"])
+        response = llm.invoke([
+            SystemMessage(content=f"Task context: {state['task']}\n\nInstruction: {instruction}"),
+            HumanMessage(content=context),
+        ])
+        return {"results": [f"[{step_name}] {response.content}"]}
+    step_fn.__name__ = step_name
+    return step_fn
+
+
+def build_and_run_workflow(task: str, data: str) -> str:
+    steps = plan_workflow(task)
+    print(f"  Planned steps: {steps}")
+
+    graph = StateGraph(WorkflowState)
+    for step_name in steps:
+        graph.add_node(step_name, make_step_fn(step_name))
+
+    graph.add_edge(START, steps[0])
+    for i in range(len(steps) - 1):
+        graph.add_edge(steps[i], steps[i + 1])
+    graph.add_edge(steps[-1], END)
+
+    app = graph.compile()
+    result = app.invoke({"task": task, "data": data, "results": []})
+    return "\n\n".join(result["results"])
+
+
+tasks = [
+    ("Analyze sentiment and extract entities", "Apple reported record Q4 earnings. Tim Cook praised the iPhone 16 sales."),
+    ("Summarize and translate to French", "The climate summit concluded with 40 nations pledging carbon neutrality by 2050."),
+    ("Classify, extract key facts, and generate a briefing", "A 7.2 magnitude earthquake struck central Turkey at 4:17 AM local time."),
+]
+for task, data in tasks:
+    print(f"\nTask: {task}")
+    result = build_and_run_workflow(task, data)
+    print(f"Result:\n{result}\n")
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage
+import json
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+STEP_REGISTRY = {
+    "summarize": {"role": "Summarizer", "instruction": "Summarize the text concisely."},
+    "translate": {"role": "Translator", "instruction": "Translate the text to the target language specified in the task."},
+    "extract_entities": {"role": "Entity Extractor", "instruction": "Extract all named entities (people, organizations, locations, products) and return as a JSON list."},
+    "classify": {"role": "Classifier", "instruction": "Classify the text into a category (e.g., news, finance, disaster, technology). Return category and justification."},
+    "sentiment_analysis": {"role": "Sentiment Analyst", "instruction": "Analyze the sentiment. Reply with positive, negative, or neutral and a brief explanation."},
+    "format_report": {"role": "Report Formatter", "instruction": "Format the accumulated results into a clean, professional report."},
+    "extract_facts": {"role": "Fact Extractor", "instruction": "Extract the key facts from the text as a bulleted list."},
+    "generate_briefing": {"role": "Briefing Writer", "instruction": "Generate a concise executive briefing document from the available information."},
+}
+
+
+def plan_workflow(task: str) -> list[str]:
+    registry_desc = "\n".join(f"- {name}: {info['instruction']}" for name, info in STEP_REGISTRY.items())
+    response = llm.invoke([
+        SystemMessage(content=f"""You are a workflow planner. Given a task description, select the appropriate steps from this registry and return them in execution order.
+
+Available steps:
+{registry_desc}
+
+Return a JSON array of step names, e.g. ["classify", "extract_facts", "generate_briefing"].
+Select only the steps needed for the task. Return ONLY the JSON array, nothing else."""),
+        HumanMessage(content=task),
+    ])
+    steps = json.loads(response.content.strip())
+    return [s for s in steps if s in STEP_REGISTRY]
+
+
+def build_and_run_workflow(task_desc: str, data: str) -> str:
+    steps = plan_workflow(task_desc)
+    print(f"  Planned steps: {steps}")
+
+    agents = []
+    tasks = []
+    for step_name in steps:
+        info = STEP_REGISTRY[step_name]
+        agent = Agent(
+            role=info["role"],
+            goal=info["instruction"],
+            backstory=f"You are a specialist in {step_name.replace('_', ' ')}.",
+        )
+        agents.append(agent)
+
+        task = Task(
+            description=f"Task: {task_desc}\nData: {data}\n\nInstruction: {info['instruction']}",
+            expected_output=f"Result of {step_name}",
+            agent=agent,
+        )
+        tasks.append(task)
+
+    crew = Crew(agents=agents, tasks=tasks)
+    result = crew.kickoff()
+    return str(result)
+
+
+tasks = [
+    ("Analyze sentiment and extract entities", "Apple reported record Q4 earnings. Tim Cook praised the iPhone 16 sales."),
+    ("Summarize and translate to French", "The climate summit concluded with 40 nations pledging carbon neutrality by 2050."),
+    ("Classify, extract key facts, and generate a briefing", "A 7.2 magnitude earthquake struck central Turkey at 4:17 AM local time."),
+]
+for task_desc, data in tasks:
+    print(f"\nTask: {task_desc}")
+    result = build_and_run_workflow(task_desc, data)
+    print(f"Result:\n{result}\n")
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+import json
+from openai import OpenAI
+
+client = OpenAI()
+
+STEP_REGISTRY = {
+    "summarize": "Summarize the text concisely.",
+    "translate": "Translate the text to the target language specified in the task.",
+    "extract_entities": "Extract all named entities (people, organizations, locations, products) and return as a JSON list.",
+    "classify": "Classify the text into a category (e.g., news, finance, disaster, technology, sports). Return the category and a brief justification.",
+    "sentiment_analysis": "Analyze the sentiment of the text. Reply with positive, negative, or neutral and a brief explanation.",
+    "format_report": "Format the accumulated results into a clean, professional report.",
+    "extract_facts": "Extract the key facts from the text as a bulleted list.",
+    "generate_briefing": "Generate a concise executive briefing document from the available information.",
+}
+
+
+def plan_workflow(task: str) -> list[str]:
+    registry_desc = "\n".join(f"- {name}: {desc}" for name, desc in STEP_REGISTRY.items())
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": f"""You are a workflow planner. Given a task description, select the appropriate steps from this registry and return them in execution order.
+
+Available steps:
+{registry_desc}
+
+Return a JSON array of step names, e.g. ["classify", "extract_facts", "generate_briefing"].
+Select only the steps needed for the task. Return ONLY the JSON array, nothing else."""},
+            {"role": "user", "content": task},
+        ],
+    )
+    steps = json.loads(response.choices[0].message.content.strip())
+    return [s for s in steps if s in STEP_REGISTRY]
+
+
+def build_and_run_workflow(task_desc: str, data: str) -> str:
+    steps = plan_workflow(task_desc)
+    print(f"  Planned steps: {steps}")
+
+    current_output = data
+    all_results = []
+    for step_name in steps:
+        instruction = STEP_REGISTRY[step_name]
+        step_agent = Agent(
+            name=step_name.replace("_", " ").title(),
+            instructions=f"Task context: {task_desc}\n\nInstruction: {instruction}",
+        )
+        context = current_output
+        if all_results:
+            context += "\n\nPrevious results:\n" + "\n".join(all_results)
+        result = Runner.run_sync(step_agent, context)
+        all_results.append(f"[{step_name}] {result.final_output}")
+        current_output = result.final_output
+
+    return "\n\n".join(all_results)
+
+
+tasks = [
+    ("Analyze sentiment and extract entities", "Apple reported record Q4 earnings. Tim Cook praised the iPhone 16 sales."),
+    ("Summarize and translate to French", "The climate summit concluded with 40 nations pledging carbon neutrality by 2050."),
+    ("Classify, extract key facts, and generate a briefing", "A 7.2 magnitude earthquake struck central Turkey at 4:17 AM local time."),
+]
+for task_desc, data in tasks:
+    print(f"\nTask: {task_desc}")
+    result = build_and_run_workflow(task_desc, data)
+    print(f"Result:\n{result}\n")
+```
+
+## Why This Works
+
+The planner-executor architecture decouples workflow definition from workflow execution. The step registry defines what operations are available (at least 5 types), and the LLM-based planner decides which ones to use and in what order based on the task description. The graph is constructed dynamically at runtime — different tasks produce genuinely different workflow compositions. "Analyze sentiment and extract entities" produces a `[sentiment_analysis, extract_entities]` graph, while "Summarize and translate to French" produces `[summarize, translate]`. In LangGraph, this dynamic construction happens by programmatically calling `add_node` and `add_edge` based on the planner's output before `compile()`. The assembled graph is a real executable workflow, not just a plan document.
+
+## Key Takeaways
+
+- Separate the step registry (what can be done) from the planner (what should be done) — this makes adding new capabilities as simple as adding a registry entry.
+- Use an LLM as the planner to interpret natural-language task descriptions and map them to registered steps, avoiding fragile keyword matching.
+- Build the graph dynamically at runtime and compile it fresh for each task — this ensures the workflow structure matches the specific requirements rather than following a one-size-fits-all pipeline.

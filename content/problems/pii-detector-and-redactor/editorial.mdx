@@ -1,0 +1,133 @@
+## Approach
+
+The bug is that the agent's tool returns raw customer records containing email addresses and phone numbers, and this PII flows straight into the final output with no filtering. The agent itself has no awareness that it should redact sensitive data — it just faithfully relays whatever the tool returns.
+
+The fix is to add a post-processing step that scans the agent's output for PII patterns and replaces them with redaction placeholders. Email addresses follow a well-known pattern (`user@domain.tld`) that a single regex can match reliably. Phone numbers come in many formats (555-867-5309, (212) 555-0199, 555.123.4567), but a regex targeting common US patterns covers the majority of cases. After detecting matches, we replace them with `[EMAIL_REDACTED]` and `[PHONE_REDACTED]` respectively.
+
+This approach works as a pure output filter — it doesn't change the agent's core logic, the tool's behavior, or the system prompt. The agent fetches whatever data it needs, and the redaction layer strips PII before the response reaches the user. This separation of concerns makes the redaction easy to test, maintain, and extend to additional PII types later.
+
+## Solution
+
+### OpenAI Agents SDK
+
+```python
+import re
+from agents import Agent, Runner
+from agents.tool import function_tool
+
+@function_tool
+def lookup_customer(name: str) -> str:
+    """Look up customer details by name."""
+    return (
+        f"Customer: {name}\n"
+        f"Email: alice@example.com\n"
+        f"Phone: 555-867-5309\n"
+        f"Status: Active"
+    )
+
+def redact_pii(text: str) -> str:
+    text = re.sub(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", "[EMAIL_REDACTED]", text)
+    text = re.sub(r"(\+?1[-.\s]?)?(\(?\d{3}\)?[-.\s]?)?\d{3}[-.\s]?\d{4}", "[PHONE_REDACTED]", text)
+    return text
+
+agent = Agent(
+    name="Customer Lookup",
+    instructions="You are a customer lookup assistant. Return the customer details you find.",
+    tools=[lookup_customer],
+)
+
+result = Runner.run_sync(agent, "Find the details for Alice")
+safe_output = redact_pii(result.final_output)
+print(safe_output)
+```
+
+### LangChain
+
+```python
+import re
+from langchain_openai import ChatOpenAI
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.tools import tool
+
+@tool
+def lookup_customer(name: str) -> str:
+    """Look up customer details by name."""
+    return (
+        f"Customer: {name}\n"
+        f"Email: alice@example.com\n"
+        f"Phone: 555-867-5309\n"
+        f"Status: Active"
+    )
+
+def redact_pii(text: str) -> str:
+    text = re.sub(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", "[EMAIL_REDACTED]", text)
+    text = re.sub(r"(\+?1[-.\s]?)?(\(?\d{3}\)?[-.\s]?)?\d{3}[-.\s]?\d{4}", "[PHONE_REDACTED]", text)
+    return text
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a customer lookup assistant. Return the customer details you find."),
+    ("human", "{input}"),
+    ("placeholder", "{agent_scratchpad}"),
+])
+
+agent = create_tool_calling_agent(llm, [lookup_customer], prompt)
+executor = AgentExecutor(agent=agent, tools=[lookup_customer])
+
+result = executor.invoke({"input": "Find the details for Alice"})
+safe_output = redact_pii(result["output"])
+print(safe_output)
+```
+
+### CrewAI
+
+```python
+import re
+from crewai import Agent, Task, Crew
+from crewai.tools import tool
+
+@tool
+def lookup_customer(name: str) -> str:
+    """Look up customer details by name."""
+    return (
+        f"Customer: {name}\n"
+        f"Email: alice@example.com\n"
+        f"Phone: 555-867-5309\n"
+        f"Status: Active"
+    )
+
+def redact_pii(text: str) -> str:
+    text = re.sub(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", "[EMAIL_REDACTED]", text)
+    text = re.sub(r"(\+?1[-.\s]?)?(\(?\d{3}\)?[-.\s]?)?\d{3}[-.\s]?\d{4}", "[PHONE_REDACTED]", text)
+    return text
+
+lookup_agent = Agent(
+    role="Customer Lookup",
+    goal="Look up customer details and return them",
+    backstory="You are a customer lookup assistant. Return the customer details you find.",
+    tools=[lookup_customer],
+)
+
+task = Task(
+    description="Find the details for Alice",
+    expected_output="Customer details for Alice",
+    agent=lookup_agent,
+)
+
+crew = Crew(agents=[lookup_agent], tasks=[task])
+result = crew.kickoff()
+safe_output = redact_pii(str(result))
+print(safe_output)
+```
+
+## Why This Works
+
+The `redact_pii` function applies two regex substitutions in sequence. The email regex matches the standard `local@domain.tld` format, covering common variations like dots, plus signs, and subdomains. The phone regex handles formats like `555-867-5309`, `(555) 867-5309`, `555.867.5309`, and optional country codes. By running these on the agent's final output, all PII is replaced with clearly labeled placeholders while the rest of the response (customer name, account status, etc.) remains intact. Because this is a post-processing step, it's completely decoupled from the agent's decision-making — the agent can use whatever tools and reasoning it needs, and the PII filter catches anything sensitive before it reaches the user.
+
+## Key Takeaways
+
+- PII redaction should be a post-processing step on agent output, not something you rely on the LLM to self-censor.
+- Regex-based detection covers the most common email and phone formats and is fast, deterministic, and easy to extend.
+- Separating the redaction logic from the agent's core behavior makes it reusable across different agents and frameworks.

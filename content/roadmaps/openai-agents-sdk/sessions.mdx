@@ -1,0 +1,131 @@
+# Sessions & Memory
+
+Sessions give your agents persistent memory across multiple interactions. Instead of starting fresh every time, the OpenAI Agents SDK provides `SQLiteSession` to store and retrieve conversation history automatically — so your agent remembers what was said before.
+
+## Why Sessions Matter
+
+Without sessions, every call to `Runner.run` starts from scratch. The agent has no memory of previous exchanges. Sessions solve this by persisting conversation items (messages, tool calls, handoffs) to storage and replaying them on the next run.
+
+```
+Run 1: User asks "My name is Alice" → Agent responds → Items saved to session
+Run 2: User asks "What's my name?"  → Session replays history → Agent knows "Alice"
+```
+
+## Setting Up SQLiteSession
+
+`SQLiteSession` stores conversation history in a local SQLite database. Each session is identified by a unique `session_id`:
+
+```python
+from agents import Agent, Runner, SQLiteSession
+
+agent = Agent(
+    name="Memory Agent",
+    instructions="You are a helpful assistant with memory of past conversations.",
+)
+
+session = SQLiteSession("conversations.db", session_id="user_123")
+
+result = Runner.run_sync(agent, "My name is Alice and I love Python.", session=session)
+print(result.final_output)
+```
+
+## Continuing a Conversation
+
+Use the same `session_id` to continue where you left off. The SDK automatically loads previous history:
+
+```python
+session = SQLiteSession("conversations.db", session_id="user_123")
+
+result = Runner.run_sync(agent, "What's my name and what do I love?", session=session)
+print(result.final_output)
+```
+
+The agent will correctly recall that your name is Alice and you love Python — because the session replayed the previous exchange.
+
+## Inspecting Session Contents
+
+Use `get_items` to view what's stored in a session:
+
+```python
+session = SQLiteSession("conversations.db", session_id="user_123")
+
+items = session.get_items()
+for item in items:
+    print(item)
+```
+
+## Adding Items Manually
+
+You can pre-populate a session with items using `add_items`:
+
+```python
+from agents.items import MessageOutputItem
+
+session = SQLiteSession("conversations.db", session_id="new_user")
+
+session.add_items([
+    {"role": "user", "content": "I prefer dark mode."},
+    {"role": "assistant", "content": "Noted! I'll remember you prefer dark mode."},
+])
+```
+
+## Clearing a Session
+
+Reset a session to start fresh:
+
+```python
+session = SQLiteSession("conversations.db", session_id="user_123")
+session.clear_session()
+```
+
+## Controlling History with SessionSettings
+
+For long conversations, you may want to limit how much history is replayed. Use `SessionSettings` to cap the number of items:
+
+```python
+from agents import SessionSettings
+
+session = SQLiteSession(
+    "conversations.db",
+    session_id="user_123",
+    settings=SessionSettings(limit=10),
+)
+
+result = Runner.run_sync(agent, "Summarize our conversation.", session=session)
+print(result.final_output)
+```
+
+This replays only the last 10 items, keeping token usage manageable while preserving recent context.
+
+## Multiple Sessions for Multiple Users
+
+Each `session_id` creates an independent conversation history. Use different IDs for different users or conversation threads:
+
+```python
+session_alice = SQLiteSession("conversations.db", session_id="alice")
+session_bob = SQLiteSession("conversations.db", session_id="bob")
+
+Runner.run_sync(agent, "I'm Alice, I like cats.", session=session_alice)
+Runner.run_sync(agent, "I'm Bob, I like dogs.", session=session_bob)
+
+result = Runner.run_sync(agent, "What do I like?", session=session_alice)
+print(result.final_output)  # Cats
+```
+
+## Session Lifecycle
+
+| Method | Description |
+|--------|-------------|
+| `SQLiteSession(db, session_id=)` | Create or connect to a session |
+| `session.get_items()` | Retrieve all stored conversation items |
+| `session.add_items(items)` | Manually add items to the session |
+| `session.clear_session()` | Delete all items in the session |
+| `SessionSettings(limit=N)` | Limit how many items are replayed |
+
+## Key Takeaways
+
+- `SQLiteSession` provides persistent memory across multiple `Runner.run` calls
+- Each session is identified by a unique `session_id` — different IDs create independent histories
+- Use `get_items` and `add_items` to inspect or pre-populate session data
+- `clear_session` resets the conversation history
+- `SessionSettings(limit=N)` controls how much history is replayed, keeping token usage in check

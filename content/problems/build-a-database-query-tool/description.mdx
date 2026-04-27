@@ -1,0 +1,55 @@
+## The Problem
+
+Your database assistant agent can query an employee database, but the current tool implementation is dangerously naive. It executes any SQL string the model generates — including `DROP TABLE` or `DELETE FROM` — with zero validation. It also returns raw Python tuples like `[(1, 'Alice', 'Engineering', 95000)]` instead of human-readable results. Your job is to **fix the tool implementation** so it only allows `SELECT` queries, prevents SQL injection, formats results with column headers, and handles empty result sets gracefully.
+
+## Examples
+
+### Example 1
+
+**User input:** Show me all engineers and their salaries
+
+**Current (bad) output:** `[(1, 'Alice', 'Engineering', 95000), (3, 'Charlie', 'Engineering', 88000)]` (raw tuples, no column names)
+
+**Expected (good) output:**
+```
+Results (2 rows):
+| id | name    | department  | salary |
+|----|---------|-------------|--------|
+| 1  | Alice   | Engineering | 95000  |
+| 3  | Charlie | Engineering | 88000  |
+```
+
+### Example 2
+
+**User input:** (attacker tries) `DROP TABLE employees; --`
+
+**Current (bad) output:** The table is dropped and all data is lost.
+
+**Expected (good) output:** `Error: Only SELECT queries are allowed. DROP, DELETE, INSERT, UPDATE, and ALTER statements are blocked.`
+
+### Example 3
+
+**User input:** Show me employees in the Legal department
+
+**Current (bad) output:** `[]` (empty list, no explanation)
+
+**Expected (good) output:** `No results found. The query returned 0 rows.`
+
+## Your Task
+
+Fix the `query_database` tool so that it:
+
+- Only allows `SELECT` statements — rejects `DROP`, `DELETE`, `INSERT`, `UPDATE`, `ALTER`, etc.
+- Formats results as a readable table with column headers.
+- Returns a clear message when no rows match the query.
+- Has a proper docstring explaining its purpose, parameters, and restrictions.
+
+Do not change the database schema, the agent setup, or the prompt.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **SQL injection prevented:** Dangerous SQL operations (DROP, DELETE, INSERT, UPDATE) are rejected with a clear error.
+- **Results formatted:** Query results include column headers and are formatted as readable text.
+- **Handles empty results:** Queries that return no rows produce a helpful "no results" message instead of an empty list.

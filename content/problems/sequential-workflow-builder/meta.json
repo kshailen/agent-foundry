@@ -1,0 +1,51 @@
+{
+  "number": 89,
+  "title": "Sequential Workflow Builder",
+  "difficulty": "easy",
+  "categories": [
+    "orchestration"
+  ],
+  "frameworks": [
+    "langgraph",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "The workflow must have exactly 3 separate steps: classify, process, respond",
+    "Each step must be its own function or node that receives the previous step's output",
+    "You may not combine multiple steps into a single LLM call",
+    "The final output must include the classification label alongside the response"
+  ],
+  "hints": [
+    "In LangGraph, define a TypedDict state and add one node per step with edges between them",
+    "Each step should do one thing: classify returns a label, process fetches context, respond writes the reply",
+    "Use the classification output as input to the processing step to tailor behavior per category"
+  ],
+  "starterCode": {
+    "langgraph": "from langchain_openai import ChatOpenAI\nfrom langchain_core.messages import HumanMessage, SystemMessage\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# BUG: All three steps (classify, process, respond) are in one monolithic function\n# TODO: Refactor into a LangGraph StateGraph with separate nodes for each step\ndef handle_customer_message(message: str) -> str:\n    response = llm.invoke([\n        SystemMessage(content=\"\"\"You are a customer service agent. For every message:\n1. First classify it (complaint, question, or request)\n2. Then process it based on the category\n3. Then write a professional response\nDo all of this in a single response.\"\"\"),\n        HumanMessage(content=message),\n    ])\n    return response.content\n\nmessages = [\n    \"My order #1234 hasn't arrived yet\",\n    \"What are your business hours?\",\n    \"I'd like to return a product\",\n]\nfor msg in messages:\n    result = handle_customer_message(msg)\n    print(f\"Input: {msg}\\nOutput: {result}\\n\")",
+    "crewai": "from crewai import Agent, Task, Crew\nfrom crewai import LLM\n\nllm = LLM(model=\"gpt-4o-mini\")\n\n# BUG: All three steps (classify, process, respond) are in one monolithic agent\n# TODO: Refactor into separate agents for each step\nagent = Agent(\n    role=\"Customer Service Agent\",\n    goal=\"Handle customer messages\",\n    backstory=\"You are a customer service agent. For every message: 1) First classify it (complaint, question, or request) 2) Then process it based on the category 3) Then write a professional response. Do all of this in a single response.\",\n    llm=llm,\n)\n\nmessages = [\n    \"My order #1234 hasn't arrived yet\",\n    \"What are your business hours?\",\n    \"I'd like to return a product\",\n]\nfor msg in messages:\n    task = Task(\n        description=msg,\n        expected_output=\"A professional customer service response\",\n        agent=agent,\n    )\n    crew = Crew(agents=[agent], tasks=[task])\n    result = crew.kickoff()\n    print(f\"Input: {msg}\\nOutput: {result}\\n\")",
+    "openai-agents-sdk": "from agents import Agent, Runner\n\n# BUG: All three steps (classify, process, respond) are in one monolithic agent\n# TODO: Refactor into separate agents for each step\nagent = Agent(\n    name=\"Customer Service Agent\",\n    instructions=\"You are a customer service agent. For every message: 1) First classify it (complaint, question, or request) 2) Then process it based on the category 3) Then write a professional response. Do all of this in a single response.\",\n)\n\nmessages = [\n    \"My order #1234 hasn't arrived yet\",\n    \"What are your business hours?\",\n    \"I'd like to return a product\",\n]\nfor msg in messages:\n    result = Runner.run_sync(agent, msg)\n    print(f\"Input: {msg}\\nOutput: {result.final_output}\\n\")"
+  },
+  "colabUrls": {
+    "langgraph": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/sequential-workflow-builder-langgraph.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/sequential-workflow-builder-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/sequential-workflow-builder-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "three-separate-steps",
+      "label": "Three separate steps",
+      "description": "The workflow contains three distinct steps: classify, process, and respond"
+    },
+    {
+      "id": "data-flows-between-steps",
+      "label": "Data flows between steps",
+      "description": "Each step receives and uses the output from the previous step"
+    },
+    {
+      "id": "classification-visible",
+      "label": "Classification visible in output",
+      "description": "The final output includes the classification label used during processing"
+    }
+  ]
+}

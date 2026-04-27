@@ -1,0 +1,310 @@
+## Approach
+
+The starter code "tests" the customer-support agent by manually running three queries and eyeballing the output. There are no expected outputs, no scoring metrics, no pass/fail criteria, and no way to detect regressions when the prompt or model changes. The fix builds a proper automated evaluation harness with at least 10 test cases, multi-metric scoring (accuracy, latency, cost), and an aggregated summary report.
+
+The harness is data-driven: test cases are defined as a list of dictionaries with `input`, `expected_keywords`, and `grading_criteria` fields. Adding new test cases requires only adding entries to the list — no code changes. For accuracy scoring, the harness uses an LLM-as-judge that compares the agent's output against grading criteria and returns a score from 0.0 to 1.0. Latency is measured via wall-clock time, and cost is computed from actual token usage in the API response. A pass threshold (e.g., accuracy >= 0.7) determines pass/fail status for each test case. The summary report aggregates all metrics into a dashboard with pass rates, averages, and identification of failed tests.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage
+import time
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+judge_llm = ChatOpenAI(model="gpt-4o-mini")
+
+PRICING = {"input": 0.15 / 1_000_000, "output": 0.60 / 1_000_000}
+PASS_THRESHOLD = 0.7
+
+TEST_CASES = [
+    {"input": "What is your return policy?", "grading_criteria": "Mentions a return window (e.g., 30 days) and process for returning items"},
+    {"input": "Where is my order #1234?", "grading_criteria": "Acknowledges the order number and explains how to track or check order status"},
+    {"input": "Do you ship internationally?", "grading_criteria": "Addresses international shipping availability with relevant details"},
+    {"input": "How do I cancel my subscription?", "grading_criteria": "Explains the cancellation process with clear steps"},
+    {"input": "My order arrived damaged, what should I do?", "grading_criteria": "Offers a solution like replacement or refund and asks for details like photos"},
+    {"input": "Can I change my shipping address after placing an order?", "grading_criteria": "Explains whether address changes are possible and how to request one"},
+    {"input": "Do you price match with competitors?", "grading_criteria": "Clearly states whether price matching is offered and any conditions"},
+    {"input": "What payment methods do you accept?", "grading_criteria": "Lists accepted payment methods such as credit cards, PayPal, etc."},
+    {"input": "How long does shipping take?", "grading_criteria": "Provides shipping timeframe estimates for standard and/or express options"},
+    {"input": "I want a refund for my purchase", "grading_criteria": "Explains the refund process and any conditions or timeframes"},
+    {"input": "Do you have a loyalty program?", "grading_criteria": "Describes any loyalty or rewards program, or states there is none"},
+    {"input": "What are your store hours?", "grading_criteria": "Provides store hours or indicates online-only availability"},
+]
+
+
+def customer_support_agent(query: str) -> tuple[str, dict]:
+    start = time.time()
+    response = llm.invoke([
+        SystemMessage(content="You are a customer support agent for an e-commerce store. Answer questions about orders, returns, shipping, and products."),
+        HumanMessage(content=query),
+    ])
+    elapsed = time.time() - start
+    usage = response.usage_metadata
+    cost = usage.input_tokens * PRICING["input"] + usage.output_tokens * PRICING["output"]
+    metrics = {
+        "latency": elapsed,
+        "input_tokens": usage.input_tokens,
+        "output_tokens": usage.output_tokens,
+        "cost": cost,
+    }
+    return response.content, metrics
+
+
+def judge_accuracy(query: str, response: str, criteria: str) -> float:
+    judge_response = judge_llm.invoke([
+        SystemMessage(content="You are an evaluation judge. Score the response accuracy from 0.0 to 1.0 based on the grading criteria. Reply with ONLY a number between 0.0 and 1.0."),
+        HumanMessage(content=f"Query: {query}\nResponse: {response}\nGrading criteria: {criteria}"),
+    ])
+    score = float(judge_response.content.strip())
+    return max(0.0, min(1.0, score))
+
+
+def run_evaluation():
+    results = []
+
+    for i, test in enumerate(TEST_CASES):
+        response, metrics = customer_support_agent(test["input"])
+        accuracy = judge_accuracy(test["input"], response, test["grading_criteria"])
+        passed = accuracy >= PASS_THRESHOLD
+
+        result = {
+            "test_num": i + 1,
+            "input": test["input"],
+            "accuracy": accuracy,
+            "latency": metrics["latency"],
+            "cost": metrics["cost"],
+            "passed": passed,
+        }
+        results.append(result)
+
+        status = "PASS" if passed else "FAIL"
+        print(f"Test {i+1}: \"{test['input'][:50]}...\"")
+        print(f"  Accuracy: {accuracy:.2f}  |  Latency: {metrics['latency']:.2f}s  |  Cost: ${metrics['cost']:.6f}  |  {status}")
+
+    passed_count = sum(1 for r in results if r["passed"])
+    failed_tests = [r for r in results if not r["passed"]]
+    avg_accuracy = sum(r["accuracy"] for r in results) / len(results)
+    avg_latency = sum(r["latency"] for r in results) / len(results)
+    total_cost = sum(r["cost"] for r in results)
+
+    print(f"\n{'='*50}")
+    print(f"=== Evaluation Report ===")
+    print(f"{'='*50}")
+    print(f"Total test cases: {len(results)}")
+    print(f"Passed: {passed_count} ({100*passed_count/len(results):.0f}%)")
+    print(f"Failed: {len(failed_tests)} ({100*len(failed_tests)/len(results):.0f}%)")
+    print(f"Avg accuracy: {avg_accuracy:.2f}")
+    print(f"Avg latency: {avg_latency:.2f}s")
+    print(f"Total cost: ${total_cost:.4f}")
+    if failed_tests:
+        print(f"Failed tests: {', '.join(f'#{r[\"test_num\"]}' for r in failed_tests)}")
+
+
+run_evaluation()
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+import time
+
+PRICING = {
+    "gpt-4o-mini": {"input": 0.15 / 1_000_000, "output": 0.60 / 1_000_000},
+}
+PASS_THRESHOLD = 0.7
+
+agent = Agent(
+    name="Customer Support",
+    instructions="You are a customer support agent for an e-commerce store. Answer questions about orders, returns, shipping, and products.",
+    model="gpt-4o-mini",
+)
+
+judge = Agent(
+    name="Judge",
+    instructions="You are an evaluation judge. Score the response accuracy from 0.0 to 1.0 based on the grading criteria. Reply with ONLY a number between 0.0 and 1.0.",
+    model="gpt-4o-mini",
+)
+
+TEST_CASES = [
+    {"input": "What is your return policy?", "grading_criteria": "Mentions a return window (e.g., 30 days) and process for returning items"},
+    {"input": "Where is my order #1234?", "grading_criteria": "Acknowledges the order number and explains how to track or check order status"},
+    {"input": "Do you ship internationally?", "grading_criteria": "Addresses international shipping availability with relevant details"},
+    {"input": "How do I cancel my subscription?", "grading_criteria": "Explains the cancellation process with clear steps"},
+    {"input": "My order arrived damaged, what should I do?", "grading_criteria": "Offers a solution like replacement or refund and asks for details like photos"},
+    {"input": "Can I change my shipping address after placing an order?", "grading_criteria": "Explains whether address changes are possible and how to request one"},
+    {"input": "Do you price match with competitors?", "grading_criteria": "Clearly states whether price matching is offered and any conditions"},
+    {"input": "What payment methods do you accept?", "grading_criteria": "Lists accepted payment methods such as credit cards, PayPal, etc."},
+    {"input": "How long does shipping take?", "grading_criteria": "Provides shipping timeframe estimates for standard and/or express options"},
+    {"input": "I want a refund for my purchase", "grading_criteria": "Explains the refund process and any conditions or timeframes"},
+    {"input": "Do you have a loyalty program?", "grading_criteria": "Describes any loyalty or rewards program, or states there is none"},
+    {"input": "What are your store hours?", "grading_criteria": "Provides store hours or indicates online-only availability"},
+]
+
+
+def run_evaluation():
+    results = []
+
+    for i, test in enumerate(TEST_CASES):
+        start = time.time()
+        result = Runner.run_sync(agent, test["input"])
+        latency = time.time() - start
+
+        response_text = result.final_output
+        usage = result.raw_responses[-1].usage
+        prices = PRICING["gpt-4o-mini"]
+        cost = usage.input_tokens * prices["input"] + usage.output_tokens * prices["output"]
+
+        judge_result = Runner.run_sync(
+            judge,
+            f"Query: {test['input']}\nResponse: {response_text}\nGrading criteria: {test['grading_criteria']}",
+        )
+        accuracy = float(judge_result.final_output.strip())
+        accuracy = max(0.0, min(1.0, accuracy))
+        passed = accuracy >= PASS_THRESHOLD
+
+        results.append({
+            "test_num": i + 1,
+            "input": test["input"],
+            "accuracy": accuracy,
+            "latency": latency,
+            "cost": cost,
+            "passed": passed,
+        })
+
+        status = "PASS" if passed else "FAIL"
+        print(f"Test {i+1}: \"{test['input'][:50]}...\"")
+        print(f"  Accuracy: {accuracy:.2f}  |  Latency: {latency:.2f}s  |  Cost: ${cost:.6f}  |  {status}")
+
+    passed_count = sum(1 for r in results if r["passed"])
+    failed_tests = [r for r in results if not r["passed"]]
+    avg_accuracy = sum(r["accuracy"] for r in results) / len(results)
+    avg_latency = sum(r["latency"] for r in results) / len(results)
+    total_cost = sum(r["cost"] for r in results)
+
+    print(f"\n{'='*50}")
+    print(f"=== Evaluation Report ===")
+    print(f"{'='*50}")
+    print(f"Total test cases: {len(results)}")
+    print(f"Passed: {passed_count} ({100*passed_count/len(results):.0f}%)")
+    print(f"Failed: {len(failed_tests)} ({100*len(failed_tests)/len(results):.0f}%)")
+    print(f"Avg accuracy: {avg_accuracy:.2f}")
+    print(f"Avg latency: {avg_latency:.2f}s")
+    print(f"Total cost: ${total_cost:.4f}")
+    if failed_tests:
+        print(f"Failed tests: {', '.join(f'#{r[\"test_num\"]}' for r in failed_tests)}")
+
+
+run_evaluation()
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew, Process
+from crewai import LLM
+import time
+
+llm = LLM(model="gpt-4o-mini")
+PASS_THRESHOLD = 0.7
+
+support_agent = Agent(
+    role="Customer Support",
+    goal="Answer questions about orders, returns, shipping, and products",
+    backstory="You are a customer support agent for an e-commerce store.",
+    llm=llm,
+)
+
+judge_agent = Agent(
+    role="Evaluation Judge",
+    goal="Score response accuracy from 0.0 to 1.0 based on grading criteria",
+    backstory="You are an evaluation judge. Reply with ONLY a number between 0.0 and 1.0.",
+    llm=llm,
+)
+
+TEST_CASES = [
+    {"input": "What is your return policy?", "grading_criteria": "Mentions a return window (e.g., 30 days) and process for returning items"},
+    {"input": "Where is my order #1234?", "grading_criteria": "Acknowledges the order number and explains how to track or check order status"},
+    {"input": "Do you ship internationally?", "grading_criteria": "Addresses international shipping availability with relevant details"},
+    {"input": "How do I cancel my subscription?", "grading_criteria": "Explains the cancellation process with clear steps"},
+    {"input": "My order arrived damaged, what should I do?", "grading_criteria": "Offers a solution like replacement or refund and asks for details like photos"},
+    {"input": "Can I change my shipping address after placing an order?", "grading_criteria": "Explains whether address changes are possible and how to request one"},
+    {"input": "Do you price match with competitors?", "grading_criteria": "Clearly states whether price matching is offered and any conditions"},
+    {"input": "What payment methods do you accept?", "grading_criteria": "Lists accepted payment methods such as credit cards, PayPal, etc."},
+    {"input": "How long does shipping take?", "grading_criteria": "Provides shipping timeframe estimates for standard and/or express options"},
+    {"input": "I want a refund for my purchase", "grading_criteria": "Explains the refund process and any conditions or timeframes"},
+    {"input": "Do you have a loyalty program?", "grading_criteria": "Describes any loyalty or rewards program, or states there is none"},
+    {"input": "What are your store hours?", "grading_criteria": "Provides store hours or indicates online-only availability"},
+]
+
+
+def run_evaluation():
+    results = []
+
+    for i, test in enumerate(TEST_CASES):
+        task = Task(description=test["input"], expected_output="A helpful support response", agent=support_agent)
+        crew = Crew(agents=[support_agent], tasks=[task], process=Process.sequential)
+        start = time.time()
+        response = crew.kickoff()
+        latency = time.time() - start
+        response_text = str(response)
+
+        judge_task = Task(
+            description=(
+                f"Score this response accuracy from 0.0 to 1.0 based on the grading criteria. "
+                f"Reply with ONLY a number.\n\nQuery: {test['input']}\nResponse: {response_text}\n"
+                f"Grading criteria: {test['grading_criteria']}"
+            ),
+            expected_output="A number between 0.0 and 1.0",
+            agent=judge_agent,
+        )
+        judge_crew = Crew(agents=[judge_agent], tasks=[judge_task], process=Process.sequential)
+        judge_result = judge_crew.kickoff()
+        accuracy = float(str(judge_result).strip())
+        accuracy = max(0.0, min(1.0, accuracy))
+        passed = accuracy >= PASS_THRESHOLD
+
+        results.append({
+            "test_num": i + 1,
+            "input": test["input"],
+            "accuracy": accuracy,
+            "latency": latency,
+            "passed": passed,
+        })
+
+        status = "PASS" if passed else "FAIL"
+        print(f"Test {i+1}: \"{test['input'][:50]}...\"")
+        print(f"  Accuracy: {accuracy:.2f}  |  Latency: {latency:.2f}s  |  {status}")
+
+    passed_count = sum(1 for r in results if r["passed"])
+    failed_tests = [r for r in results if not r["passed"]]
+    avg_accuracy = sum(r["accuracy"] for r in results) / len(results)
+    avg_latency = sum(r["latency"] for r in results) / len(results)
+
+    print(f"\n{'='*50}")
+    print(f"=== Evaluation Report ===")
+    print(f"{'='*50}")
+    print(f"Total test cases: {len(results)}")
+    print(f"Passed: {passed_count} ({100*passed_count/len(results):.0f}%)")
+    print(f"Failed: {len(failed_tests)} ({100*len(failed_tests)/len(results):.0f}%)")
+    print(f"Avg accuracy: {avg_accuracy:.2f}")
+    print(f"Avg latency: {avg_latency:.2f}s")
+    if failed_tests:
+        print(f"Failed tests: {', '.join(f'#{r[\"test_num\"]}' for r in failed_tests)}")
+
+
+run_evaluation()
+```
+
+## Why This Works
+
+The evaluation harness transforms agent quality from a subjective guess ("it usually works") into a measurable, repeatable metric. Each test case is scored on three dimensions: accuracy (via LLM-as-judge comparing output against grading criteria), latency (wall-clock time), and cost (actual tokens from API metadata). The LLM-as-judge approach is more robust than keyword matching because it evaluates semantic correctness rather than exact phrasing. The data-driven design means adding new test cases requires only adding a dictionary to the `TEST_CASES` list — no code changes, no new functions, no rewriting the scoring logic. The summary report makes it immediately clear whether a prompt change or model swap improved or degraded performance.
+
+## Key Takeaways
+
+- Every production agent needs an automated evaluation harness — manual "looks good" testing does not catch regressions and is not reproducible.
+- Score on multiple metrics (accuracy, latency, cost) because optimizing for one often degrades another, and you need visibility into all three.
+- Make the harness data-driven so adding test cases is a configuration change, not a code change — this encourages teams to continuously expand coverage.

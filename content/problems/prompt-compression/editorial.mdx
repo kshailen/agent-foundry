@@ -1,0 +1,151 @@
+## Approach
+
+The bloated system prompt repeats the same instruction in multiple phrasings — "be helpful" appears four times, "don't fabricate" is said seven ways, and "be concise" is ironically stated in seven verbose sentences. LLMs understand instructions the first time; repeating them wastes tokens and money without improving compliance. The fix is to identify each distinct behavioral instruction, collapse all its variants into a single concise statement, and verify with `tiktoken` that the result is under 500 tokens.
+
+The compression strategy follows three steps: (1) group lines by intent (helpfulness, honesty, formatting, code, safety, etc.), (2) replace each group with one or two tight sentences, and (3) use structured formatting (numbered lists, shorthand) to pack more meaning into fewer tokens. The result preserves every capability — tool use, formatting, honesty, code quality, safety — while cutting token usage by roughly 75%.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate
+import tiktoken
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+COMPRESSED_PROMPT = """You are a helpful, accurate AI assistant. Follow these rules:
+
+1. Think carefully before responding. Consider multiple angles and provide comprehensive answers.
+2. Use available tools when they would improve accuracy.
+3. Format responses clearly: bullet points for lists, numbered lists for sequences, headers for long answers.
+4. Never fabricate information. State uncertainty honestly.
+5. Be concise and relevant. No filler or tangents.
+6. Maintain a professional, friendly tone.
+7. For code: provide complete, runnable examples with comments explaining key parts.
+8. Break complex topics into simpler parts. Use analogies where helpful.
+9. Prioritize user safety. Refuse harmful requests."""
+
+
+def count_tokens(text: str) -> int:
+    enc = tiktoken.encoding_for_model("gpt-4o-mini")
+    return len(enc.encode(text))
+
+
+print(f"Compressed prompt tokens: {count_tokens(COMPRESSED_PROMPT)}")
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", COMPRESSED_PROMPT),
+    ("human", "{input}"),
+])
+
+chain = prompt | llm
+
+result1 = chain.invoke({"input": "What is a binary search tree?"})
+print("Technical:", result1.content)
+
+result2 = chain.invoke({"input": "Write a Python function to find duplicates in a list"})
+print("Code:", result2.content)
+
+result3 = chain.invoke({"input": "What is the population of Mars?"})
+print("Unknown:", result3.content)
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+import tiktoken
+
+COMPRESSED_INSTRUCTIONS = """You are a helpful, accurate AI assistant. Follow these rules:
+
+1. Think carefully before responding. Consider multiple angles and provide comprehensive answers.
+2. Use available tools when they would improve accuracy.
+3. Format responses clearly: bullet points for lists, numbered lists for sequences, headers for long answers.
+4. Never fabricate information. State uncertainty honestly.
+5. Be concise and relevant. No filler or tangents.
+6. Maintain a professional, friendly tone.
+7. For code: provide complete, runnable examples with comments explaining key parts.
+8. Break complex topics into simpler parts. Use analogies where helpful.
+9. Prioritize user safety. Refuse harmful requests."""
+
+
+def count_tokens(text: str) -> int:
+    enc = tiktoken.encoding_for_model("gpt-4o-mini")
+    return len(enc.encode(text))
+
+
+print(f"Compressed prompt tokens: {count_tokens(COMPRESSED_INSTRUCTIONS)}")
+
+agent = Agent(
+    name="AI Assistant",
+    instructions=COMPRESSED_INSTRUCTIONS,
+)
+
+result1 = Runner.run_sync(agent, "What is a binary search tree?")
+print("Technical:", result1.final_output)
+
+result2 = Runner.run_sync(agent, "Write a Python function to find duplicates in a list")
+print("Code:", result2.final_output)
+
+result3 = Runner.run_sync(agent, "What is the population of Mars?")
+print("Unknown:", result3.final_output)
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+import tiktoken
+
+COMPRESSED_BACKSTORY = """You are a helpful, accurate AI assistant. Follow these rules:
+
+1. Think carefully before responding. Consider multiple angles and provide comprehensive answers.
+2. Use available tools when they would improve accuracy.
+3. Format responses clearly: bullet points for lists, numbered lists for sequences, headers for long answers.
+4. Never fabricate information. State uncertainty honestly.
+5. Be concise and relevant. No filler or tangents.
+6. Maintain a professional, friendly tone.
+7. For code: provide complete, runnable examples with comments explaining key parts.
+8. Break complex topics into simpler parts. Use analogies where helpful.
+9. Prioritize user safety. Refuse harmful requests."""
+
+
+def count_tokens(text: str) -> int:
+    enc = tiktoken.encoding_for_model("gpt-4o-mini")
+    return len(enc.encode(text))
+
+
+print(f"Compressed prompt tokens: {count_tokens(COMPRESSED_BACKSTORY)}")
+
+assistant = Agent(
+    role="AI Assistant",
+    goal="Help users with a wide variety of tasks",
+    backstory=COMPRESSED_BACKSTORY,
+)
+
+task1 = Task(description="What is a binary search tree?", expected_output="A clear technical explanation", agent=assistant)
+crew1 = Crew(agents=[assistant], tasks=[task1])
+print("Technical:", crew1.kickoff())
+
+task2 = Task(description="Write a Python function to find duplicates in a list", expected_output="Working Python code", agent=assistant)
+crew2 = Crew(agents=[assistant], tasks=[task2])
+print("Code:", crew2.kickoff())
+
+task3 = Task(description="What is the population of Mars?", expected_output="An honest answer", agent=assistant)
+crew3 = Crew(agents=[assistant], tasks=[task3])
+print("Unknown:", crew3.kickoff())
+```
+
+## Why This Works
+
+The compressed prompt preserves every behavioral category from the original — helpfulness, deliberate thinking, tool usage, formatting, honesty, conciseness, tone, code quality, pedagogical approach, and safety — while eliminating pure redundancy. LLMs do not need seven reminders to be honest; one clear instruction is enough. The numbered list format is both token-efficient and easy for the model to parse, giving each rule a distinct slot that reduces ambiguity.
+
+The token count drops from ~2000 to well under 500, which directly translates to a 4x reduction in per-call cost for the system prompt portion. Over thousands of API calls, this is the difference between a viable product and an unsustainably expensive one.
+
+## Key Takeaways
+
+- LLMs understand instructions on the first statement — repetition wastes tokens without improving compliance.
+- Group instructions by intent, then collapse each group into a single concise line.
+- Use `tiktoken` to measure token count objectively rather than guessing by word count.

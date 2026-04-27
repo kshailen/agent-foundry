@@ -1,0 +1,72 @@
+# Installation & Setup
+
+Get LangChain installed and your development environment ready in minutes.
+
+## Prerequisites
+
+- Python 3.9 or later
+- An API key from an LLM provider (OpenAI, Anthropic, etc.)
+- Basic familiarity with Python and virtual environments
+
+## Install LangChain
+
+```bash
+pip install langchain langchain-openai
+```
+
+For the full ecosystem (community integrations, experimental features):
+
+```bash
+pip install langchain langchain-community langchain-openai langchain-chroma
+```
+
+## Set Up Your API Key
+
+Create a `.env` file in your project root:
+
+```
+OPENAI_API_KEY=sk-your-key-here
+```
+
+Load it in Python:
+
+```python
+from dotenv import load_dotenv
+load_dotenv()
+```
+
+Or export directly in your shell:
+
+```bash
+export OPENAI_API_KEY="sk-your-key-here"
+```
+
+## Verify the Installation
+
+```python
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+response = llm.invoke("Say hello in one sentence.")
+print(response.content)
+```
+
+If you see a response, you're all set!
+
+## Project Structure
+
+A typical LangChain project looks like:
+
+```
+my-agent/
+├── .env
+├── requirements.txt
+├── main.py
+├── chains/
+├── tools/
+└── prompts/
+```
+
+## Next Steps
+
+Now that your environment is ready, let's build your first chain in the next topic.

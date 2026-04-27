@@ -1,0 +1,49 @@
+## The Problem
+
+Your business assistant has three tools — `create_invoice`, `schedule_meeting`, and `send_notification` — but none of them validate their inputs. When the model passes a string like `"150"` instead of the integer `150` for the invoice amount, the tool crashes with a `TypeError`. Missing required fields cause `NoneType` errors. There are no type hints, no validation, and no helpful error messages — just raw Python tracebacks that confuse both the agent and the user. Your job is to **add proper type hints, input validation, and helpful error messages** so the tools reject bad input gracefully and work correctly with valid input.
+
+## Examples
+
+### Example 1
+
+**User input:** Create an invoice for John Doe for 150 dollars with 3 items
+
+**Current (bad) output:** `TypeError: can't multiply sequence by non-int of type 'float'` (because `amount` came in as a string)
+
+**Expected (good) output:** Invoice created successfully — "Invoice for John Doe: 3 items, total $165.00"
+
+### Example 2
+
+**User input:** Schedule a meeting called "Sprint Review" for sixty minutes with Alice and Bob
+
+**Current (bad) output:** `TypeError: unsupported operand type(s) for +: 'str' and 'int'` (because `duration_minutes` came in as a string)
+
+**Expected (good) output:** Either the tool coerces "sixty" to 60, or returns: "Error: duration_minutes must be a number (e.g., 60), got 'sixty'."
+
+### Example 3
+
+**User input:** Send a notification to user 42 with high priority
+
+**Current (bad) output:** `TypeError: '>' not supported between instances of 'str' and 'int'` (because `priority` came as a string)
+
+**Expected (good) output:** "Error: priority must be a number between 1 and 5, got 'high'. Please provide a numeric priority."
+
+## Your Task
+
+Fix all three tool functions so that they:
+
+- Have proper type hints for every parameter (e.g., `amount: float`, `duration_minutes: int`).
+- Validate that each parameter is the correct type and within a valid range.
+- Return a helpful error message when validation fails, explaining what was expected.
+- Continue to work correctly when given properly typed, valid input.
+
+Do not change the agent setup, prompt, or model configuration.
+
+## Evaluation
+
+Submissions are checked for the following:
+
+- **Validates parameter types:** Each tool checks that inputs are the correct type before processing.
+- **Rejects invalid input:** Bad parameters produce clear error messages, not crashes or tracebacks.
+- **Provides helpful error messages:** Errors explain what was wrong and what valid input looks like.
+- **Valid input still works:** The tools produce correct results when given properly typed parameters.

@@ -1,0 +1,57 @@
+{
+  "number": 3,
+  "title": "Handle the API Failure",
+  "difficulty": "medium",
+  "categories": [
+    "error-recovery",
+    "tool-calling"
+  ],
+  "frameworks": [
+    "langchain",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "The agent must retry failed API calls up to 3 times",
+    "The agent must inform the user if all retries fail",
+    "You may not change the simulated API behavior",
+    "The final response must still be helpful even if some data is unavailable"
+  ],
+  "hints": [
+    "Wrap the tool call in error handling that catches exceptions and retries",
+    "Consider adding a fallback message when the API is completely unavailable",
+    "In LangGraph, you can create a retry loop as a conditional edge that checks for errors and routes back to the tool-calling node"
+  ],
+  "starterCode": {
+    "langchain": "import random\nfrom langchain_openai import ChatOpenAI\nfrom langchain.agents import AgentExecutor, create_tool_calling_agent\nfrom langchain_core.prompts import ChatPromptTemplate\nfrom langchain_core.tools import tool\n\n@tool\ndef fetch_stock_price(ticker: str) -> str:\n    \"\"\"Fetch the current stock price for a given ticker symbol.\"\"\"\n    # Simulated unreliable API - fails 60% of the time\n    if random.random() < 0.6:\n        raise ConnectionError(f\"API timeout: Could not reach stock service for {ticker}\")\n    return f\"{ticker}: $142.50 (+2.3%)\"\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\nprompt = ChatPromptTemplate.from_messages([\n    (\"system\", \"You are a financial assistant. Help users check stock prices.\"),\n    (\"human\", \"{input}\"),\n    (\"placeholder\", \"{agent_scratchpad}\"),\n])\n\n# BUG: No error handling - agent crashes on API failure\nagent = create_tool_calling_agent(llm, [fetch_stock_price], prompt)\nexecutor = AgentExecutor(agent=agent, tools=[fetch_stock_price])\n\nresult = executor.invoke({\"input\": \"What's the current price of AAPL?\"})\nprint(result[\"output\"])",
+    "crewai": "import random\nfrom crewai import Agent, Task, Crew\nfrom crewai.tools import tool\n\n@tool\ndef fetch_stock_price(ticker: str) -> str:\n    \"\"\"Fetch the current stock price for a given ticker symbol.\"\"\"\n    # Simulated unreliable API - fails 60% of the time\n    if random.random() < 0.6:\n        raise ConnectionError(f\"API timeout: Could not reach stock service for {ticker}\")\n    return f\"{ticker}: $142.50 (+2.3%)\"\n\n# BUG: No error handling - agent crashes on API failure\nassistant = Agent(\n    role=\"Financial Assistant\",\n    goal=\"Help users check stock prices\",\n    backstory=\"You are a financial assistant.\",\n    tools=[fetch_stock_price],\n)\n\ntask = Task(\n    description=\"What's the current price of AAPL?\",\n    expected_output=\"The current stock price of AAPL\",\n    agent=assistant,\n)\n\ncrew = Crew(agents=[assistant], tasks=[task])\nresult = crew.kickoff()\nprint(result)",
+    "openai-agents-sdk": "import random\nfrom agents import Agent, Runner\nfrom agents.tool import function_tool\n\n@function_tool\ndef fetch_stock_price(ticker: str) -> str:\n    \"\"\"Fetch the current stock price for a given ticker symbol.\"\"\"\n    # Simulated unreliable API - fails 60% of the time\n    if random.random() < 0.6:\n        raise ConnectionError(f\"API timeout: Could not reach stock service for {ticker}\")\n    return f\"{ticker}: $142.50 (+2.3%)\"\n\n# BUG: No error handling - agent crashes on API failure\nagent = Agent(\n    name=\"Financial Assistant\",\n    instructions=\"You are a financial assistant. Help users check stock prices.\",\n    tools=[fetch_stock_price],\n)\n\nresult = Runner.run_sync(agent, \"What's the current price of AAPL?\")\nprint(result.final_output)"
+  },
+  "colabUrls": {
+    "langchain": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/handle-api-failure-langchain.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/handle-api-failure-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/handle-api-failure-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "retries",
+      "label": "Implements retry logic",
+      "description": "The agent retries the API call up to 3 times before giving up"
+    },
+    {
+      "id": "graceful-failure",
+      "label": "Graceful failure message",
+      "description": "If all retries fail, the agent informs the user clearly instead of crashing"
+    },
+    {
+      "id": "success-on-retry",
+      "label": "Succeeds when API recovers",
+      "description": "When the API works on a retry attempt, the agent returns the data normally"
+    },
+    {
+      "id": "no-crash",
+      "label": "No unhandled exceptions",
+      "description": "The agent never throws an unhandled exception to the user"
+    }
+  ]
+}

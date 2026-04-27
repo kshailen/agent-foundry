@@ -1,0 +1,247 @@
+## Approach
+
+The starter code processes every customer message with the same generic handler regardless of whether it is a complaint, a question, or positive feedback. Complaints need empathetic responses with escalation paths. Questions need concise factual answers. Feedback needs warm acknowledgment. A one-size-fits-all handler produces tonally inappropriate responses — treating positive feedback like a support ticket or handling complaints without empathy.
+
+The fix adds conditional routing with three components: an LLM-based classifier that determines the message type, three specialized branch handlers (one per category), and a merge point that produces the final output. The classifier uses the LLM to output a category label, then conditional edges route to the appropriate handler. Each handler has a specialized system prompt tailored to its category.
+
+In LangGraph, this uses `add_conditional_edges` with a routing function that returns the branch name based on the classifier's output. In OpenAI Agents SDK, the router agent uses handoffs to transfer control to the appropriate specialist agent.
+
+## Solution
+
+### LangGraph
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, SystemMessage
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+class State(TypedDict):
+    message: str
+    category: str
+    response: str
+
+def classify(state: State) -> dict:
+    response = llm.invoke([
+        SystemMessage(content="Classify the following customer message into exactly one category: complaint, question, or feedback. Respond with only the category name, nothing else."),
+        HumanMessage(content=state["message"]),
+    ])
+    return {"category": response.content.strip().lower()}
+
+def route(state: State) -> str:
+    category = state["category"]
+    if "complaint" in category:
+        return "handle_complaint"
+    elif "question" in category:
+        return "handle_question"
+    else:
+        return "handle_feedback"
+
+def handle_complaint(state: State) -> dict:
+    response = llm.invoke([
+        SystemMessage(content=(
+            "You are an empathetic customer service specialist handling complaints. "
+            "Acknowledge the customer's frustration, apologize sincerely, and provide "
+            "clear next steps for resolution. Mention escalation if appropriate."
+        )),
+        HumanMessage(content=state["message"]),
+    ])
+    return {"response": f"[COMPLAINT] {response.content}"}
+
+def handle_question(state: State) -> dict:
+    response = llm.invoke([
+        SystemMessage(content=(
+            "You are a knowledgeable customer service agent answering questions. "
+            "Provide concise, accurate, factual answers. Be direct and helpful."
+        )),
+        HumanMessage(content=state["message"]),
+    ])
+    return {"response": f"[QUESTION] {response.content}"}
+
+def handle_feedback(state: State) -> dict:
+    response = llm.invoke([
+        SystemMessage(content=(
+            "You are a warm, appreciative customer service agent receiving feedback. "
+            "Thank the customer genuinely, mention you will share their feedback with "
+            "the relevant team, and encourage them to continue sharing thoughts."
+        )),
+        HumanMessage(content=state["message"]),
+    ])
+    return {"response": f"[FEEDBACK] {response.content}"}
+
+graph = StateGraph(State)
+graph.add_node("classify", classify)
+graph.add_node("handle_complaint", handle_complaint)
+graph.add_node("handle_question", handle_question)
+graph.add_node("handle_feedback", handle_feedback)
+
+graph.add_edge(START, "classify")
+graph.add_conditional_edges("classify", route, {
+    "handle_complaint": "handle_complaint",
+    "handle_question": "handle_question",
+    "handle_feedback": "handle_feedback",
+})
+graph.add_edge("handle_complaint", END)
+graph.add_edge("handle_question", END)
+graph.add_edge("handle_feedback", END)
+
+app = graph.compile()
+
+test_inputs = [
+    "Your product broke after one day! I want a refund!",
+    "What payment methods do you accept?",
+    "I love your new feature, the dark mode is great!",
+]
+for msg in test_inputs:
+    result = app.invoke({"message": msg, "category": "", "response": ""})
+    print(f"Input: {msg}\nOutput: {result['response']}\n")
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+
+complaint_agent = Agent(
+    name="Complaint Handler",
+    instructions=(
+        "You are an empathetic customer service specialist handling complaints. "
+        "Acknowledge the customer's frustration, apologize sincerely, and provide "
+        "clear next steps for resolution. Mention escalation if appropriate."
+    ),
+)
+
+question_agent = Agent(
+    name="Question Handler",
+    instructions=(
+        "You are a knowledgeable customer service agent answering questions. "
+        "Provide concise, accurate, factual answers. Be direct and helpful."
+    ),
+)
+
+feedback_agent = Agent(
+    name="Feedback Handler",
+    instructions=(
+        "You are a warm, appreciative customer service agent receiving feedback. "
+        "Thank the customer genuinely, mention you will share their feedback with "
+        "the relevant team, and encourage them to continue sharing thoughts."
+    ),
+)
+
+router = Agent(
+    name="Customer Service Router",
+    instructions=(
+        "You are a customer service router. Analyze the customer's message and hand it off "
+        "to the appropriate handler:\n"
+        "- Complaint Handler: for complaints, issues, problems, refund requests\n"
+        "- Question Handler: for questions, inquiries, information requests\n"
+        "- Feedback Handler: for positive feedback, compliments, suggestions"
+    ),
+    handoffs=[complaint_agent, question_agent, feedback_agent],
+)
+
+test_inputs = [
+    "Your product broke after one day! I want a refund!",
+    "What payment methods do you accept?",
+    "I love your new feature, the dark mode is great!",
+]
+for msg in test_inputs:
+    result = Runner.run_sync(router, msg)
+    print(f"Input: {msg}\nOutput: {result.final_output}\n")
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from crewai import LLM
+
+llm = LLM(model="gpt-4o-mini")
+
+complaint_agent = Agent(
+    role="Complaint Handler",
+    goal="Handle customer complaints with empathy and provide resolution paths",
+    backstory=(
+        "You are an empathetic customer service specialist handling complaints. "
+        "Acknowledge the customer's frustration, apologize sincerely, and provide "
+        "clear next steps for resolution. Mention escalation if appropriate."
+    ),
+    llm=llm,
+)
+
+question_agent = Agent(
+    role="Question Handler",
+    goal="Answer customer questions accurately and concisely",
+    backstory=(
+        "You are a knowledgeable customer service agent answering questions. "
+        "Provide concise, accurate, factual answers. Be direct and helpful."
+    ),
+    llm=llm,
+)
+
+feedback_agent = Agent(
+    role="Feedback Handler",
+    goal="Warmly acknowledge customer feedback",
+    backstory=(
+        "You are a warm, appreciative customer service agent receiving feedback. "
+        "Thank the customer genuinely, mention you will share their feedback with "
+        "the relevant team, and encourage them to continue sharing thoughts."
+    ),
+    llm=llm,
+)
+
+router = Agent(
+    role="Customer Service Router",
+    goal="Classify customer messages and route them to the appropriate handler",
+    backstory=(
+        "You are a customer service router. Analyze the customer's message and classify it as "
+        "either 'complaint', 'question', or 'feedback'. Respond with ONLY the category name."
+    ),
+    llm=llm,
+)
+
+test_inputs = [
+    "Your product broke after one day! I want a refund!",
+    "What payment methods do you accept?",
+    "I love your new feature, the dark mode is great!",
+]
+
+for msg in test_inputs:
+    classify_task = Task(
+        description=f"Classify this customer message into one category (complaint, question, or feedback): {msg}",
+        expected_output="One word: complaint, question, or feedback",
+        agent=router,
+    )
+    classify_crew = Crew(agents=[router], tasks=[classify_task])
+    category = str(classify_crew.kickoff()).strip().lower()
+
+    if "complaint" in category:
+        handler = complaint_agent
+    elif "question" in category:
+        handler = question_agent
+    else:
+        handler = feedback_agent
+
+    handle_task = Task(
+        description=msg,
+        expected_output="A response appropriate for the message type",
+        agent=handler,
+    )
+    handle_crew = Crew(agents=[handler], tasks=[handle_task])
+    result = handle_crew.kickoff()
+    print(f"Input: {msg}\nCategory: {category}\nOutput: {result}\n")
+```
+
+## Why This Works
+
+Conditional routing ensures each message type gets a handler optimized for its specific needs. The complaint handler uses empathetic language and mentions escalation paths. The question handler is direct and factual. The feedback handler is warm and appreciative. This produces noticeably different responses for each category, matching the tone and content the customer expects.
+
+The LLM-based classifier is more robust than keyword matching — it understands that "Your product broke" is a complaint even though it doesn't contain the word "complaint," and that "I love your new feature" is feedback even without the word "feedback." In LangGraph, `add_conditional_edges` is the native mechanism for this branching pattern. In OpenAI Agents SDK, `handoffs` achieve the same by letting the router transfer control to the right specialist.
+
+## Key Takeaways
+
+- Conditional routing produces category-appropriate responses by dispatching to specialized handlers instead of using a one-size-fits-all prompt.
+- LLM-based classification is more robust than keyword matching for determining message intent.
+- In LangGraph, `add_conditional_edges` with a routing function is the standard pattern for conditional branching; in OpenAI Agents SDK, `handoffs` provide the same capability natively.

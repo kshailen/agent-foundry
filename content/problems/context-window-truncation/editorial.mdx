@@ -1,0 +1,138 @@
+## Approach
+
+The bug is that conversation history grows without bound. Every user message and assistant response is appended to a list that is passed to the model on every call. After 50 turns, this list can exceed the model's context window, causing either an API error or severe quality degradation as the model struggles with an oversized prompt.
+
+The fix is a sliding window truncation strategy. Before each model call, trim the history to keep only the system message and the most recent N user/assistant message pairs. The system message is always preserved at position 0 because it contains the agent's core instructions. Everything else is subject to truncation. A sensible default for N is 10 turns (20 messages), which keeps the prompt well within token limits while preserving enough recent context for coherent conversation.
+
+The truncation function is called before every `llm.invoke`, so the history list can continue to grow in memory (useful for logging) while the actual prompt sent to the model stays bounded.
+
+## Solution
+
+### LangChain
+
+```python
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+MAX_TURNS = 10
+
+history = [SystemMessage(content="You are a helpful assistant.")]
+
+def truncate_history(messages: list, max_turns: int) -> list:
+    system_msg = messages[0]
+    conversation = messages[1:]
+    max_messages = max_turns * 2
+    if len(conversation) > max_messages:
+        conversation = conversation[-max_messages:]
+    return [system_msg] + conversation
+
+def chat(user_input: str) -> str:
+    history.append(HumanMessage(content=user_input))
+    truncated = truncate_history(history, MAX_TURNS)
+    response = llm.invoke(truncated)
+    history.append(response)
+    return response.content
+
+for i in range(50):
+    reply = chat(f"Tell me fact number {i + 1} about space exploration.")
+    print(f"Turn {i + 1}: {reply[:80]}...")
+
+print(f"\nTotal messages in history: {len(history)}")
+print(f"Messages sent to model (max): {MAX_TURNS * 2 + 1}")
+```
+
+### OpenAI Agents SDK
+
+```python
+from agents import Agent, Runner
+
+agent = Agent(
+    name="Assistant",
+    instructions="You are a helpful assistant.",
+)
+
+MAX_TURNS = 10
+
+history = []
+
+def truncate_history(messages: list, max_turns: int) -> list:
+    max_messages = max_turns * 2
+    if len(messages) > max_messages:
+        return messages[-max_messages:]
+    return messages
+
+def chat(user_input: str) -> str:
+    history.append({"role": "user", "content": user_input})
+    truncated = truncate_history(history, MAX_TURNS)
+    result = Runner.run_sync(agent, truncated)
+    response_text = result.final_output
+    history.append({"role": "assistant", "content": response_text})
+    return response_text
+
+for i in range(50):
+    reply = chat(f"Tell me fact number {i + 1} about space exploration.")
+    print(f"Turn {i + 1}: {reply[:80]}...")
+
+print(f"\nTotal messages in history: {len(history)}")
+```
+
+### CrewAI
+
+```python
+from crewai import Agent, Task, Crew
+from crewai import LLM
+
+llm = LLM(model="gpt-4o-mini")
+
+MAX_TURNS = 10
+
+agent = Agent(
+    role="Assistant",
+    goal="Help users with their questions",
+    backstory="You are a helpful assistant.",
+    llm=llm,
+)
+
+history = []
+
+def truncate_history(messages: list, max_turns: int) -> list:
+    max_messages = max_turns * 2
+    if len(messages) > max_messages:
+        return messages[-max_messages:]
+    return messages
+
+def chat(user_input: str) -> str:
+    history.append(f"User: {user_input}")
+    truncated = truncate_history(history, MAX_TURNS)
+    context = "\n".join(truncated)
+    task = Task(
+        description=f"Continue this conversation:\n{context}\n\nRespond to the latest message.",
+        expected_output="A helpful response",
+        agent=agent,
+    )
+    crew = Crew(agents=[agent], tasks=[task])
+    result = str(crew.kickoff())
+    history.append(f"Assistant: {result}")
+    return result
+
+for i in range(50):
+    reply = chat(f"Tell me fact number {i + 1} about space exploration.")
+    print(f"Turn {i + 1}: {reply[:80]}...")
+
+print(f"\nTotal messages in history: {len(history)}")
+print(f"Messages sent to model (max): {MAX_TURNS * 2}")
+```
+
+## Why This Works
+
+The sliding window ensures the prompt size never exceeds a fixed bound regardless of conversation length. By always preserving the system message, the agent retains its core identity and instructions. By keeping the most recent N turns, the agent stays coherent with the latest conversation context. Older messages are dropped from the prompt (though they can still be kept in the full history list for logging or analysis).
+
+This is a simple but effective strategy. Its main trade-off is that information from early turns is lost once it falls outside the window — the agent will no longer remember a name mentioned 30 turns ago. For many use cases this is acceptable, and more advanced strategies like summarization memory (Problem 35) can address this gap when needed.
+
+## Key Takeaways
+
+- Unbounded conversation history will eventually exceed the model's context window, causing errors or degraded output.
+- A sliding window that keeps the system message plus the last N turn pairs is the simplest effective solution.
+- The truncation must happen before each model call, not after, to prevent oversized prompts from reaching the API.

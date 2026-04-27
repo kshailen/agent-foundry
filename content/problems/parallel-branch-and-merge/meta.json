@@ -1,0 +1,51 @@
+{
+  "number": 92,
+  "title": "Parallel Branch and Merge",
+  "difficulty": "medium",
+  "categories": [
+    "orchestration"
+  ],
+  "frameworks": [
+    "langgraph",
+    "crewai",
+    "openai-agents-sdk"
+  ],
+  "constraints": [
+    "Sentiment analysis and entity extraction must run in parallel, not sequentially",
+    "Both branches must complete before the merge step begins",
+    "The merge step must combine results from both branches into a single structured output",
+    "The parallel execution must produce a measurable speedup over sequential processing"
+  ],
+  "hints": [
+    "In LangGraph, use a fan-out pattern: connect the input node to both analysis nodes, then connect both to a merge node",
+    "Store each branch's result in a separate key of the shared state so the merge node can access both",
+    "In CrewAI, use async tasks or parallel task execution to run both analyses concurrently"
+  ],
+  "starterCode": {
+    "langgraph": "from langchain_openai import ChatOpenAI\nfrom langchain_core.messages import HumanMessage, SystemMessage\nimport time\n\nllm = ChatOpenAI(model=\"gpt-4o-mini\")\n\n# BUG: Sentiment and entity extraction run sequentially, doubling latency\n# TODO: Run both analyses in parallel and merge results\ndef analyze_text(text: str) -> dict:\n    start = time.time()\n\n    sentiment = llm.invoke([\n        SystemMessage(content=\"Analyze the sentiment of this text. Reply with: positive, negative, or neutral, followed by a brief explanation.\"),\n        HumanMessage(content=text),\n    ])\n\n    entities = llm.invoke([\n        SystemMessage(content=\"Extract all named entities (people, organizations, locations, products) from this text. Return as a JSON list.\"),\n        HumanMessage(content=text),\n    ])\n\n    elapsed = time.time() - start\n    return {\n        \"sentiment\": sentiment.content,\n        \"entities\": entities.content,\n        \"processing_time\": f\"{elapsed:.2f}s\",\n    }\n\ntexts = [\n    \"Apple CEO Tim Cook announced the new iPhone at their Cupertino headquarters. Customers loved it.\",\n    \"The project in Berlin failed miserably. Google and Microsoft both pulled out of the partnership.\",\n]\nfor text in texts:\n    result = analyze_text(text)\n    print(f\"Text: {text[:50]}...\\nResult: {result}\\n\")",
+    "crewai": "from crewai import Agent, Task, Crew\nimport time\n\n# BUG: Sentiment and entity extraction run sequentially, doubling latency\n# TODO: Run both analyses in parallel and merge results\nanalyst = Agent(\n    role=\"Text Analyst\",\n    goal=\"Analyze text for both sentiment and entities\",\n    backstory=\"You are an NLP specialist.\",\n)\n\ndef analyze_text(text: str) -> dict:\n    start = time.time()\n\n    sentiment_task = Task(\n        description=f\"Analyze the sentiment of this text: '{text}'. Reply with positive, negative, or neutral and a brief explanation.\",\n        expected_output=\"Sentiment label and explanation\",\n        agent=analyst,\n    )\n\n    entity_task = Task(\n        description=f\"Extract all named entities (people, organizations, locations, products) from: '{text}'. Return as a JSON list.\",\n        expected_output=\"JSON list of entities\",\n        agent=analyst,\n    )\n\n    crew = Crew(agents=[analyst], tasks=[sentiment_task, entity_task])\n    results = crew.kickoff()\n\n    elapsed = time.time() - start\n    return {\"results\": str(results), \"processing_time\": f\"{elapsed:.2f}s\"}\n\ntexts = [\n    \"Apple CEO Tim Cook announced the new iPhone at their Cupertino headquarters. Customers loved it.\",\n    \"The project in Berlin failed miserably. Google and Microsoft both pulled out of the partnership.\",\n]\nfor text in texts:\n    result = analyze_text(text)\n    print(f\"Text: {text[:50]}...\\nResult: {result}\\n\")",
+    "openai-agents-sdk": "from agents import Agent, Runner\nimport time\n\n# BUG: Sentiment and entity extraction run sequentially, doubling latency\n# TODO: Run both analyses in parallel and merge results\ndef analyze_text(text: str) -> dict:\n    start = time.time()\n\n    sentiment_agent = Agent(\n        name=\"Sentiment Analyst\",\n        instructions=\"Analyze the sentiment of the given text. Reply with: positive, negative, or neutral, followed by a brief explanation.\",\n    )\n    sentiment_result = Runner.run_sync(sentiment_agent, text)\n\n    entity_agent = Agent(\n        name=\"Entity Extractor\",\n        instructions=\"Extract all named entities (people, organizations, locations, products) from the given text. Return as a JSON list.\",\n    )\n    entity_result = Runner.run_sync(entity_agent, text)\n\n    elapsed = time.time() - start\n    return {\n        \"sentiment\": sentiment_result.final_output,\n        \"entities\": entity_result.final_output,\n        \"processing_time\": f\"{elapsed:.2f}s\",\n    }\n\ntexts = [\n    \"Apple CEO Tim Cook announced the new iPhone at their Cupertino headquarters. Customers loved it.\",\n    \"The project in Berlin failed miserably. Google and Microsoft both pulled out of the partnership.\",\n]\nfor text in texts:\n    result = analyze_text(text)\n    print(f\"Text: {text[:50]}...\\nResult: {result}\\n\")"
+  },
+  "colabUrls": {
+    "langgraph": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/parallel-branch-and-merge-langgraph.ipynb",
+    "crewai": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/parallel-branch-and-merge-crewai.ipynb",
+    "openai-agents-sdk": "https://colab.research.google.com/github/kshailen/agent-foundry/blob/main/notebooks/problems/parallel-branch-and-merge-openai.ipynb"
+  },
+  "evaluationCriteria": [
+    {
+      "id": "parallel-execution",
+      "label": "Parallel execution",
+      "description": "Sentiment analysis and entity extraction run concurrently, not one after the other"
+    },
+    {
+      "id": "both-complete-before-merge",
+      "label": "Both complete before merge",
+      "description": "The merge step waits for both branches to finish before combining results"
+    },
+    {
+      "id": "structured-merged-output",
+      "label": "Structured merged output",
+      "description": "The final output contains both sentiment and entities in a single structured result"
+    }
+  ]
+}

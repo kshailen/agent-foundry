@@ -1,0 +1,135 @@
+# Command Primitive
+
+In most LangGraph patterns, state updates and routing are separate concerns — nodes return state dicts, and edges decide where to go next. The **Command** primitive unifies both: a node can update state *and* control routing in a single return value.
+
+## Command(update=, goto=, graph=, resume=)
+
+The `Command` object accepts four optional arguments:
+
+```python
+from langgraph.types import Command
+
+Command(
+    update={"key": "value"},   # state updates (like a normal return dict)
+    goto="next_node",          # where to route (node name or list of names)
+    graph=Command.PARENT,      # target graph (for subgraph navigation)
+    resume="user_input",       # value to resume from an interrupt
+)
+```
+
+- **update** — a dict of state updates, same as what a node normally returns
+- **goto** — a node name (str) or list of node names to route to next
+- **graph** — which graph to send the command to (`Command.PARENT` for the parent graph)
+- **resume** — a value to resume execution after an `interrupt()`
+
+## Returning Command from Nodes
+
+Instead of returning a dict, a node can return a `Command` to combine state updates with routing:
+
+```python
+from typing import TypedDict, Annotated, Literal
+from langgraph.graph import StateGraph, START, END, add_messages
+from langgraph.types import Command
+
+class State(TypedDict):
+    messages: Annotated[list, add_messages]
+    category: str
+
+def classifier(state: State) -> Command[Literal["poem", "joke"]]:
+    last_msg = state["messages"][-1].content.lower()
+    if "poem" in last_msg:
+        return Command(update={"category": "poem"}, goto="poem")
+    return Command(update={"category": "joke"}, goto="joke")
+
+def poem_node(state: State) -> dict:
+    return {"messages": [("ai", "Roses are red...")]}
+
+def joke_node(state: State) -> dict:
+    return {"messages": [("ai", "Why did the chicken...")]}
+
+graph = StateGraph(State)
+graph.add_node("classifier", classifier)
+graph.add_node("poem", poem_node)
+graph.add_node("joke", joke_node)
+
+graph.add_edge(START, "classifier")
+graph.add_edge("poem", END)
+graph.add_edge("joke", END)
+
+app = graph.compile()
+```
+
+Notice that there is no `add_conditional_edges` call. The `Command` returned by `classifier` handles both the state update and the routing decision. The type hint `Command[Literal["poem", "joke"]]` tells LangGraph which nodes are valid targets for graph validation.
+
+## Command vs add_conditional_edges
+
+Both achieve routing, but they serve different use cases:
+
+| Feature | `add_conditional_edges` | `Command` |
+|---------|------------------------|-----------|
+| Routing logic location | Separate routing function | Inside the node |
+| State update | Node return dict | `Command(update=...)` |
+| Multiple targets | Via mapping dict | `goto=["a", "b"]` for fan-out |
+| Subgraph navigation | Not supported | `graph=Command.PARENT` |
+| Resume from interrupt | Not supported | `Command(resume=...)` |
+
+Use `add_conditional_edges` when routing is a clean, separate concern. Use `Command` when the routing decision is tightly coupled with state updates.
+
+## Command from Tools
+
+Tools called by an LLM agent can also return `Command` to control graph flow:
+
+```python
+from langchain_core.tools import tool
+from langgraph.types import Command
+
+@tool
+def escalate_to_human(reason: str) -> Command:
+    """Escalate the conversation to a human agent."""
+    return Command(
+        update={"messages": [("ai", f"Escalating: {reason}")]},
+        goto="human_support",
+    )
+```
+
+When the LLM decides to call this tool, execution routes to the `human_support` node automatically.
+
+## Subgraph Navigation with Command.PARENT
+
+In nested graphs, a node inside a subgraph can send a `Command` to the parent graph:
+
+```python
+def subgraph_node(state: State) -> Command:
+    if state["needs_escalation"]:
+        return Command(
+            update={"status": "escalated"},
+            goto="escalation_handler",
+            graph=Command.PARENT,
+        )
+    return Command(update={"status": "handled"}, goto="next_step")
+```
+
+`graph=Command.PARENT` tells LangGraph to route to a node in the parent graph rather than the current subgraph. This is the only way to "break out" of a subgraph's scope.
+
+## Routing to Multiple Nodes
+
+`goto` can accept a list to fan out execution to multiple nodes in parallel:
+
+```python
+def dispatch(state: State) -> Command[Literal["analyzer", "summarizer"]]:
+    return Command(
+        update={"dispatched": True},
+        goto=["analyzer", "summarizer"],
+    )
+```
+
+Both `analyzer` and `summarizer` will execute with the updated state.
+
+## Key Takeaways
+
+- `Command` unifies state updates and routing in a single return value from a node
+- `Command(update=, goto=)` replaces the need for `add_conditional_edges` when routing is tied to node logic
+- Type-hint the return as `Command[Literal["node_a", "node_b"]]` for graph validation
+- Tools can return `Command` to control graph flow when called by an LLM agent
+- `graph=Command.PARENT` enables subgraph-to-parent routing, which is not possible with conditional edges
+- `goto` accepts a list of node names for parallel fan-out execution
